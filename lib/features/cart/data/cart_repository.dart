@@ -5,7 +5,7 @@ import '../bloc/cart_state.dart';
 class _CheckData {
   _CheckData({required this.ordinal})
       : lines = <String, CartLine>{},
-        orderTypeIndex = 0,
+        orderTypeIndex = -1,
         tableLabel = null;
 
   final int ordinal;
@@ -33,7 +33,7 @@ class CartRepository {
   Map<String, CartLine> get activeLines =>
       Map<String, CartLine>.from(_checks[_activeId]?.lines ?? {});
 
-  int get activeOrderTypeIndex => _checks[_activeId]?.orderTypeIndex ?? 0;
+  int get activeOrderTypeIndex => _checks[_activeId]?.orderTypeIndex ?? -1;
 
   List<CartCheckInfo> get checkSummaries {
     final list = <CartCheckInfo>[];
@@ -84,34 +84,49 @@ class CartRepository {
   void setOrderTypeIndexForActive(int index) {
     final d = _checks[_activeId];
     if (d == null) return;
-    d.orderTypeIndex = index.clamp(0, 2);
+    d.orderTypeIndex = index.clamp(-1, 2);
   }
 
-  void add(PosMenuItem item) {
+  String _lineKey(PosMenuItem item) => '${item.id}::${item.price.toStringAsFixed(2)}';
+
+  void add(PosMenuItem item, {double? unitPrice}) {
     final d = _checks[_activeId];
     if (d == null) return;
-    final existing = d.lines[item.id];
+    final effectiveItem = unitPrice != null
+        ? item.copyWith(
+            price: unitPrice,
+            priceText: unitPrice.toStringAsFixed(
+              unitPrice == unitPrice.roundToDouble() ? 0 : 2,
+            ),
+          )
+        : item;
+    final key = _lineKey(effectiveItem);
+    final existing = d.lines[key];
     if (existing != null) {
-      d.lines[item.id] = CartLine(item: item, quantity: existing.quantity + 1);
+      d.lines[key] = CartLine(item: effectiveItem, quantity: existing.quantity + 1);
     } else {
-      d.lines[item.id] = CartLine(item: item, quantity: 1);
+      d.lines[key] = CartLine(item: effectiveItem, quantity: 1);
     }
   }
 
-  void decrement(String itemId) {
+  void decrement(String lineKey) {
     final d = _checks[_activeId];
     if (d == null) return;
-    final line = d.lines[itemId];
+    final line = d.lines[lineKey];
     if (line == null) return;
     if (line.quantity <= 1) {
-      d.lines.remove(itemId);
+      d.lines.remove(lineKey);
     } else {
-      d.lines[itemId] = CartLine(item: line.item, quantity: line.quantity - 1);
+      d.lines[lineKey] = CartLine(item: line.item, quantity: line.quantity - 1);
     }
   }
 
   void clearActive() {
-    _checks[_activeId]?.lines.clear();
+    final d = _checks[_activeId];
+    if (d == null) return;
+    d.lines.clear();
+    // После очистки/оформления требуем явный новый выбор типа заказа.
+    d.orderTypeIndex = -1;
   }
 
   void resetAll() {

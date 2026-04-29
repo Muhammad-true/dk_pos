@@ -26,7 +26,7 @@ void main() {
     final http = DioHttpClient(createDio());
     final remote = AuthRemoteDataSourceImpl(http);
     final authRepo = AuthRepository(kv: kv, remote: remote, http: http);
-    final auth = AuthBloc(authRepo)..add(const AuthStarted());
+    final auth = AuthBloc(authRepo, branchId: '1')..add(const AuthStarted());
 
     await tester.pumpWidget(
       RepositoryProvider<AuthRepository>.value(

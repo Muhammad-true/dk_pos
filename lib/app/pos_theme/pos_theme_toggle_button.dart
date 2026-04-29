@@ -9,7 +9,8 @@ class PosThemeToggleIconButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dark = context.watch<PosThemeCubit>().state == PosScreenTheme.dark;
+    final settings = context.watch<PosThemeCubit>().state;
+    final dark = settings.mode == PosScreenTheme.dark;
     return IconButton(
       tooltip: dark ? 'Светлая тема' : 'Тёмная тема',
       icon: Icon(dark ? Icons.light_mode_rounded : Icons.dark_mode_rounded),

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -47,6 +48,8 @@ List<_KitchenItemSection> _groupMenuItemsByKitchen(List<AdminMenuItemRow> items)
   }
   for (final list in byStation.values) {
     list.sort((a, b) {
+      final s = a.sortOrder.compareTo(b.sortOrder);
+      if (s != 0) return s;
       final c = a.category.ru.compareTo(b.category.ru);
       if (c != 0) return c;
       return a.name.ru.compareTo(b.name.ru);
@@ -76,9 +79,16 @@ List<_KitchenItemSection> _groupMenuItemsByKitchen(List<AdminMenuItemRow> items)
 }
 
 class AdminMenuItemsPanel extends StatefulWidget {
-  const AdminMenuItemsPanel({super.key, required this.maxBodyWidth});
+  const AdminMenuItemsPanel({
+    super.key,
+    required this.maxBodyWidth,
+    this.restrictGlobalCatalogEdits = false,
+  });
 
   final double maxBodyWidth;
+
+  /// Каталог с глобала: на точке только кухня, порядок и массовые операции — без создания/полного редактирования.
+  final bool restrictGlobalCatalogEdits;
 
   @override
   State<AdminMenuItemsPanel> createState() => _AdminMenuItemsPanelState();
@@ -90,6 +100,8 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
   final Set<String> _selectedIds = {};
   List<KitchenStationRow> _kitchenStations = [];
   bool _kitchensLoading = true;
+
+  bool get _catalogLocked => widget.restrictGlobalCatalogEdits;
 
   @override
   void initState() {
@@ -118,6 +130,98 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
         _kitchenStations = [];
         _kitchensLoading = false;
       });
+    }
+  }
+
+  Future<void> _openKitchenOnlyEditor(
+    BuildContext context,
+    AppLocalizations l10n,
+    AdminMenuItemRow it,
+  ) async {
+    if (_kitchensLoading) await _loadKitchens();
+    if (!mounted) return;
+    final holder = <int?>[it.kitchenStationId];
+    final allowCustomPrice = <bool>[it.allowCustomPrice == 1];
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModal) => AlertDialog(
+          title: Text(
+            it.name.ru,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                DropdownButtonFormField<int?>(
+                  value: holder[0],
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Кухня',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    const DropdownMenuItem<int?>(
+                      value: null,
+                      child: Text('Без кухни'),
+                    ),
+                    ..._kitchenStations.map(
+                      (s) => DropdownMenuItem<int?>(
+                        value: s.id,
+                        child: Text(
+                          s.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                  ],
+                  onChanged: (v) => setModal(() => holder[0] = v),
+                ),
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Ручная цена на кассе'),
+                  subtitle: const Text('При выборе товара кассир вводит цену'),
+                  value: allowCustomPrice[0],
+                  onChanged: (v) => setModal(() => allowCustomPrice[0] = v),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(l10n.actionCancel),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(l10n.actionSave),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final repo = context.read<MenuItemsAdminRepository>();
+    final bloc = context.read<MenuItemsAdminBloc>();
+    try {
+      await repo.updateItem(it.id, {
+        'kitchen_station_id': holder[0],
+        'allow_custom_price': allowCustomPrice[0] ? 1 : 0,
+      });
+      bloc.add(const MenuItemsLoadRequested());
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Параметры товара обновлены')),
+      );
+    } on ApiException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('$e')));
     }
   }
 
@@ -222,11 +326,93 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
     );
   }
 
+  Future<void> _bulkSetCustomPrice(BuildContext context, bool enabled) async {
+    if (_selectedIds.isEmpty) return;
+    final repo = context.read<MenuItemsAdminRepository>();
+    final bloc = context.read<MenuItemsAdminBloc>();
+    final messenger = ScaffoldMessenger.of(context);
+
+    var ok = 0;
+    var fail = 0;
+    String? lastErr;
+    for (final id in _selectedIds.toList()) {
+      try {
+        await repo.updateItem(id, {'allow_custom_price': enabled ? 1 : 0});
+        ok++;
+      } on ApiException catch (e) {
+        fail++;
+        lastErr = e.message;
+      } catch (_) {
+        fail++;
+      }
+    }
+
+    bloc.add(const MenuItemsLoadRequested());
+    final tail = fail > 0
+        ? ' Ошибок: $fail.${lastErr != null ? ' $lastErr' : ''}'
+        : '';
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          '${enabled ? 'Включена' : 'Выключена'} ручная цена: $ok.$tail',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _reorderItemsInSection(
+    BuildContext context,
+    _KitchenItemSection section,
+    int oldIndex,
+    int newIndex,
+  ) async {
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (oldIndex == newIndex) return;
+    if (oldIndex < 0 ||
+        oldIndex >= section.items.length ||
+        newIndex < 0 ||
+        newIndex >= section.items.length) {
+      return;
+    }
+
+    final reordered = List<AdminMenuItemRow>.from(section.items);
+    final moved = reordered.removeAt(oldIndex);
+    reordered.insert(newIndex, moved);
+
+    final repo = context.read<MenuItemsAdminRepository>();
+    final bloc = context.read<MenuItemsAdminBloc>();
+    final messenger = ScaffoldMessenger.of(context);
+
+    var changed = 0;
+    try {
+      for (var i = 0; i < reordered.length; i++) {
+        final it = reordered[i];
+        if (it.sortOrder == i) continue;
+        await repo.updateItem(it.id, {'sort_order': i});
+        changed++;
+      }
+      if (!mounted) return;
+      if (changed > 0) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Порядок товаров обновлен: $changed')),
+        );
+      }
+      bloc.add(const MenuItemsLoadRequested());
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Не удалось изменить порядок товаров: $e')),
+      );
+      bloc.add(const MenuItemsLoadRequested());
+    }
+  }
+
   Widget _menuItemTile(
     BuildContext context,
     AppLocalizations l10n,
     AdminMenuItemRow it, {
     required bool showKitchenInSubtitle,
+    int? reorderListIndex,
   }) {
     final sub = it.tvVolumeVariants.isNotEmpty
         ? '${it.category.ru} · ${it.tvVolumeVariants.map((v) => '${v.label} ${v.priceText}').join(', ')} · ${it.saleUnitDisplay}'
@@ -284,19 +470,30 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (reorderListIndex != null)
+              ReorderableDragStartListener(
+                index: reorderListIndex,
+                child: Icon(
+                  Icons.drag_indicator_rounded,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
             IconButton(
-              tooltip: l10n.adminUsersEdit,
-              icon: const Icon(Icons.edit_outlined),
+              tooltip: _catalogLocked ? 'Кухня' : l10n.adminUsersEdit,
+              icon: Icon(
+                _catalogLocked ? Icons.soup_kitchen_outlined : Icons.edit_outlined,
+              ),
               onPressed: () => _openEditor(context, l10n, it),
             ),
-            IconButton(
-              tooltip: l10n.adminMenuItemDelete,
-              icon: Icon(
-                Icons.delete_outline_rounded,
-                color: Theme.of(context).colorScheme.error,
+            if (!_catalogLocked)
+              IconButton(
+                tooltip: l10n.adminMenuItemDelete,
+                icon: Icon(
+                  Icons.delete_outline_rounded,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                onPressed: () => _confirmDelete(context, l10n, it),
               ),
-              onPressed: () => _confirmDelete(context, l10n, it),
-            ),
           ],
         ),
       ),
@@ -335,19 +532,22 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                     icon: const Icon(Icons.refresh_rounded),
                   ),
                   const SizedBox(width: 8),
-                  BlocBuilder<MenuItemsAdminBloc, MenuItemsAdminState>(
-                    buildWhen: (p, c) =>
-                        p.status != c.status || p.items != c.items,
-                    builder: (context, state) {
-                      return FilledButton.icon(
-                        onPressed: state.status == MenuItemsAdminStatus.loaded
-                            ? () => _openEditor(context, l10n, null)
-                            : null,
-                        icon: const Icon(Icons.add_rounded),
-                        label: Text(l10n.adminMenuItemAdd),
-                      );
-                    },
-                  ),
+                  if (!_catalogLocked)
+                    BlocBuilder<MenuItemsAdminBloc, MenuItemsAdminState>(
+                      buildWhen: (p, c) =>
+                          p.status != c.status || p.items != c.items,
+                      builder: (context, state) {
+                        final canAdd =
+                            state.status == MenuItemsAdminStatus.loaded;
+                        return FilledButton.icon(
+                          onPressed: canAdd
+                              ? () => _openEditor(context, l10n, null)
+                              : null,
+                          icon: const Icon(Icons.add_rounded),
+                          label: Text(l10n.adminMenuItemAdd),
+                        );
+                      },
+                    ),
                 ],
               ),
             ),
@@ -363,39 +563,52 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
-                        child: _kitchensLoading
-                            ? const LinearProgressIndicator(minHeight: 4)
-                            : DropdownButtonFormField<int?>(
-                                key: ValueKey(
-                                  'default_kitchen_$_defaultKitchenStationId',
-                                ),
-                                initialValue: _defaultKitchenStationId,
-                                isExpanded: true,
-                                decoration: const InputDecoration(
-                                  labelText: 'Кухня для новых товаров',
-                                  border: OutlineInputBorder(),
-                                  isDense: true,
-                                ),
-                                items: [
-                                  const DropdownMenuItem<int?>(
-                                    value: null,
-                                    child: Text('Не задано'),
-                                  ),
-                                  ..._kitchenStations.map(
-                                    (s) => DropdownMenuItem<int?>(
-                                      value: s.id,
-                                      child: Text(
-                                        s.name,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
+                        child: _catalogLocked
+                            ? Padding(
+                                padding: const EdgeInsets.only(top: 10, right: 8),
+                                child: Text(
+                                  'Каталог с глобала: кухня (иконка у позиции или пачкой), порядок перетаскиванием.',
+                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
+                                        height: 1.35,
                                       ),
+                                ),
+                              )
+                            : _kitchensLoading
+                                ? const LinearProgressIndicator(minHeight: 4)
+                                : DropdownButtonFormField<int?>(
+                                    key: ValueKey(
+                                      'default_kitchen_$_defaultKitchenStationId',
+                                    ),
+                                    initialValue: _defaultKitchenStationId,
+                                    isExpanded: true,
+                                    decoration: const InputDecoration(
+                                      labelText: 'Кухня для новых товаров',
+                                      border: OutlineInputBorder(),
+                                      isDense: true,
+                                    ),
+                                    items: [
+                                      const DropdownMenuItem<int?>(
+                                        value: null,
+                                        child: Text('Не задано'),
+                                      ),
+                                      ..._kitchenStations.map(
+                                        (s) => DropdownMenuItem<int?>(
+                                          value: s.id,
+                                          child: Text(
+                                            s.name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                    onChanged: (v) => setState(
+                                      () => _defaultKitchenStationId = v,
                                     ),
                                   ),
-                                ],
-                                onChanged: (v) => setState(
-                                  () => _defaultKitchenStationId = v,
-                                ),
-                              ),
                       ),
                       const SizedBox(width: 8),
                       IconButton.filledTonal(
@@ -417,6 +630,16 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                         FilledButton.tonal(
                           onPressed: () => _bulkAssignKitchen(context),
                           child: Text('Кухня (${_selectedIds.length})'),
+                        ),
+                        const SizedBox(width: 4),
+                        FilledButton.tonal(
+                          onPressed: () => _bulkSetCustomPrice(context, true),
+                          child: Text('Ручная цена ON (${_selectedIds.length})'),
+                        ),
+                        const SizedBox(width: 4),
+                        OutlinedButton(
+                          onPressed: () => _bulkSetCustomPrice(context, false),
+                          child: const Text('Ручная цена OFF'),
                         ),
                       ],
                     ],
@@ -559,13 +782,34 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                                             ],
                                           ),
                                         ),
-                                        ...sections[si].items.map(
-                                          (it) => _menuItemTile(
+                                        ReorderableListView.builder(
+                                          buildDefaultDragHandles: false,
+                                          shrinkWrap: true,
+                                          physics:
+                                              const NeverScrollableScrollPhysics(),
+                                          itemCount: sections[si].items.length,
+                                          onReorder: (oldIndex, newIndex) =>
+                                              _reorderItemsInSection(
                                             context,
-                                            l10n,
-                                            it,
-                                            showKitchenInSubtitle: false,
+                                            sections[si],
+                                            oldIndex,
+                                            newIndex,
                                           ),
+                                          itemBuilder: (context, ii) {
+                                            final it = sections[si].items[ii];
+                                            return Container(
+                                              key: ValueKey(
+                                                'menu_item_${sections[si].stationId ?? 'none'}_${it.id}',
+                                              ),
+                                              child: _menuItemTile(
+                                                context,
+                                                l10n,
+                                                it,
+                                                showKitchenInSubtitle: false,
+                                                reorderListIndex: ii,
+                                              ),
+                                            );
+                                          },
                                         ),
                                       ],
                                     ],
@@ -589,6 +833,20 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
     AppLocalizations l10n,
     AdminMenuItemRow? existing,
   ) async {
+    if (existing != null && _catalogLocked) {
+      await _openKitchenOnlyEditor(context, l10n, existing);
+      return;
+    }
+    if (existing == null && _catalogLocked) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Новые товары создаются в глобальной админке. Здесь только кухня и порядок.',
+          ),
+        ),
+      );
+      return;
+    }
     final categories = context.read<CatalogAdminBloc>().state.categories;
     if (categories.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -715,6 +973,7 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
   bool _kitchenLoading = true;
   late bool _available;
   late bool _trackStock;
+  late bool _allowCustomPrice;
   bool _saving = false;
   bool _uploadingImage = false;
 
@@ -751,6 +1010,7 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
         e?.kitchenStationId ?? widget.defaultKitchenStationId;
     _available = (e?.isAvailable ?? 1) == 1;
     _trackStock = (e?.trackStock ?? 1) == 1;
+    _allowCustomPrice = (e?.allowCustomPrice ?? 0) == 1;
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadUnits());
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadKitchenStations());
   }
@@ -996,6 +1256,7 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
           'sku': skuRaw.isEmpty ? null : skuRaw,
           'barcode': bcRaw.isEmpty ? null : bcRaw,
           'track_stock': _trackStock ? 1 : 0,
+          'allow_custom_price': _allowCustomPrice ? 1 : 0,
         };
         if (descRu.isNotEmpty) {
           body['description'] = {'ru': descRu};
@@ -1024,6 +1285,7 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
           'sku': skuRaw.isEmpty ? null : skuRaw,
           'barcode': bcRaw.isEmpty ? null : bcRaw,
           'track_stock': _trackStock ? 1 : 0,
+          'allow_custom_price': _allowCustomPrice ? 1 : 0,
           'description': {'ru': descRu},
           'composition': {'ru': compRu},
           'tv_volume_variants': volParsed,
@@ -1052,7 +1314,7 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
         _isCreate ? l10n.adminMenuItemCreateTitle : l10n.adminMenuItemEditTitle,
       ),
       content: SizedBox(
-        width: 420,
+        width: math.min(420, MediaQuery.sizeOf(context).width * 0.94),
         child: SingleChildScrollView(
           child: Form(
             key: _formKey,
@@ -1346,6 +1608,13 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
                       ? null
                       : (v) => setState(() => _trackStock = v),
                 ),
+                SwitchListTile(
+                  title: const Text('Разрешить ручной ввод цены на кассе'),
+                  value: _allowCustomPrice,
+                  onChanged: _saving
+                      ? null
+                      : (v) => setState(() => _allowCustomPrice = v),
+                ),
                 const SizedBox(height: 8),
                 TextFormField(
                   controller: _descRuCtrl,
@@ -1468,7 +1737,7 @@ class _QuickCreateKitchenStationDialogState
     return AlertDialog(
       title: const Text('Новая кухня'),
       content: SizedBox(
-        width: 420,
+        width: math.min(420, MediaQuery.sizeOf(context).width * 0.94),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

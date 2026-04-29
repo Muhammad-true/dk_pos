@@ -53,7 +53,9 @@ class UsersAdminBloc extends Bloc<UsersAdminEvent, UsersAdminState> {
         username: event.username,
         password: event.password,
         role: event.role,
+        isActive: event.isActive,
         kitchenStationId: event.kitchenStationId,
+        kitchenButtonId: event.kitchenButtonId,
       );
       final list = await _repo.fetchUsers();
       emit(UsersAdminState(status: UsersAdminStatus.loaded, users: list));
@@ -87,7 +89,9 @@ class UsersAdminBloc extends Bloc<UsersAdminEvent, UsersAdminState> {
         event.id,
         username: event.username,
         role: event.role,
+        isActive: event.isActive,
         kitchenStationId: event.kitchenStationId,
+        kitchenButtonId: event.kitchenButtonId,
         password: event.password,
       );
       final list = await _repo.fetchUsers();

@@ -7,7 +7,9 @@ abstract class UsersAdminRemoteDataSource {
     required String username,
     required String password,
     required String role,
+    int? isActive,
     int? kitchenStationId,
+    int? kitchenButtonId,
   });
 
   Future<AdminUserRow> updateUser(
@@ -15,7 +17,9 @@ abstract class UsersAdminRemoteDataSource {
     String? username,
     String? password,
     String? role,
+    int? isActive,
     int? kitchenStationId,
+    int? kitchenButtonId,
   });
 
   Future<void> deleteUser(int id);

@@ -40,7 +40,9 @@ class AdminMenuItemRow {
     this.sku,
     this.barcode,
     required this.trackStock,
+    required this.allowCustomPrice,
     this.tvVolumeVariants = const [],
+    this.tv1Page,
   });
 
   final String id;
@@ -63,7 +65,11 @@ class AdminMenuItemRow {
   final String? sku;
   final String? barcode;
   final int trackStock;
+  final int allowCustomPrice;
   final List<AdminMenuVolumeVariant> tvVolumeVariants;
+
+  /// Номер слайда карусели ТВ1 (1, 2, …) или null — не показывать на ТВ1.
+  final int? tv1Page;
 
   /// Подпись единицы для списка (локаль зависит от запроса единиц / данных строки).
   String get saleUnitDisplay => unitName.ru;
@@ -135,7 +141,14 @@ class AdminMenuItemRow {
       sku: j['sku']?.toString(),
       barcode: j['barcode']?.toString(),
       trackStock: (j['track_stock'] as num?)?.toInt() ?? 1,
+      allowCustomPrice: (j['allow_custom_price'] as num?)?.toInt() ?? 0,
       tvVolumeVariants: _tvVolumeVariantsFromJson(j['tv_volume_variants']),
+      tv1Page: () {
+        final v = j['tv1_page'] ?? j['tv1Page'];
+        if (v == null) return null;
+        if (v is num) return v.toInt();
+        return int.tryParse(v.toString());
+      }(),
     );
   }
 }

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
@@ -17,6 +19,7 @@ Future<void> showOpenTableBillsDialog(BuildContext context) {
   final cubit = context.read<PosHallOrdersCubit>();
   return showDialog<void>(
     context: context,
+    useRootNavigator: true,
     builder: (dialogContext) {
       return BlocProvider.value(
         value: cubit,
@@ -40,19 +43,36 @@ class _OpenBillsDialog extends StatelessWidget {
 
         return AlertDialog(
           backgroundColor: scheme.surfaceContainerLow,
-          title: Text(
-            'Открытые счета по столам',
-            style: theme.textTheme.titleLarge?.copyWith(
-              fontWeight: FontWeight.w800,
-            ),
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Открытые счета по столам',
+                style: theme.textTheme.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Данные с сервера по филиалу: любой неоплаченный заказ с меткой стола '
+                '(касса, официант, другой терминал или старый тест). Не макет приложения.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  height: 1.35,
+                ),
+              ),
+            ],
           ),
           content: SizedBox(
-            width: 440,
-            height: 420,
+            width: math.min(440, MediaQuery.sizeOf(context).width * 0.94),
+            height: math.min(420, MediaQuery.sizeOf(context).height * 0.76),
             child: open.isEmpty
                 ? Center(
                     child: Text(
-                      'Нет неоплаченных счетов.\nОформите заказ с вариантом «Оплатить позже».',
+                      'По филиалу нет неоплаченных счетов со столом в базе.\n'
+                      'Свой новый счёт появится здесь после оформления с привязкой к столу '
+                      '(у официанта — всегда со столом).',
                       textAlign: TextAlign.center,
                       style: theme.textTheme.bodyLarge?.copyWith(
                         color: scheme.onSurfaceVariant,
@@ -205,6 +225,7 @@ Future<void> _showBillDetail(BuildContext outerContext, PosTableBill bill) {
       true;
   return showDialog<void>(
     context: outerContext,
+    useRootNavigator: true,
     builder: (ctx) {
       final theme = Theme.of(ctx);
       final scheme = theme.colorScheme;
@@ -218,7 +239,7 @@ Future<void> _showBillDetail(BuildContext outerContext, PosTableBill bill) {
           ),
         ),
         content: SizedBox(
-          width: 400,
+          width: math.min(400, MediaQuery.sizeOf(ctx).width * 0.94),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,

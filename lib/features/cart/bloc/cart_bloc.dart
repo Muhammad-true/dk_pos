@@ -34,12 +34,12 @@ class CartBloc extends Bloc<CartEvent, CartState> {
   }
 
   void _onAdd(CartItemAdded event, Emitter<CartState> emit) {
-    _repo.add(event.item);
+    _repo.add(event.item, unitPrice: event.unitPrice);
     _emit(emit);
   }
 
   void _onDecrement(CartItemDecremented event, Emitter<CartState> emit) {
-    _repo.decrement(event.itemId);
+    _repo.decrement(event.lineKey);
     _emit(emit);
   }
 

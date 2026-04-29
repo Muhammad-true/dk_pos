@@ -8,10 +8,11 @@ class CartLine extends Equatable {
   final PosMenuItem item;
   final int quantity;
 
+  String get lineKey => '${item.id}::${item.price.toStringAsFixed(2)}';
   double get lineTotal => item.price * quantity;
 
   @override
-  List<Object?> get props => [item.id, quantity];
+  List<Object?> get props => [lineKey, quantity];
 }
 
 /// Метаданные открытого чека (вкладка на кассе).
@@ -43,7 +44,7 @@ class CartState extends Equatable {
     this.checks = const [],
     this.activeCheckId = '',
     this.lines = const {},
-    this.activeOrderTypeIndex = 0,
+    this.activeOrderTypeIndex = -1,
   });
 
   final List<CartCheckInfo> checks;
@@ -52,7 +53,7 @@ class CartState extends Equatable {
   /// Строки **активного** чека.
   final Map<String, CartLine> lines;
 
-  /// 0 — с собой, 1 — на месте, 2 — доставка (как в панели корзины).
+  /// -1 — не выбран, 0 — с собой, 1 — на месте, 2 — доставка.
   final int activeOrderTypeIndex;
 
   List<CartLine> get sortedLines {

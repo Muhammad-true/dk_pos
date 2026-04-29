@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:file_picker/file_picker.dart';
@@ -319,8 +321,8 @@ class _ComboEditorScreenState extends State<ComboEditorScreen> {
             return AlertDialog(
               title: Text(l10n.adminTv2EditorPickItem),
               content: SizedBox(
-                width: 420,
-                height: 400,
+                width: math.min(420, MediaQuery.sizeOf(ctx).width * 0.94),
+                height: math.min(400, MediaQuery.sizeOf(ctx).height * 0.76),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [

@@ -42,6 +42,8 @@ class AuthRepository {
     }
   }
 
+  Future<List<LoginUserOption>> fetchLoginUsers() => _remote.fetchLoginUsers();
+
   Future<(String token, UserModel user)> login({
     required String username,
     required String password,
@@ -70,6 +72,9 @@ class AuthRepository {
         'kitchen_station_id': u.kitchenStationId,
         'kitchen_station_name': u.kitchenStationName,
         'kitchen_station_type': u.kitchenStationType,
+        'kitchen_button_id': u.kitchenButtonId,
+        'kitchen_button_name': u.kitchenButtonName,
+        'kitchen_button_color_hex': u.kitchenButtonColorHex,
       };
 
   Future<void> cacheUser(UserModel user) async {

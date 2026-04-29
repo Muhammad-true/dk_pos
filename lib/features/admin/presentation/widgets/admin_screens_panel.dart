@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -781,7 +782,7 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
         _isCreate ? l10n.adminScreenCreateTitle : l10n.adminScreenEditTitle,
       ),
       content: SizedBox(
-        width: 440,
+        width: math.min(440, MediaQuery.sizeOf(context).width * 0.94),
         child: SingleChildScrollView(
           child: Form(
             key: _formKey,

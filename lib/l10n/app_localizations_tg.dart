@@ -1340,7 +1340,7 @@ class AppLocalizationsTg extends AppLocalizations {
   String get roleAdmin => 'Мудир';
 
   @override
-  String get roleWarehouse => 'Анбор';
+  String get roleWarehouse => 'Ошхона';
 
   @override
   String get roleCashier => 'Касса';

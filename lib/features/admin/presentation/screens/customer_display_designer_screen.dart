@@ -43,7 +43,9 @@ class _CustomerDisplayDesignerScreenState
     _headlineCtrl = TextEditingController(text: _config.left.headline);
     _brandTitleCtrl = TextEditingController(text: _config.left.brandTitle);
     _descriptionCtrl = TextEditingController(text: _config.left.description);
-    _rotationCtrl = TextEditingController(text: _config.rotationSeconds.toString());
+    _rotationCtrl = TextEditingController(
+      text: _config.rotationSeconds.toString(),
+    );
     _transitionCtrl = TextEditingController(
       text: _config.transitionDurationMs.toString(),
     );
@@ -60,9 +62,11 @@ class _CustomerDisplayDesignerScreenState
   }
 
   void _syncTopLevelControllers() {
-    final rotation = int.tryParse(_rotationCtrl.text.trim()) ?? _config.rotationSeconds;
+    final rotation =
+        int.tryParse(_rotationCtrl.text.trim()) ?? _config.rotationSeconds;
     final transition =
-        int.tryParse(_transitionCtrl.text.trim()) ?? _config.transitionDurationMs;
+        int.tryParse(_transitionCtrl.text.trim()) ??
+        _config.transitionDurationMs;
     _config = _config.copyWith(
       left: _config.left.copyWith(
         headline: _headlineCtrl.text.trim(),
@@ -84,9 +88,7 @@ class _CustomerDisplayDesignerScreenState
         selected.name,
       );
       setState(() {
-        _config = _config.copyWith(
-          left: _config.left.copyWith(logoPath: path),
-        );
+        _config = _config.copyWith(left: _config.left.copyWith(logoPath: path));
       });
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -105,7 +107,10 @@ class _CustomerDisplayDesignerScreenState
       final updated = [..._config.cards];
       final card = updated[index];
       updated[index] = forQr
-          ? card.copyWith(qrImagePath: path, qrMode: CustomerDisplayQrMode.image)
+          ? card.copyWith(
+              qrImagePath: path,
+              qrMode: CustomerDisplayQrMode.image,
+            )
           : card.copyWith(logoPath: path);
       setState(() => _config = _config.copyWith(cards: updated));
     } finally {
@@ -159,20 +164,21 @@ class _CustomerDisplayDesignerScreenState
     try {
       final base = Map<String, dynamic>.from(widget.screen.config ?? const {});
       base['customerDisplay'] = _config.toJson();
-      final updated = await context.read<ScreensAdminRepository>().updateScreen(
-        widget.screen.id,
-        {
-          'name': widget.screen.name,
-          'slug': widget.screen.slug,
-          'type': 'customer_display',
-          'sort_order': widget.screen.sortOrder,
-          'is_active': widget.screen.isActive ? 1 : 0,
-          'config': base,
-        },
-      );
+      final updated = await context
+          .read<ScreensAdminRepository>()
+          .updateScreen(widget.screen.id, {
+            'name': widget.screen.name,
+            'slug': widget.screen.slug,
+            'type': 'customer_display',
+            'sort_order': widget.screen.sortOrder,
+            'is_active': widget.screen.isActive ? 1 : 0,
+            'config': base,
+          });
       if (!mounted) return;
       messenger.showSnackBar(
-        const SnackBar(content: Text('Конструктор клиентского экрана сохранен')),
+        const SnackBar(
+          content: Text('Конструктор клиентского экрана сохранен'),
+        ),
       );
       Navigator.of(context).pop(updated);
     } on ApiException catch (e) {
@@ -271,14 +277,14 @@ class _CustomerDisplayDesignerScreenState
                         ? VisualDensity.compact
                         : VisualDensity.standard,
                     padding: phoneLayout
-                        ? const EdgeInsets.symmetric(horizontal: 10, vertical: 6)
+                        ? const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 6,
+                          )
                         : null,
                   ),
                   onPressed: _saving ? null : _save,
-                  icon: Icon(
-                    Icons.save_rounded,
-                    size: phoneLayout ? 18 : 24,
-                  ),
+                  icon: Icon(Icons.save_rounded, size: phoneLayout ? 18 : 24),
                   label: const Text('Сохранить'),
                 ),
               ),
@@ -308,9 +314,7 @@ class _CustomerDisplayDesignerScreenState
     return MediaQuery(
       data: mq.copyWith(textScaler: TextScaler.linear(phoneFactor)),
       child: Theme(
-        data: Theme.of(context).copyWith(
-          visualDensity: VisualDensity.compact,
-        ),
+        data: Theme.of(context).copyWith(visualDensity: VisualDensity.compact),
         child: screen(),
       ),
     );
@@ -405,14 +409,12 @@ class _DesignerEditorPane extends StatelessWidget {
             if (!readOnly)
               FilledButton.tonalIcon(
                 style: FilledButton.styleFrom(
-                  visualDensity:
-                      compact ? VisualDensity.compact : VisualDensity.standard,
+                  visualDensity: compact
+                      ? VisualDensity.compact
+                      : VisualDensity.standard,
                 ),
                 onPressed: saving ? null : onPickLeftLogo,
-                icon: Icon(
-                  Icons.image_outlined,
-                  size: compact ? 18 : 24,
-                ),
+                icon: Icon(Icons.image_outlined, size: compact ? 18 : 24),
                 label: const Text('Загрузить логотип слева'),
               ),
             if ((config.left.logoPath ?? '').trim().isNotEmpty)
@@ -455,21 +457,21 @@ class _DesignerEditorPane extends StatelessWidget {
         SizedBox(height: compact ? 18 : 24),
         Row(
           children: [
-            Expanded(child: Text('Карточки', style: theme.textTheme.titleLarge)),
+            Expanded(
+              child: Text('Карточки', style: theme.textTheme.titleLarge),
+            ),
             if (!readOnly)
               FilledButton.icon(
                 style: FilledButton.styleFrom(
-                  visualDensity:
-                      compact ? VisualDensity.compact : VisualDensity.standard,
+                  visualDensity: compact
+                      ? VisualDensity.compact
+                      : VisualDensity.standard,
                   padding: compact
                       ? const EdgeInsets.symmetric(horizontal: 10, vertical: 6)
                       : null,
                 ),
                 onPressed: saving ? null : onAddCard,
-                icon: Icon(
-                  Icons.add_rounded,
-                  size: compact ? 18 : 24,
-                ),
+                icon: Icon(Icons.add_rounded, size: compact ? 18 : 24),
                 label: const Text('Добавить карточку'),
               ),
           ],
@@ -477,6 +479,7 @@ class _DesignerEditorPane extends StatelessWidget {
         SizedBox(height: gap),
         for (var i = 0; i < config.cards.length; i++)
           _CardEditorTile(
+            key: ValueKey('cd_card_${config.cards[i].id}'),
             index: i,
             card: config.cards[i],
             readOnly: readOnly,
@@ -501,6 +504,7 @@ class _DesignerEditorPane extends StatelessWidget {
 
 class _CardEditorTile extends StatelessWidget {
   const _CardEditorTile({
+    super.key,
     required this.index,
     required this.card,
     required this.readOnly,
@@ -548,8 +552,9 @@ class _CardEditorTile extends StatelessWidget {
                 ),
                 if (!readOnly) ...[
                   IconButton(
-                    visualDensity:
-                        compact ? VisualDensity.compact : VisualDensity.standard,
+                    visualDensity: compact
+                        ? VisualDensity.compact
+                        : VisualDensity.standard,
                     constraints: compact
                         ? const BoxConstraints(minWidth: 36, minHeight: 36)
                         : null,
@@ -558,8 +563,9 @@ class _CardEditorTile extends StatelessWidget {
                     icon: Icon(Icons.arrow_upward_rounded, size: iconSize),
                   ),
                   IconButton(
-                    visualDensity:
-                        compact ? VisualDensity.compact : VisualDensity.standard,
+                    visualDensity: compact
+                        ? VisualDensity.compact
+                        : VisualDensity.standard,
                     constraints: compact
                         ? const BoxConstraints(minWidth: 36, minHeight: 36)
                         : null,
@@ -568,8 +574,9 @@ class _CardEditorTile extends StatelessWidget {
                     icon: Icon(Icons.arrow_downward_rounded, size: iconSize),
                   ),
                   IconButton(
-                    visualDensity:
-                        compact ? VisualDensity.compact : VisualDensity.standard,
+                    visualDensity: compact
+                        ? VisualDensity.compact
+                        : VisualDensity.standard,
                     constraints: compact
                         ? const BoxConstraints(minWidth: 36, minHeight: 36)
                         : null,
@@ -607,7 +614,8 @@ class _CardEditorTile extends StatelessWidget {
               onChanged: readOnly
                   ? null
                   : (value) {
-                      if (value != null) onChanged(card.copyWith(qrMode: value));
+                      if (value != null)
+                        onChanged(card.copyWith(qrMode: value));
                     },
               items: const [
                 DropdownMenuItem(
@@ -667,7 +675,8 @@ class _CardEditorTile extends StatelessWidget {
               onChanged: readOnly
                   ? null
                   : (value) {
-                      if (value != null) onChanged(card.copyWith(animation: value));
+                      if (value != null)
+                        onChanged(card.copyWith(animation: value));
                     },
               items: const [
                 DropdownMenuItem(

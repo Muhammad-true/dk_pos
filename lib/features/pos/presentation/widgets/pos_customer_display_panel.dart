@@ -13,9 +13,6 @@ class PosCustomerDisplayPanel extends StatelessWidget {
     this.idleContentConfig,
   });
 
-  static const _bankQrPayload =
-      'https://pay.example.bank/merchant/doner-kebab-pos';
-
   final CustomerDisplayCartData cart;
   final CustomerDisplayContentConfig? idleContentConfig;
 
@@ -43,13 +40,16 @@ class PosCustomerDisplayPanel extends StatelessWidget {
         child: cart.isEmpty
             ? _CustomerIdleView(
                 key: const ValueKey('idle'),
-                config: idleContentConfig ?? CustomerDisplayContentConfig.fallback(),
+                config:
+                    idleContentConfig ??
+                    CustomerDisplayContentConfig.fallback(),
               )
             : _CustomerReceiptView(
                 key: const ValueKey('receipt'),
                 cart: cart,
-                promoConfig: idleContentConfig ?? CustomerDisplayContentConfig.fallback(),
-                bankQrPayload: _bankQrPayload,
+                promoConfig:
+                    idleContentConfig ??
+                    CustomerDisplayContentConfig.fallback(),
               ),
       ),
     );
@@ -132,9 +132,7 @@ class _CustomerIdleView extends StatelessWidget {
         const _AmbientSteamBackdrop(),
         Padding(
           padding: const EdgeInsets.all(28),
-          child: CustomerDisplayIdleRenderer(
-            config: config,
-          ),
+          child: CustomerDisplayIdleRenderer(config: config),
         ),
       ],
     );
@@ -233,200 +231,226 @@ class _CustomerReceiptView extends StatelessWidget {
     super.key,
     required this.cart,
     required this.promoConfig,
-    required this.bankQrPayload,
   });
 
   final CustomerDisplayCartData cart;
   final CustomerDisplayContentConfig promoConfig;
-  final String bankQrPayload;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Ваш заказ',
-                        style: theme.textTheme.headlineSmall?.copyWith(
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        const _AmbientSteamBackdrop(),
+        Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 18,
+                  vertical: 16,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(24),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.08),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Ваш заказ',
+                            style: theme.textTheme.headlineSmall?.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '${cart.itemCount} позиций',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              color: const Color(0xFFFFD166),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE4002B),
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                      child: Text(
+                        formatSomoni(cart.total),
+                        style: theme.textTheme.titleMedium?.copyWith(
                           color: Colors.white,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '${cart.itemCount} позиций',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          color: const Color(0xFFFFD166),
-                          fontWeight: FontWeight.w700,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(
+                      flex: 6,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(28),
                         ),
-                      ),
-                    ],
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE4002B),
-                    borderRadius: BorderRadius.circular(18),
-                  ),
-                  child: Text(
-                    formatSomoni(cart.total),
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  flex: 6,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(28),
-                    ),
-                    child: Column(
-                      children: [
-                        Expanded(
-                          child: ListView.separated(
-                            padding: const EdgeInsets.all(18),
-                            itemCount: cart.lines.length,
-                            separatorBuilder: (_, _) =>
-                                const Divider(height: 18),
-                            itemBuilder: (context, index) {
-                              final line = cart.lines[index];
-                              return Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Container(
-                                    width: 40,
-                                    height: 40,
-                                    decoration: BoxDecoration(
-                                      color: scheme.primary.withValues(
-                                        alpha: 0.10,
-                                      ),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    alignment: Alignment.center,
-                                    child: Text(
-                                      '${line.quantity}x',
-                                      style: theme.textTheme.labelLarge
-                                          ?.copyWith(
-                                            color: scheme.primary,
-                                            fontWeight: FontWeight.w900,
+                        child: Column(
+                          children: [
+                            Expanded(
+                              child: ListView.separated(
+                                padding: const EdgeInsets.all(18),
+                                itemCount: cart.lines.length,
+                                separatorBuilder: (_, _) =>
+                                    const Divider(height: 18),
+                                itemBuilder: (context, index) {
+                                  final line = cart.lines[index];
+                                  return Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Container(
+                                        width: 40,
+                                        height: 40,
+                                        decoration: BoxDecoration(
+                                          color: scheme.primary.withValues(
+                                            alpha: 0.10,
                                           ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Padding(
-                                      padding: const EdgeInsets.only(top: 2),
-                                      child: Text(
-                                        line.name,
+                                          borderRadius: BorderRadius.circular(
+                                            12,
+                                          ),
+                                        ),
+                                        alignment: Alignment.center,
+                                        child: Text(
+                                          '${line.quantity}x',
+                                          style: theme.textTheme.labelLarge
+                                              ?.copyWith(
+                                                color: scheme.primary,
+                                                fontWeight: FontWeight.w900,
+                                              ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 2,
+                                          ),
+                                          child: Text(
+                                            line.name,
+                                            style: theme.textTheme.titleSmall
+                                                ?.copyWith(
+                                                  color: const Color(
+                                                    0xFF161616,
+                                                  ),
+                                                  fontWeight: FontWeight.w800,
+                                                ),
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      Text(
+                                        formatSomoni(line.lineTotal),
                                         style: theme.textTheme.titleSmall
                                             ?.copyWith(
-                                              color: const Color(0xFF161616),
-                                              fontWeight: FontWeight.w800,
+                                              color: const Color(0xFFE4002B),
+                                              fontWeight: FontWeight.w900,
                                             ),
                                       ),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 12),
+                                    ],
+                                  );
+                                },
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.fromLTRB(
+                                18,
+                                14,
+                                18,
+                                18,
+                              ),
+                              decoration: const BoxDecoration(
+                                border: Border(
+                                  top: BorderSide(color: Color(0xFFEAEAEA)),
+                                ),
+                              ),
+                              child: Row(
+                                children: [
                                   Text(
-                                    formatSomoni(line.lineTotal),
-                                    style: theme.textTheme.titleSmall?.copyWith(
-                                      color: const Color(0xFFE4002B),
-                                      fontWeight: FontWeight.w900,
-                                    ),
+                                    'Итого к оплате',
+                                    style: theme.textTheme.titleMedium
+                                        ?.copyWith(
+                                          color: const Color(0xFF171717),
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                  ),
+                                  const Spacer(),
+                                  Text(
+                                    formatSomoni(cart.total),
+                                    style: theme.textTheme.headlineSmall
+                                        ?.copyWith(
+                                          color: const Color(0xFFE4002B),
+                                          fontWeight: FontWeight.w900,
+                                        ),
                                   ),
                                 ],
-                              );
-                            },
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.fromLTRB(18, 14, 18, 18),
-                          decoration: const BoxDecoration(
-                            border: Border(
-                              top: BorderSide(color: Color(0xFFEAEAEA)),
+                              ),
                             ),
-                          ),
-                          child: Row(
-                            children: [
-                              Text(
-                                'Итого к оплате',
-                                style: theme.textTheme.titleMedium?.copyWith(
-                                  color: const Color(0xFF171717),
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                              const Spacer(),
-                              Text(
-                                formatSomoni(cart.total),
-                                style: theme.textTheme.headlineSmall?.copyWith(
-                                  color: const Color(0xFFE4002B),
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                            ],
-                          ),
+                          ],
                         ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  flex: 4,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.06),
-                      borderRadius: BorderRadius.circular(28),
-                      border: Border.all(
-                        color: Colors.white.withValues(alpha: 0.10),
                       ),
                     ),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                    clipBehavior: Clip.antiAlias,
-                    child: CustomerDisplayPromoCarousel(
-                      config: promoConfig,
-                      paymentQrData: bankQrPayload,
+                    const SizedBox(width: 16),
+                    Expanded(
+                      flex: 4,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.06),
+                          borderRadius: BorderRadius.circular(28),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.10),
+                          ),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 14,
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: CustomerDisplayPromoCarousel(
+                          config: promoConfig,
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

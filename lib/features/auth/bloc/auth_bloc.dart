@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/features/auth/data/auth_repository.dart';
 import 'package:dk_pos/features/auth/data/local_shift_repository.dart';
+import 'package:dk_pos/features/kitchen_board/background/kitchen_background_service.dart';
 import 'package:dk_pos/shared/shared.dart';
 
 import 'auth_event.dart';
@@ -12,7 +13,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   AuthBloc(
     this._repo, {
     LocalShiftRepository? shiftRepo,
-    String branchId = 'branch_1',
+    required String branchId,
     String? terminalId,
   }) : _shiftRepo = shiftRepo,
        _branchId = branchId,
@@ -42,6 +43,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           return;
         } on ApiException catch (e) {
           if (e.statusCode == 401) {
+            await KitchenBackgroundService.stopAndroidKitchenService();
             await _repo.clearSession();
             emit(const AuthState(status: AuthStatus.unauthenticated));
             return;
@@ -77,6 +79,11 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         password: event.password,
       );
       await _repo.persistSession(t, u);
+      if (u.role == 'warehouse') {
+        await KitchenBackgroundService.initialize();
+      } else {
+        await KitchenBackgroundService.stopAndroidKitchenService();
+      }
       await _openShiftSafe();
       emit(AuthState(status: AuthStatus.authenticated, user: u));
     } on ApiException catch (e) {
@@ -103,6 +110,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     Emitter<AuthState> emit,
   ) async {
     await _closeShiftSafe();
+    await KitchenBackgroundService.stopAndroidKitchenService();
     await _repo.clearSession();
     emit(const AuthState(status: AuthStatus.unauthenticated));
   }
@@ -120,9 +128,11 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
   Future<void> _closeShiftSafe() async {
     try {
-      await _shiftRepo?.closeShift(branchId: _branchId);
+      await _shiftRepo
+          ?.closeShift(branchId: _branchId)
+          .timeout(const Duration(seconds: 4));
     } catch (_) {
-      // Смена не должна блокировать выход.
+      // Смена не должна блокировать выход (сеть/таймаут на телефоне).
     }
   }
 }

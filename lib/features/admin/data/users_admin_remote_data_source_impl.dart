@@ -33,7 +33,9 @@ class UsersAdminRemoteDataSourceImpl implements UsersAdminRemoteDataSource {
     required String username,
     required String password,
     required String role,
+    int? isActive,
     int? kitchenStationId,
+    int? kitchenButtonId,
   }) async {
     final res = await _http.post(
       'api/users',
@@ -41,7 +43,9 @@ class UsersAdminRemoteDataSourceImpl implements UsersAdminRemoteDataSource {
         'username': username,
         'password': password,
         'role': role,
+        'is_active': isActive,
         'kitchen_station_id': kitchenStationId,
+        'kitchen_button_id': kitchenButtonId,
       },
     );
     if (res.statusCode != 201) {
@@ -64,13 +68,17 @@ class UsersAdminRemoteDataSourceImpl implements UsersAdminRemoteDataSource {
     String? username,
     String? password,
     String? role,
+    int? isActive,
     int? kitchenStationId,
+    int? kitchenButtonId,
   }) async {
     final body = <String, dynamic>{};
     if (username != null) body['username'] = username;
     if (password != null && password.isNotEmpty) body['password'] = password;
     if (role != null) body['role'] = role;
+    if (isActive != null) body['is_active'] = isActive;
     body['kitchen_station_id'] = kitchenStationId;
+    body['kitchen_button_id'] = kitchenButtonId;
     final res = await _http.patch('api/users/$id', body: body);
     if (res.statusCode != 200) {
       throw ApiException.fromHttp(res.statusCode, res.body);

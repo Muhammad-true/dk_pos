@@ -10,21 +10,22 @@ sealed class CartEvent extends Equatable {
 }
 
 final class CartItemAdded extends CartEvent {
-  const CartItemAdded(this.item);
+  const CartItemAdded(this.item, {this.unitPrice});
 
   final PosMenuItem item;
+  final double? unitPrice;
 
   @override
-  List<Object?> get props => [item.id];
+  List<Object?> get props => [item.id, unitPrice];
 }
 
 final class CartItemDecremented extends CartEvent {
-  const CartItemDecremented(this.itemId);
+  const CartItemDecremented(this.lineKey);
 
-  final String itemId;
+  final String lineKey;
 
   @override
-  List<Object?> get props => [itemId];
+  List<Object?> get props => [lineKey];
 }
 
 /// Очистить позиции **текущего** чека (как «обнулить заказ» на вкладке).

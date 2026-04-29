@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/features/orders/data/local_orders_realtime.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
 import 'package:dk_pos/features/orders/presentation/pos_queue_layout.dart';
@@ -38,11 +38,7 @@ class ExpeditorQueuePanelState extends State<ExpeditorQueuePanel> {
   bool _busy = false;
   String? _error;
 
-  String get _branchId {
-    final v = dotenv.maybeGet('POS_BRANCH_ID')?.trim();
-    if (v != null && v.isNotEmpty) return v;
-    return 'branch_1';
-  }
+  String get _branchId => AppConfig.storeBranchId;
 
   @override
   void initState() {

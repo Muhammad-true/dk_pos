@@ -1347,7 +1347,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get roleAdmin => 'Админ';
 
   @override
-  String get roleWarehouse => 'Склад';
+  String get roleWarehouse => 'Кухня';
 
   @override
   String get roleCashier => 'Касса';

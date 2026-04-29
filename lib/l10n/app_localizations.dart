@@ -2599,7 +2599,7 @@ abstract class AppLocalizations {
   /// No description provided for @roleWarehouse.
   ///
   /// In ru, this message translates to:
-  /// **'Склад'**
+  /// **'Кухня'**
   String get roleWarehouse;
 
   /// No description provided for @roleCashier.

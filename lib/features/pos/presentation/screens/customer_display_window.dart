@@ -1,5 +1,5 @@
-import 'dart:convert';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -70,20 +70,34 @@ class _CustomerDisplayWindowScreenState
   String? get _syncFilePath => widget.arguments['syncFilePath']?.toString();
   bool get _fullscreenMode => widget.arguments['fullscreen'] == true;
 
+  Rect? _secondaryBoundsFromArgs() {
+    final raw = widget.arguments['bounds'];
+    if (raw is! Map) return null;
+    final m = Map<String, dynamic>.from(raw);
+    final x = (m['x'] as num?)?.toDouble();
+    final y = (m['y'] as num?)?.toDouble();
+    final w = (m['width'] as num?)?.toDouble();
+    final h = (m['height'] as num?)?.toDouble();
+    if (x == null || y == null || w == null || h == null) return null;
+    if (w <= 1 || h <= 1) return null;
+    return Rect.fromLTWH(x, y, w, h);
+  }
+
   @override
   void initState() {
     super.initState();
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) {
       return _handleWindowCall(call);
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      await _configureWindow();
-      if (mounted) {
-        setState(() => _isFullscreen = _fullscreenMode);
-      }
-      await _loadCartFromFile();
-      _startPolling();
-    });
+    Future.microtask(_bootstrapCustomerDisplayWindow);
+  }
+
+  Future<void> _bootstrapCustomerDisplayWindow() async {
+    await _configureWindow();
+    if (!mounted) return;
+    setState(() => _isFullscreen = _fullscreenMode);
+    await _loadCartFromFile();
+    _startPolling();
   }
 
   @override
@@ -125,8 +139,7 @@ class _CustomerDisplayWindowScreenState
       setState(() {
         _lastUpdatedAt = updatedAt;
         _cart = CustomerDisplayCartData.fromJson(cartJson);
-        _idleContentConfig =
-            displayConfigJson is Map<String, dynamic>
+        _idleContentConfig = displayConfigJson is Map<String, dynamic>
             ? CustomerDisplayContentConfig.fromJson(displayConfigJson)
             : null;
       });
@@ -138,6 +151,7 @@ class _CustomerDisplayWindowScreenState
   Future<void> _configureWindow() async {
     try {
       await windowManager.ensureInitialized();
+      final secondaryBounds = _secondaryBoundsFromArgs();
       final options = WindowOptions(
         title: 'Customer Display',
         backgroundColor: Colors.black,
@@ -147,6 +161,15 @@ class _CustomerDisplayWindowScreenState
         alwaysOnTop: false,
       );
       await windowManager.waitUntilReadyToShow(options, () async {
+        if (secondaryBounds != null) {
+          try {
+            await windowManager.setBounds(secondaryBounds);
+          } catch (e, stack) {
+            debugPrint(
+              'CustomerDisplayWindowScreen.setBounds(secondary): $e\n$stack',
+            );
+          }
+        }
         await windowManager.show();
         await windowManager.setResizable(!_fullscreenMode);
         if (_fullscreenMode) {
@@ -224,54 +247,25 @@ class _CustomerDisplayWindowToolbar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bar = Container(
+    Widget leftArea = const SizedBox(
       height: 56,
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      child: Row(
-        children: [
-          Icon(
-            canDragWindow ? Icons.open_with_rounded : Icons.tv_rounded,
-            color: Colors.white70,
-            size: 18,
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              canDragWindow
-                  ? 'Перетащите окно на нужный экран'
-                  : 'Экран клиента',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          FilledButton.icon(
-            onPressed: isFullscreen ? onExitFullscreen : onEnterFullscreen,
-            icon: Icon(
-              isFullscreen
-                  ? Icons.fullscreen_exit_rounded
-                  : Icons.fullscreen_rounded,
-            ),
-            label: Text(
-              isFullscreen ? 'Оконный режим' : 'На весь экран',
-            ),
-          ),
-        ],
-      ),
+      child: DecoratedBox(decoration: BoxDecoration(color: Colors.transparent)),
     );
 
     if (canDragWindow) {
-      return DragToMoveArea(child: bar);
+      leftArea = DragToMoveArea(child: leftArea);
     }
 
-    return bar;
+    return Row(
+      children: [
+        Expanded(child: leftArea),
+        GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: isFullscreen ? onExitFullscreen : onEnterFullscreen,
+          child: Container(width: 170, height: 56, color: Colors.transparent),
+        ),
+      ],
+    );
   }
 }
 

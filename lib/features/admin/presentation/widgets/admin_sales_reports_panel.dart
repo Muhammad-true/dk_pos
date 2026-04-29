@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
+import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/formatting/money_format.dart';
 import 'package:dk_pos/features/admin/data/admin_reports_repository.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
@@ -23,8 +24,9 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
   AdminSalesReport? _report;
   bool _loading = false;
   String? _error;
+  bool _compactView = true;
 
-  static const _branchId = 'branch_1';
+  String get _branchId => AppConfig.storeBranchId;
 
   @override
   void initState() {
@@ -121,6 +123,30 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
     }
   }
 
+  double _avgCheck(AdminSalesReportSummary summary) {
+    if (summary.paymentCount <= 0) return 0;
+    return summary.totalAmount / summary.paymentCount;
+  }
+
+  (String label, int count, double total)? _topMethod(
+    AppLocalizations l10n,
+    AdminSalesReport report,
+  ) {
+    if (report.byMethod.isEmpty) return null;
+    final sorted = [...report.byMethod]
+      ..sort((a, b) => b.totalAmount.compareTo(a.totalAmount));
+    final top = sorted.first;
+    return (_methodLabel(l10n, top.method), top.paymentCount, top.totalAmount);
+  }
+
+  (String day, int count, double total)? _topDay(AdminSalesReport report) {
+    if (report.byDay.isEmpty) return null;
+    final sorted = [...report.byDay]
+      ..sort((a, b) => b.totalAmount.compareTo(a.totalAmount));
+    final top = sorted.first;
+    return (top.day, top.paymentCount, top.totalAmount);
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = context.appL10n;
@@ -209,6 +235,22 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
                   : const Icon(Icons.analytics_outlined),
               label: Text(l10n.adminReportsShow),
             ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                FilterChip(
+                  selected: _compactView,
+                  onSelected: (v) => setState(() => _compactView = v),
+                  label: const Text('Краткий режим'),
+                  avatar: Icon(
+                    _compactView ? Icons.view_agenda_rounded : Icons.view_list_rounded,
+                    size: 18,
+                  ),
+                ),
+              ],
+            ),
             if (_error != null) ...[
               const SizedBox(height: 16),
               DecoratedBox(
@@ -231,6 +273,61 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
               _SummaryCard(
                 l10n: l10n,
                 summary: _report!.summary,
+              ),
+              const SizedBox(height: 12),
+              Builder(
+                builder: (context) {
+                  final report = _report!;
+                  final topMethod = _topMethod(l10n, report);
+                  final topDay = _topDay(report);
+                  return Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      SizedBox(
+                        width: 230,
+                        child: _SimpleMetricCard(
+                          title: 'Средний чек',
+                          value: formatSomoni(_avgCheck(report.summary)),
+                          tone: const Color(0xFF1565C0),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 230,
+                        child: _SimpleMetricCard(
+                          title: 'Кассиров в отчёте',
+                          value: '${report.cashierRevenue.byUser.length}',
+                          tone: const Color(0xFF00695C),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 230,
+                        child: _SimpleMetricCard(
+                          title: 'Топ-способ оплаты',
+                          value: topMethod == null
+                              ? '—'
+                              : '${topMethod.$1} · ${formatSomoni(topMethod.$3)}',
+                          tone: const Color(0xFF7B1FA2),
+                        ),
+                      ),
+                      SizedBox(
+                        width: 230,
+                        child: _SimpleMetricCard(
+                          title: 'Пиковый день',
+                          value: topDay == null
+                              ? '—'
+                              : '${topDay.$1} · ${formatSomoni(topDay.$3)}',
+                          tone: const Color(0xFFEF6C00),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Сверху — быстрые итоги, ниже — детализация по способам оплаты, дням, сотрудникам и списку чеков.',
+                style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
               if (_report!.summary.paymentCount == 0)
                 Padding(
@@ -266,16 +363,22 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
                   style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 10),
-                _BreakdownTable(
-                  l10n: l10n,
-                  firstColumnLabel: l10n.adminReportsColumnDay,
-                  rows: _report!.byDay
-                      .map((r) => (r.day, r.paymentCount, r.totalAmount))
-                      .toList(growable: false),
-                ),
+                if (!_compactView)
+                  _BreakdownTable(
+                    l10n: l10n,
+                    firstColumnLabel: l10n.adminReportsColumnDay,
+                    rows: _report!.byDay
+                        .map((r) => (r.day, r.paymentCount, r.totalAmount))
+                        .toList(growable: false),
+                  )
+                else
+                  Text(
+                    'В кратком режиме детализация по дням скрыта.',
+                    style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
                 const SizedBox(height: 20),
                 Text(
-                  'Кто принял оплату',
+                  'Кто принял оплату (касса/официант)',
                   style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 10),
@@ -285,32 +388,40 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  'Кухня: кто готовил',
+                  'Кухня по станциям (готовые позиции)',
                   style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 10),
-                _KitchenTable(rows: _report!.kitchenByStation),
+                if (!_compactView)
+                  _KitchenTable(rows: _report!.kitchenByStation)
+                else
+                  Text(
+                    'В кратком режиме блок кухни скрыт.',
+                    style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
                 const SizedBox(height: 20),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _SimpleMetricCard(
-                        title: 'Официант принял заказов',
-                        value: '${_report!.waiterSummary.ordersAcceptedCount}',
-                        tone: const Color(0xFF7C4DFF),
+                if (!_compactView) ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _SimpleMetricCard(
+                          title: 'Заказов через официанта',
+                          value: '${_report!.waiterSummary.ordersAcceptedCount}',
+                          tone: const Color(0xFF7C4DFF),
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _SimpleMetricCard(
-                        title: 'Выручка на кассе',
-                        value: formatSomoni(_report!.cashierRevenue.totalAmount),
-                        tone: const Color(0xFF1B9E5A),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: _SimpleMetricCard(
+                          title: 'Выручка на кассе',
+                          value: formatSomoni(_report!.cashierRevenue.totalAmount),
+                          tone: const Color(0xFF1B9E5A),
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+                ],
                 Text(
                   'Выручка по кассирам',
                   style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
@@ -322,52 +433,58 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
                 ),
                 const SizedBox(height: 20),
                 Text(
-                  l10n.adminReportsTable,
+                  'Список чеков (оплаченные заказы)',
                   style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
                 ),
                 const SizedBox(height: 10),
-                SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: DataTable(
-                    headingRowColor: WidgetStatePropertyAll(
-                      scheme.surfaceContainerHighest.withValues(alpha: 0.65),
-                    ),
-                    columns: [
-                      DataColumn(label: Text(l10n.adminReportsColumnTime)),
-                      DataColumn(label: Text(l10n.adminReportsColumnOrder)),
-                      DataColumn(label: Text(l10n.adminReportsColumnMethod)),
-                      DataColumn(
-                        label: Align(
-                          alignment: Alignment.centerRight,
-                          child: Text(l10n.adminReportsColumnAmount),
-                        ),
-                        numeric: true,
+                if (!_compactView)
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: DataTable(
+                      headingRowColor: WidgetStatePropertyAll(
+                        scheme.surfaceContainerHighest.withValues(alpha: 0.65),
                       ),
-                    ],
-                    rows: [
-                      for (final p in _report!.payments)
-                        DataRow(
-                          cells: [
-                            DataCell(
-                              Text(
-                                p.createdAtIso.isNotEmpty
-                                    ? _formatPaymentTime(p.createdAtIso, dateTimeFmt)
-                                    : '—',
-                              ),
-                            ),
-                            DataCell(Text(p.orderNumber.isNotEmpty ? p.orderNumber : '—')),
-                            DataCell(Text(_methodLabel(l10n, p.method))),
-                            DataCell(
-                              Align(
-                                alignment: Alignment.centerRight,
-                                child: Text(formatSomoni(p.amount)),
-                              ),
-                            ),
-                          ],
+                      columns: [
+                        DataColumn(label: Text(l10n.adminReportsColumnTime)),
+                        DataColumn(label: Text(l10n.adminReportsColumnOrder)),
+                        DataColumn(label: Text(l10n.adminReportsColumnMethod)),
+                        DataColumn(
+                          label: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text(l10n.adminReportsColumnAmount),
+                          ),
+                          numeric: true,
                         ),
-                    ],
+                      ],
+                      rows: [
+                        for (final p in _report!.payments)
+                          DataRow(
+                            cells: [
+                              DataCell(
+                                Text(
+                                  p.createdAtIso.isNotEmpty
+                                      ? _formatPaymentTime(p.createdAtIso, dateTimeFmt)
+                                      : '—',
+                                ),
+                              ),
+                              DataCell(Text(p.orderNumber.isNotEmpty ? p.orderNumber : '—')),
+                              DataCell(Text(_methodLabel(l10n, p.method))),
+                              DataCell(
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: Text(formatSomoni(p.amount)),
+                                ),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
+                  )
+                else
+                  Text(
+                    'В кратком режиме список чеков скрыт.',
+                    style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                   ),
-                ),
               ],
             ],
           ],

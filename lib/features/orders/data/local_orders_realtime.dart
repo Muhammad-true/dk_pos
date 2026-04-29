@@ -19,6 +19,7 @@ class LocalOrdersRealtime {
   WebSocketChannel? _channel;
   StreamSubscription? _sub;
   final _controller = StreamController<LocalOrdersRealtimeEvent>.broadcast();
+  bool _disposed = false;
 
   Stream<LocalOrdersRealtimeEvent> get events => _controller.stream;
 
@@ -26,21 +27,24 @@ class LocalOrdersRealtime {
     required String branchId,
     String clientType = 'kitchen',
   }) async {
+    if (_disposed) return;
     await disconnect();
     final wsUri = _buildWsUri(branchId: branchId, clientType: clientType);
     _channel = WebSocketChannel.connect(wsUri);
     _sub = _channel!.stream.listen(
       (raw) {
+        if (_disposed || _controller.isClosed) return;
         final event = _tryParse(raw);
         if (event != null) {
           _controller.add(event);
         }
       },
       onError: (error, stack) {
-        if (!_controller.isClosed) _controller.addError(error, stack);
+        if (_disposed || _controller.isClosed) return;
+        _controller.addError(error, stack);
       },
       onDone: () {
-        if (!_controller.isClosed) {
+        if (!_disposed && !_controller.isClosed) {
           _controller.add(
             const LocalOrdersRealtimeEvent(
               type: 'socket.done',
@@ -54,15 +58,22 @@ class LocalOrdersRealtime {
   }
 
   Future<void> disconnect() async {
-    await _sub?.cancel();
+    try {
+      await _sub?.cancel();
+    } catch (_) {}
     _sub = null;
-    await _channel?.sink.close();
+    try {
+      await _channel?.sink.close();
+    } catch (_) {}
     _channel = null;
   }
 
   Future<void> dispose() async {
+    _disposed = true;
     await disconnect();
-    await _controller.close();
+    if (!_controller.isClosed) {
+      await _controller.close();
+    }
   }
 
   Uri _buildWsUri({

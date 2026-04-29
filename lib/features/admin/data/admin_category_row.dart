@@ -57,6 +57,7 @@ class AdminCategoryRow {
     this.subtitle,
     this.parentId,
     this.depth = 0,
+    this.tv1Page,
   });
 
   final int id;
@@ -65,9 +66,12 @@ class AdminCategoryRow {
   final AdminCategoryTranslations? subtitle;
   final int? parentId;
   final int depth;
+  /// Слайд карусели ТВ1 для позиций категории без своего `menu_items.tv1_page`.
+  final int? tv1Page;
 
   factory AdminCategoryRow.fromJson(Map<String, dynamic> j) {
     final pid = j['parent_id'];
+    final tv = j['tv1_page'];
     return AdminCategoryRow(
       id: (j['id'] as num).toInt(),
       sortOrder: (j['sort_order'] as num?)?.toInt() ?? 0,
@@ -81,6 +85,7 @@ class AdminCategoryRow {
           : null,
       parentId: pid == null ? null : (pid as num).toInt(),
       depth: (j['depth'] as num?)?.toInt() ?? 0,
+      tv1Page: tv == null ? null : (tv as num).toInt(),
     );
   }
 }

@@ -9,9 +9,19 @@ import 'package:dk_pos/features/pos/presentation/customer_display_window_service
 ///
 /// Вызывать при выходе из сессии и при смене адреса API, чтобы не тянуть старые URL/байты.
 Future<void> clearPosLocalCaches() async {
-  await CustomerDisplayWindowService.instance.close();
-  await CustomerDisplayWindowService.instance.clearSyncFile();
-  DisplayImageCache.clear();
-  await Tv2VideoCache.instance.clearAll();
-  PaintingBinding.instance.imageCache.clear();
+  try {
+    await CustomerDisplayWindowService.instance.close();
+  } catch (_) {}
+  try {
+    await CustomerDisplayWindowService.instance.clearSyncFile();
+  } catch (_) {}
+  try {
+    DisplayImageCache.clear();
+  } catch (_) {}
+  try {
+    await Tv2VideoCache.instance.clearAll();
+  } catch (_) {}
+  try {
+    PaintingBinding.instance.imageCache.clear();
+  } catch (_) {}
 }

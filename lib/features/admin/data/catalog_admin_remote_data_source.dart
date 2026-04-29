@@ -13,4 +13,15 @@ abstract class CatalogAdminRemoteDataSource {
     required int sortOrder,
     int? parentId,
   });
+
+  Future<void> updateCategorySortOrder({
+    required int id,
+    required int sortOrder,
+  });
+
+  /// Локальный слайд ТВ1 для категории (`tv1_page`); `null` — снять с карусели.
+  Future<void> updateCategoryTv1Page({
+    required int id,
+    int? tv1Page,
+  });
 }

@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
 
 /// Тема рабочих экранов (касса, сборка, кухня): светлая / тёмная, высокий контраст.
-ThemeData buildPosWorkspaceTheme(ThemeData base, PosScreenTheme mode) {
-  return mode == PosScreenTheme.dark ? _buildPosDarkTheme(base) : _buildPosLightTheme(base);
+ThemeData buildPosWorkspaceTheme(ThemeData base, PosScreenTheme mode, Color accentColor) {
+  return mode == PosScreenTheme.dark
+      ? _buildPosDarkTheme(base, accentColor)
+      : _buildPosLightTheme(base, accentColor);
 }
 
 /// Вертикальный градиент под контент (касса, кухня, сборка).
@@ -23,8 +25,8 @@ List<Color> posWorkspaceBodyGradient(ThemeData theme) {
   ];
 }
 
-ThemeData _buildPosDarkTheme(ThemeData base) {
-  const scheme = ColorScheme.dark(
+ThemeData _buildPosDarkTheme(ThemeData base, Color accentColor) {
+  final scheme = const ColorScheme.dark(
     primary: Color(0xFFE4002B),
     onPrimary: Color(0xFFFFFFFF),
     secondary: Color(0xFFFFD166),
@@ -41,7 +43,7 @@ ThemeData _buildPosDarkTheme(ThemeData base) {
     surfaceContainerHigh: Color(0xFF2D3340),
     surfaceContainerHighest: Color(0xFF343B48),
     onSurfaceVariant: Color(0xFFAAB2C3),
-  );
+  ).copyWith(primary: accentColor);
 
   final textTheme = base.textTheme.apply(
     bodyColor: scheme.onSurface,
@@ -101,8 +103,8 @@ ThemeData _buildPosDarkTheme(ThemeData base) {
   );
 }
 
-ThemeData _buildPosLightTheme(ThemeData base) {
-  const scheme = ColorScheme.light(
+ThemeData _buildPosLightTheme(ThemeData base, Color accentColor) {
+  final scheme = const ColorScheme.light(
     primary: Color(0xFFE4002B),
     onPrimary: Color(0xFFFFFFFF),
     secondary: Color(0xFFFFD166),
@@ -119,7 +121,7 @@ ThemeData _buildPosLightTheme(ThemeData base) {
     surfaceContainerHigh: Color(0xFFE0E5EE),
     surfaceContainerHighest: Color(0xFFD8DEE9),
     onSurfaceVariant: Color(0xFF5B6474),
-  );
+  ).copyWith(primary: accentColor);
 
   final textTheme = base.textTheme.apply(
     bodyColor: scheme.onSurface,

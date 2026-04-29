@@ -1,4 +1,5 @@
 import 'package:dk_pos/core/error/api_exception.dart';
+import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/network/http_client.dart';
 
 class LocalOrderLineInput {
@@ -33,6 +34,12 @@ class LocalKitchenQueueItem {
     required this.name,
     required this.quantity,
     this.kitchenLineStatus = 'pending',
+    this.kitchenAcceptedByUserId,
+    this.kitchenAcceptedByUsername,
+    this.kitchenAcceptedAtIso,
+    this.kitchenReadyByUserId,
+    this.kitchenReadyByUsername,
+    this.kitchenReadyAtIso,
     this.kitchenStationId,
     this.kitchenStationName,
   });
@@ -41,6 +48,12 @@ class LocalKitchenQueueItem {
   final String name;
   final int quantity;
   final String kitchenLineStatus;
+  final int? kitchenAcceptedByUserId;
+  final String? kitchenAcceptedByUsername;
+  final String? kitchenAcceptedAtIso;
+  final int? kitchenReadyByUserId;
+  final String? kitchenReadyByUsername;
+  final String? kitchenReadyAtIso;
   final int? kitchenStationId;
   final String? kitchenStationName;
 
@@ -49,6 +62,12 @@ class LocalKitchenQueueItem {
       if (v is int) return v;
       if (v is num) return v.toInt();
       return int.tryParse(v?.toString() ?? '') ?? 0;
+    }
+    int? asNullableInt(dynamic v) {
+      if (v == null) return null;
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      return int.tryParse(v.toString());
     }
 
     final ksRaw = json['kitchenStationId'] ?? json['kitchen_station_id'];
@@ -65,10 +84,39 @@ class LocalKitchenQueueItem {
       quantity: asInt(json['quantity']),
       kitchenLineStatus:
           json['kitchenLineStatus']?.toString() ?? json['kitchen_line_status']?.toString() ?? 'pending',
+      kitchenAcceptedByUserId: asNullableInt(
+        json['kitchenAcceptedByUserId'] ?? json['kitchen_accepted_by_user_id'],
+      ),
+      kitchenAcceptedByUsername:
+          json['kitchenAcceptedByUsername']?.toString() ?? json['kitchen_accepted_by_username']?.toString(),
+      kitchenAcceptedAtIso:
+          json['kitchenAcceptedAt']?.toString() ?? json['kitchen_accepted_at']?.toString(),
+      kitchenReadyByUserId: asNullableInt(
+        json['kitchenReadyByUserId'] ?? json['kitchen_ready_by_user_id'],
+      ),
+      kitchenReadyByUsername:
+          json['kitchenReadyByUsername']?.toString() ?? json['kitchen_ready_by_username']?.toString(),
+      kitchenReadyAtIso: json['kitchenReadyAt']?.toString() ?? json['kitchen_ready_at']?.toString(),
       kitchenStationId: ks,
       kitchenStationName: json['kitchenStationName']?.toString() ?? json['kitchen_station_name']?.toString(),
     );
   }
+}
+
+class LocalKitchenActorProfile {
+  const LocalKitchenActorProfile({
+    required this.id,
+    required this.username,
+    this.kitchenButtonId,
+    this.kitchenButtonName,
+    this.kitchenButtonColorHex,
+  });
+
+  final int id;
+  final String username;
+  final int? kitchenButtonId;
+  final String? kitchenButtonName;
+  final String? kitchenButtonColorHex;
 }
 
 /// Подписи для сборки / кухни: станция «К1», витрина без ожидания кухни.
@@ -203,6 +251,7 @@ class LocalOrdersRepository {
   LocalOrdersRepository(this._http);
 
   final HttpClient _http;
+  String get _defaultBranchId => AppConfig.storeBranchId;
 
   Future<LocalOrderResult> createOrUpdateOrder({
     required String orderId,
@@ -347,10 +396,20 @@ class LocalOrdersRepository {
   Future<void> updateKitchenProgress({
     required String orderId,
     required String action,
+    int? actorUserId,
+    String? menuItemId,
   }) async {
+    final body = <String, dynamic>{'action': action};
+    if (actorUserId != null && actorUserId > 0) {
+      body['actorUserId'] = actorUserId;
+    }
+    final menuItem = (menuItemId ?? '').trim();
+    if (menuItem.isNotEmpty) {
+      body['menuItemId'] = menuItem;
+    }
     final res = await _http.patch(
       'api/local/orders/$orderId/kitchen-progress',
-      body: {'action': action},
+      body: body,
     );
     if (res.statusCode != 200) {
       throw ApiException.fromHttp(
@@ -359,6 +418,41 @@ class LocalOrdersRepository {
         fallbackMessage: 'Не удалось обновить этап кухни',
       );
     }
+  }
+
+  Future<List<LocalKitchenActorProfile>> fetchKitchenTeamMyStation() async {
+    final res = await _http.get('api/local/orders/kitchen-team/my-station');
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Не удалось загрузить список поваров по кухне',
+      );
+    }
+    final body = res.body;
+    if (body is! Map) {
+      throw ApiException(res.statusCode, 'Некорректный ответ kitchen-team');
+    }
+    final raw = body['users'];
+    if (raw is! List) return const [];
+    return raw.whereType<Map>().map((e) {
+      final m = Map<String, dynamic>.from(e);
+      int? asNullableInt(dynamic v) {
+        if (v == null) return null;
+        if (v is int) return v;
+        if (v is num) return v.toInt();
+        return int.tryParse(v.toString());
+      }
+
+      return LocalKitchenActorProfile(
+        id: asNullableInt(m['id']) ?? 0,
+        username: m['username']?.toString() ?? '',
+        kitchenButtonId: asNullableInt(m['kitchenButtonId'] ?? m['kitchen_button_id']),
+        kitchenButtonName: m['kitchenButtonName']?.toString() ?? m['kitchen_button_name']?.toString(),
+        kitchenButtonColorHex:
+            m['kitchenButtonColorHex']?.toString() ?? m['kitchen_button_color_hex']?.toString(),
+      );
+    }).where((e) => e.id > 0 && e.username.trim().isNotEmpty).toList(growable: false);
   }
 
   Future<void> handoffOrder({
@@ -374,6 +468,31 @@ class LocalOrdersRepository {
         res.statusCode,
         res.body,
         fallbackMessage: 'Не удалось выполнить действие выдачи',
+      );
+    }
+  }
+
+  Future<void> cancelOrder({
+    required String orderId,
+    String? reason,
+    String? branchId,
+  }) async {
+    final body = <String, dynamic>{
+      'branchId': branchId ?? _defaultBranchId,
+    };
+    final cleanReason = reason?.trim();
+    if (cleanReason != null && cleanReason.isNotEmpty) {
+      body['reason'] = cleanReason;
+    }
+    final res = await _http.patch(
+      'api/local/orders/$orderId/cancel',
+      body: body,
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Не удалось отменить заказ',
       );
     }
   }
@@ -397,11 +516,11 @@ class LocalOrdersRepository {
 
   /// Неоплаченные счета с привязкой к столу (GET /open-table-bills).
   Future<List<LocalCashierBoardOrder>> fetchCashierIncomingOrders({
-    String branchId = 'branch_1',
+    String? branchId,
   }) async {
     final res = await _http.get(
       'api/local/orders/cashier-incoming',
-      query: {'branchId': branchId},
+      query: {'branchId': branchId ?? _defaultBranchId},
     );
     if (res.statusCode != 200) {
       throw ApiException.fromHttp(
@@ -424,11 +543,11 @@ class LocalOrdersRepository {
   }
 
   Future<List<LocalCashierBoardOrder>> fetchCashierActiveOrders({
-    String branchId = 'branch_1',
+    String? branchId,
   }) async {
     final res = await _http.get(
       'api/local/orders/cashier-active',
-      query: {'branchId': branchId},
+      query: {'branchId': branchId ?? _defaultBranchId},
     );
     if (res.statusCode != 200) {
       throw ApiException.fromHttp(
@@ -452,11 +571,11 @@ class LocalOrdersRepository {
 
   Future<void> acknowledgeCashierIncomingOrder({
     required String orderId,
-    String branchId = 'branch_1',
+    String? branchId,
   }) async {
     final res = await _http.patch(
       'api/local/orders/$orderId/cashier-ack',
-      body: {'branchId': branchId},
+      body: {'branchId': branchId ?? _defaultBranchId},
     );
     if (res.statusCode != 200) {
       throw ApiException.fromHttp(
@@ -468,11 +587,11 @@ class LocalOrdersRepository {
   }
 
   Future<LocalKitchenTodayStats> fetchKitchenMyTodayStats({
-    String branchId = 'branch_1',
+    String? branchId,
   }) async {
     final res = await _http.get(
       'api/local/reports/kitchen-my-today',
-      query: {'branchId': branchId},
+      query: {'branchId': branchId ?? _defaultBranchId},
     );
     if (res.statusCode != 200) {
       throw ApiException.fromHttp(
@@ -495,11 +614,11 @@ class LocalOrdersRepository {
   }
 
   Future<List<LocalOpenTableBillDto>> fetchOpenTableBills({
-    String branchId = 'branch_1',
+    String? branchId,
   }) async {
     final res = await _http.get(
       'api/local/orders/open-table-bills',
-      query: {'branchId': branchId},
+      query: {'branchId': branchId ?? _defaultBranchId},
     );
     if (res.statusCode != 200) {
       throw ApiException.fromHttp(

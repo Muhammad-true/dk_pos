@@ -27,12 +27,7 @@ class _ExpeditorScreenState extends State<ExpeditorScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        leading: context.router.canPop()
-            ? IconButton(
-                icon: const Icon(Icons.arrow_back_rounded),
-                onPressed: () => context.router.maybePop(),
-              )
-            : null,
+        automaticallyImplyLeading: false,
         title: Text(l10n.expeditorTitle),
         actions: [
           const PosThemeToggleIconButton(),

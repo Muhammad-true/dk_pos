@@ -29,4 +29,18 @@ class CatalogAdminRepository {
       parentId: parentId,
     );
   }
+
+  Future<void> updateCategorySortOrder({
+    required int id,
+    required int sortOrder,
+  }) {
+    return _remote.updateCategorySortOrder(id: id, sortOrder: sortOrder);
+  }
+
+  Future<void> updateCategoryTv1Page({
+    required int id,
+    int? tv1Page,
+  }) {
+    return _remote.updateCategoryTv1Page(id: id, tv1Page: tv1Page);
+  }
 }

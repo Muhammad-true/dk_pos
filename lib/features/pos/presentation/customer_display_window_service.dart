@@ -19,6 +19,7 @@ class CustomerDisplayWindowService {
 
   WindowController? _window;
   bool _singleDisplayPreviewMode = false;
+
   /// Синхронизация с файлом / вторым окном только после явного «Экран для клиента».
   bool _sessionActive = false;
   CustomerDisplayContentConfig? _displayContentConfig;
@@ -27,6 +28,7 @@ class CustomerDisplayWindowService {
   );
 
   bool get _isSupported => Platform.isWindows;
+  bool get isSupportedPlatform => _isSupported;
 
   Future<bool> hasSecondaryDisplay() async {
     if (!_isSupported) return false;
@@ -34,7 +36,9 @@ class CustomerDisplayWindowService {
       final displays = await screenRetriever.getAllDisplays();
       return displays.length > 1;
     } catch (e, stack) {
-      debugPrint('CustomerDisplayWindowService.hasSecondaryDisplay: $e\n$stack');
+      debugPrint(
+        'CustomerDisplayWindowService.hasSecondaryDisplay: $e\n$stack',
+      );
       return false;
     }
   }
@@ -51,101 +55,105 @@ class CustomerDisplayWindowService {
     }
     try {
       await _ensureSyncDirectory();
-      List<dynamic> displays;
-      dynamic primaryDisplay;
-      try {
-        displays = await screenRetriever.getAllDisplays();
-        primaryDisplay = await screenRetriever.getPrimaryDisplay();
-      } catch (e, stack) {
-        debugPrint('CustomerDisplayWindowService screen_retriever: $e\n$stack');
-        displays = const [];
-        primaryDisplay = null;
-      }
-      if (displays.length < 2) {
-        if (!allowSingleDisplayPreview) {
-          if (_singleDisplayPreviewMode && _window != null) {
+      for (var attempt = 0; attempt < 3; attempt++) {
+        List<dynamic> displays;
+        dynamic primaryDisplay;
+        try {
+          displays = await screenRetriever.getAllDisplays();
+          primaryDisplay = await screenRetriever.getPrimaryDisplay();
+        } catch (e, stack) {
+          debugPrint(
+            'CustomerDisplayWindowService screen_retriever: $e\n$stack',
+          );
+          displays = const [];
+          primaryDisplay = null;
+        }
+        if (displays.length < 2) {
+          if (!allowSingleDisplayPreview) {
+            if (_singleDisplayPreviewMode && _window != null) {
+              await _window!.show();
+              return true;
+            }
+            await close();
+            return false;
+          }
+          if (_window != null) {
+            _singleDisplayPreviewMode = true;
             await _window!.show();
             return true;
           }
-          await close();
-          return false;
-        }
-        if (_window != null) {
+          final payload = {
+            'type': 'customer_display',
+            'syncFilePath': _syncFile.path,
+            'fullscreen': false,
+          };
+          _window = await DesktopMultiWindow.createWindow(jsonEncode(payload));
           _singleDisplayPreviewMode = true;
+          await _window!.setTitle('Customer Display Preview');
+          await _window!.center();
           await _window!.show();
           return true;
         }
+
+        // Два и более монитора: полноэкранно на не-основном.
+        if (_window != null && _singleDisplayPreviewMode) {
+          await close();
+          await Future<void>.delayed(const Duration(milliseconds: 160));
+          continue;
+        }
+        if (_window != null) {
+          _singleDisplayPreviewMode = false;
+          await _applySecondaryMonitorFrame(_window!, displays, primaryDisplay);
+          await _window!.setTitle('Customer Display');
+          await _window!.show();
+          return true;
+        }
+
+        final targetDisplay = _resolveSecondaryDisplay(
+          displays,
+          primaryDisplay,
+        );
+        final visiblePosition = targetDisplay.visiblePosition as Offset?;
+        final visibleSize =
+            (targetDisplay.visibleSize ?? targetDisplay.size) as Size;
+
         final payload = {
           'type': 'customer_display',
           'syncFilePath': _syncFile.path,
-          'fullscreen': false,
+          'fullscreen': true,
+          if (visiblePosition != null)
+            'bounds': {
+              'x': visiblePosition.dx,
+              'y': visiblePosition.dy,
+              'width': visibleSize.width,
+              'height': visibleSize.height,
+            },
         };
+
         _window = await DesktopMultiWindow.createWindow(jsonEncode(payload));
-        _singleDisplayPreviewMode = true;
-        await _window!.setTitle('Customer Display Preview');
-        await _window!.center();
-        await _window!.show();
-        return true;
-      }
-      if (_window != null) {
         _singleDisplayPreviewMode = false;
-        await _window!.show();
-        return true;
-      }
-
-      dynamic targetDisplay;
-      try {
-        if (primaryDisplay != null) {
-          targetDisplay = displays.cast<dynamic>().firstWhere(
-                (display) => display.id != primaryDisplay.id,
-                orElse: () => displays[1],
-              );
+        await _window!.setTitle('Customer Display');
+        if (visiblePosition != null) {
+          try {
+            await _window!.setFrame(
+              Rect.fromLTWH(
+                visiblePosition.dx,
+                visiblePosition.dy,
+                visibleSize.width,
+                visibleSize.height,
+              ),
+            );
+          } catch (e, stack) {
+            debugPrint('CustomerDisplayWindowService.setFrame: $e\n$stack');
+            await _window!.center();
+          }
         } else {
-          targetDisplay = displays.length > 1 ? displays[1] : displays[0];
-        }
-      } catch (e, stack) {
-        debugPrint('CustomerDisplayWindowService pick display: $e\n$stack');
-        targetDisplay = displays.length > 1 ? displays[1] : displays[0];
-      }
-      final visiblePosition = targetDisplay.visiblePosition as Offset?;
-      final visibleSize =
-          (targetDisplay.visibleSize ?? targetDisplay.size) as Size;
-
-      final payload = {
-        'type': 'customer_display',
-        'syncFilePath': _syncFile.path,
-        'fullscreen': true,
-        if (visiblePosition != null)
-          'bounds': {
-            'x': visiblePosition.dx,
-            'y': visiblePosition.dy,
-            'width': visibleSize.width,
-            'height': visibleSize.height,
-          },
-      };
-
-      _window = await DesktopMultiWindow.createWindow(jsonEncode(payload));
-      _singleDisplayPreviewMode = false;
-      await _window!.setTitle('Customer Display');
-      if (visiblePosition != null) {
-        try {
-          await _window!.setFrame(
-            Rect.fromLTWH(
-              visiblePosition.dx,
-              visiblePosition.dy,
-              visibleSize.width,
-              visibleSize.height,
-            ),
-          );
-        } catch (e, stack) {
-          debugPrint('CustomerDisplayWindowService.setFrame: $e\n$stack');
           await _window!.center();
         }
-      } else {
-        await _window!.center();
+        await _window!.show();
+        return true;
       }
-      await _window!.show();
-      return true;
+      return false;
     } catch (e, stack) {
       debugPrint('CustomerDisplayWindowService.ensureOpened: $e\n$stack');
       await close();
@@ -153,15 +161,64 @@ class CustomerDisplayWindowService {
     }
   }
 
+  static dynamic _resolveSecondaryDisplay(
+    List<dynamic> displays,
+    dynamic primaryDisplay,
+  ) {
+    try {
+      if (primaryDisplay != null) {
+        return displays.cast<dynamic>().firstWhere(
+          (display) => display.id != primaryDisplay.id,
+          orElse: () => displays.length > 1 ? displays[1] : displays[0],
+        );
+      }
+      return displays.length > 1 ? displays[1] : displays[0];
+    } catch (e, stack) {
+      debugPrint(
+        'CustomerDisplayWindowService._resolveSecondaryDisplay: $e\n$stack',
+      );
+      return displays.length > 1 ? displays[1] : displays[0];
+    }
+  }
+
+  Future<void> _applySecondaryMonitorFrame(
+    WindowController w,
+    List<dynamic> displays,
+    dynamic primaryDisplay,
+  ) async {
+    final targetDisplay = _resolveSecondaryDisplay(displays, primaryDisplay);
+    final visiblePosition = targetDisplay.visiblePosition as Offset?;
+    final visibleSize =
+        (targetDisplay.visibleSize ?? targetDisplay.size) as Size;
+    if (visiblePosition != null) {
+      try {
+        await w.setFrame(
+          Rect.fromLTWH(
+            visiblePosition.dx,
+            visiblePosition.dy,
+            visibleSize.width,
+            visibleSize.height,
+          ),
+        );
+      } catch (e, stack) {
+        debugPrint('CustomerDisplayWindowService.setFrame: $e\n$stack');
+        await w.center();
+      }
+    } else {
+      await w.center();
+    }
+  }
+
   /// Открыть окно экрана клиента (второй монитор — полноэкранно, один монитор — окно предпросмотра).
-  Future<void> openCustomerDisplay(CartState cart) async {
-    if (!_isSupported) return;
-    if (AppConfig.isCustomerDisplayWindowDisabled) return;
+  Future<bool> openCustomerDisplay(CartState cart) async {
+    if (!_isSupported) return false;
+    if (AppConfig.isCustomerDisplayWindowDisabled) return false;
     await _saveCartToFile(cart);
     final opened = await ensureOpened(allowSingleDisplayPreview: true);
-    if (!opened) return;
+    if (!opened) return false;
     _sessionActive = true;
     await _saveCartToFile(cart);
+    return true;
   }
 
   /// Обновить корзину на уже открытом экране клиента (не открывает окно само).

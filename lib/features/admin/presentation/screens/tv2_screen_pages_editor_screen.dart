@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
@@ -12,6 +14,7 @@ import 'package:dk_pos/features/admin/data/menu_items_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/screen_page_item_row.dart';
 import 'package:dk_pos/features/admin/data/screens_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/upload_repository.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/tv_video_bg_media_editor.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
 
 const _kTv2PageTypes = ['split', 'drinks', 'carousel', 'list', 'video_bg'];
@@ -591,8 +594,8 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
             return AlertDialog(
               title: Text(l10n.adminTv2EditorPickItem),
               content: SizedBox(
-                width: 460,
-                height: 400,
+                width: math.min(460, MediaQuery.sizeOf(ctx).width * 0.94),
+                height: math.min(400, MediaQuery.sizeOf(ctx).height * 0.76),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -1662,87 +1665,29 @@ class _Tv2OptionalBackgroundVideoEditorState
   @override
   Widget build(BuildContext context) {
     final l10n = widget.l10n;
-    final scheme = Theme.of(context).colorScheme;
-    final theme = Theme.of(context);
     final path = _videoPath();
     final img = _imagePath();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(l10n.adminTv2OptionalVideoTitle, style: theme.textTheme.titleSmall),
-        const SizedBox(height: 4),
-        Text(
-          l10n.adminTv2OptionalVideoHint,
-          style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          path.isEmpty ? l10n.adminTv2VideoBgNoVideo : path,
-          style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: FilledButton.tonalIcon(
-                onPressed: _uploading ? null : _pickVideo,
-                icon: _uploading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.video_file_rounded),
-                label: Text(l10n.adminTv2VideoBgPickVideo),
-              ),
-            ),
-            if (path.isNotEmpty) ...[
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: _uploading
-                    ? null
-                    : () => widget.onPatchTvVideoBg({'path': ''}),
-                child: Text(l10n.adminTv2OptionalVideoClear),
-              ),
-            ],
-          ],
-        ),
-        const SizedBox(height: 16),
-        Text(l10n.adminTv2OptionalPhotoTitle, style: theme.textTheme.titleSmall),
-        const SizedBox(height: 4),
-        Text(
-          l10n.adminTv2OptionalPhotoHint,
-          style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          img.isEmpty ? l10n.adminTv2BackgroundFileEmpty : img,
-          style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: FilledButton.tonalIcon(
-                onPressed: _uploading ? null : _pickImage,
-                icon: const Icon(Icons.image_rounded),
-                label: Text(l10n.adminTv2VideoBgPickPhoto),
-              ),
-            ),
-            if (img.isNotEmpty) ...[
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: _uploading
-                    ? null
-                    : () => widget.onPatchTvVideoBg({'imagePath': ''}),
-                child: Text(l10n.adminTv2OptionalPhotoClear),
-              ),
-            ],
-          ],
+        TvVideoBgMediaEditor(
+          title: l10n.adminTv2OptionalVideoTitle,
+          videoHint: l10n.adminTv2OptionalVideoHint,
+          videoPath: path,
+          videoEmptyText: l10n.adminTv2VideoBgNoVideo,
+          pickVideoText: l10n.adminTv2VideoBgPickVideo,
+          clearVideoText: l10n.adminTv2OptionalVideoClear,
+          imageTitle: l10n.adminTv2OptionalPhotoTitle,
+          imageHint: l10n.adminTv2OptionalPhotoHint,
+          imagePath: img,
+          imageEmptyText: l10n.adminTv2BackgroundFileEmpty,
+          pickImageText: l10n.adminTv2VideoBgPickPhoto,
+          clearImageText: l10n.adminTv2OptionalPhotoClear,
+          uploading: _uploading,
+          onPickVideo: _pickVideo,
+          onClearVideo: () => widget.onPatchTvVideoBg({'path': ''}),
+          onPickImage: _pickImage,
+          onClearImage: () => widget.onPatchTvVideoBg({'imagePath': ''}),
         ),
       ],
     );
@@ -1913,7 +1858,6 @@ class _VideoBgPageEditorState extends State<_VideoBgPageEditor> {
   @override
   Widget build(BuildContext context) {
     final l10n = widget.l10n;
-    final scheme = Theme.of(context).colorScheme;
     final theme = Theme.of(context);
     final path = _videoPath();
     final photoBg = _photoBgPath();
@@ -1923,71 +1867,23 @@ class _VideoBgPageEditorState extends State<_VideoBgPageEditor> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(l10n.adminTv2VideoBgTitle, style: theme.textTheme.titleSmall),
-        const SizedBox(height: 8),
-        Text(
-          path.isEmpty ? l10n.adminTv2VideoBgNoVideo : path,
-          style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: FilledButton.tonalIcon(
-                onPressed: _uploading ? null : _pickVideo,
-                icon: _uploading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.video_file_rounded),
-                label: Text(l10n.adminTv2VideoBgPickVideo),
-              ),
-            ),
-            if (path.isNotEmpty) ...[
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: _uploading ? null : () => widget.onPatchTvVideoBg({'path': ''}),
-                child: Text(l10n.adminTv2OptionalVideoClear),
-              ),
-            ],
-          ],
-        ),
-        const SizedBox(height: 14),
-        Text(l10n.adminTv2OptionalPhotoTitle, style: theme.textTheme.titleSmall),
-        const SizedBox(height: 4),
-        Text(
-          l10n.adminTv2OptionalPhotoHint,
-          style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          photoBg.isEmpty ? l10n.adminTv2BackgroundFileEmpty : photoBg,
-          style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(
-              child: FilledButton.tonalIcon(
-                onPressed: _uploading ? null : _pickPhotoBg,
-                icon: const Icon(Icons.image_rounded),
-                label: Text(l10n.adminTv2VideoBgPickPhoto),
-              ),
-            ),
-            if (photoBg.isNotEmpty) ...[
-              const SizedBox(width: 8),
-              OutlinedButton(
-                onPressed: _uploading ? null : () => widget.onPatchTvVideoBg({'imagePath': ''}),
-                child: Text(l10n.adminTv2VideoBgClearPhoto),
-              ),
-            ],
-          ],
+        TvVideoBgMediaEditor(
+          title: l10n.adminTv2VideoBgTitle,
+          videoPath: path,
+          videoEmptyText: l10n.adminTv2VideoBgNoVideo,
+          pickVideoText: l10n.adminTv2VideoBgPickVideo,
+          clearVideoText: l10n.adminTv2OptionalVideoClear,
+          imageTitle: l10n.adminTv2OptionalPhotoTitle,
+          imageHint: l10n.adminTv2OptionalPhotoHint,
+          imagePath: photoBg,
+          imageEmptyText: l10n.adminTv2BackgroundFileEmpty,
+          pickImageText: l10n.adminTv2VideoBgPickPhoto,
+          clearImageText: l10n.adminTv2VideoBgClearPhoto,
+          uploading: _uploading,
+          onPickVideo: _pickVideo,
+          onClearVideo: () => widget.onPatchTvVideoBg({'path': ''}),
+          onPickImage: _pickPhotoBg,
+          onClearImage: () => widget.onPatchTvVideoBg({'imagePath': ''}),
         ),
         const SizedBox(height: 8),
         FilterChip(

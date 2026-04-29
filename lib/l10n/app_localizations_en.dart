@@ -1344,7 +1344,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get roleAdmin => 'Admin';
 
   @override
-  String get roleWarehouse => 'Warehouse';
+  String get roleWarehouse => 'Kitchen';
 
   @override
   String get roleCashier => 'Cashier';

@@ -1,5 +1,6 @@
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 
+import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/core/network/http_client.dart';
 
@@ -26,11 +27,7 @@ class LocalHardwareRepository {
 
   final HttpClient _http;
 
-  String get _defaultBranchId {
-    final v = dotenv.maybeGet('POS_BRANCH_ID')?.trim();
-    if (v != null && v.isNotEmpty) return v;
-    return 'branch_1';
-  }
+  String get _defaultBranchId => AppConfig.storeBranchId;
 
   String get _defaultTerminalId {
     final v = dotenv.maybeGet('POS_TERMINAL_ID')?.trim();

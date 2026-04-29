@@ -8,10 +8,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:dk_digitial_menu/core/app_config.dart' as dm_app_config;
 
 import 'package:dk_pos/app/app_update_info.dart';
 import 'package:dk_pos/core/cache/pos_local_cache_cleanup.dart';
+import 'package:dk_pos/features/license/global_license_bootstrap.dart';
+import 'package:dk_pos/features/license/license_local_api.dart';
+import 'package:dk_pos/features/license/license_global_api.dart';
 import 'package:dk_pos/app/dk_pos_app.dart';
 import 'package:dk_pos/app/locale/locale_bloc.dart';
 import 'package:dk_pos/app/locale/locale_event.dart';
@@ -47,13 +51,19 @@ import 'package:dk_pos/features/admin/data/admin_reports_repository.dart';
 import 'package:dk_pos/features/admin/data/users_admin_remote_data_source_impl.dart';
 import 'package:dk_pos/features/admin/data/users_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/kitchen_stations_repository.dart';
+import 'package:dk_pos/features/admin/data/kitchen_buttons_repository.dart';
 import 'package:dk_pos/features/admin/data/local_audio_settings_repository.dart';
+import 'package:dk_pos/features/admin/data/local_receipt_settings_repository.dart';
 import 'package:dk_pos/features/hardware/data/local_hardware_repository.dart';
 import 'package:dk_pos/features/menu/data/menu_remote_data_source_impl.dart';
 import 'package:dk_pos/features/menu/data/menu_repository.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
 import 'package:dk_pos/features/payments/data/local_payments_repository.dart';
+import 'package:dk_pos/features/payments/data/local_payment_methods_repository.dart';
+import 'package:dk_pos/features/loyalty/data/local_loyalty_repository.dart';
+import 'package:dk_pos/features/kitchen_board/background/kitchen_background_service.dart';
 import 'package:dk_pos/features/pos/presentation/screens/customer_display_window.dart';
+import 'package:dk_pos/features/update/global_release_check.dart';
 import 'package:dk_pos/theme/app_theme.dart';
 
 String _formatDotenvError(Object e) =>
@@ -69,7 +79,8 @@ String _formatStartupError(Object e) {
   if (e is ApiException) {
     final msg = e.message;
     final lower = msg.toLowerCase();
-    final isConn = e.statusCode == 0 ||
+    final isConn =
+        e.statusCode == 0 ||
         lower.contains('connection refused') ||
         lower.contains('connection reset') ||
         lower.contains('failed host lookup') ||
@@ -227,33 +238,174 @@ class _PosBootstrapGate extends StatefulWidget {
 }
 
 class _PosBootstrapGateState extends State<_PosBootstrapGate> {
+  static final Uri _franchisePortalUri = Uri.parse(
+    'https://franchise.donerkebab.tj',
+  );
+
   _BootPayload? _payload;
   final _ipController = TextEditingController();
+  final _licenseKeyController = TextEditingController();
   bool _loading = true;
   String? _error;
+  String? _licenseNetworkError;
+  bool _licenseNetworkSuggestServer = false;
+  String? _licenseFormError;
+  bool _licenseNeedsKey = false;
   AppUpdateInfo? _blockingUpdate;
+
+  /// Подпись под индикатором при старте (сначала лицензия через локальный API).
+  String? _loadingSubtitle;
 
   @override
   void initState() {
     super.initState();
     _ipController.text = AppConfig.isLocalhostApi ? '' : AppConfig.apiOrigin;
-    _init();
+    _runStartupPipeline();
   }
 
   @override
   void dispose() {
     _ipController.dispose();
+    _licenseKeyController.dispose();
     super.dispose();
   }
 
-  Future<void> _init() async {
-    await _bootstrapApp();
+  Future<void> _runStartupPipeline() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+      _licenseNetworkError = null;
+      _licenseNetworkSuggestServer = false;
+      _licenseFormError = null;
+      _licenseNeedsKey = false;
+      _payload = null;
+      _blockingUpdate = null;
+      _loadingSubtitle = 'Проверка лицензии на локальном сервере…';
+    });
+    final lr = await GlobalLicenseBootstrap.evaluateBeforePos();
+    if (!mounted) return;
+    if (lr is GlobalLicenseStartupNeedKey) {
+      setState(() {
+        _loading = false;
+        _loadingSubtitle = null;
+        _licenseNeedsKey = true;
+      });
+    } else if (lr is GlobalLicenseStartupBlocked) {
+      if (lr.suggestServerEndpoint) {
+        _ipController.text = AppConfig.apiOrigin;
+      }
+      setState(() {
+        _loading = false;
+        _loadingSubtitle = null;
+        _licenseNetworkError = lr.message;
+        _licenseNetworkSuggestServer = lr.suggestServerEndpoint;
+      });
+    } else if (lr is GlobalLicenseStartupOk) {
+      if (!mounted) return;
+      setState(() => _loadingSubtitle = 'Загрузка кассы…');
+      await _syncDefaultStoreBranchIdFromLocalLicense();
+      if (!mounted) return;
+      await _bootstrapApp();
+    }
+  }
+
+  Future<void> _openFranchisePortal() async {
+    try {
+      final ok = await launchUrl(
+        _franchisePortalUri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!ok && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Не удалось открыть ссылку в браузере')),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Откройте вручную: ${_franchisePortalUri.host}'),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _submitLicense() async {
+    final key = _licenseKeyController.text.trim();
+    if (key.isEmpty) {
+      setState(() => _licenseFormError = 'Введите ключ лицензии');
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _licenseFormError = null;
+      _loadingSubtitle = 'Сохранение лицензии на сервере (локальная БД)…';
+    });
+    try {
+      await GlobalLicenseBootstrap.activateAndPersist(key);
+      if (!mounted) return;
+      setState(() {
+        _licenseNeedsKey = false;
+        _loadingSubtitle = 'Загрузка кассы…';
+      });
+      await _syncDefaultStoreBranchIdFromLocalLicense();
+      if (!mounted) return;
+      await _bootstrapApp();
+    } on LicenseApiException catch (e) {
+      if (!mounted) return;
+      if (e.code == 'LOCAL_SERVER_UNREACHABLE') {
+        _ipController.text = AppConfig.apiOrigin;
+        setState(() {
+          _loading = false;
+          _loadingSubtitle = null;
+          _licenseNeedsKey = false;
+          _licenseFormError = null;
+          _licenseNetworkError = e.message;
+          _licenseNetworkSuggestServer = true;
+        });
+        return;
+      }
+      setState(() {
+        _loading = false;
+        _loadingSubtitle = null;
+        _licenseFormError = e.message;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadingSubtitle = null;
+        _licenseFormError = e.toString();
+      });
+    }
+  }
+
+  Future<void> _syncDefaultStoreBranchIdFromLocalLicense() async {
+    try {
+      final dio = createDio();
+      final status = await LicenseLocalApi(dio).getStatus();
+      final fr = status['franchise'];
+      if (fr is Map) {
+        final id = fr['id'];
+        final n = id is int
+            ? id
+            : int.tryParse(id is num ? id.toString() : (id?.toString() ?? ''));
+        if (n != null && n > 0) {
+          AppConfig.setDefaultStoreBranchIdFromFranchise(n);
+          return;
+        }
+      }
+    } catch (_) {}
+    AppConfig.clearDefaultStoreBranchIdFromFranchise();
   }
 
   Future<void> _bootstrapApp() async {
     setState(() {
       _loading = true;
       _error = null;
+      _loadingSubtitle ??= 'Загрузка кассы…';
     });
     try {
       final kv = await SharedPreferencesKeyValueStore.create();
@@ -273,6 +425,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       final menuRepo = MenuRepository(menuRemote);
       final usersAdminRepo = UsersAdminRepository(usersAdminRemote);
       final kitchenStationsRepo = KitchenStationsRepository(http);
+      final kitchenButtonsRepo = KitchenButtonsRepository(http);
       final catalogAdminRepo = CatalogAdminRepository(catalogAdminRemote);
       final appVersionsRepo = AppVersionsRepository(appVersionsRemote);
       final menuItemsAdminRepo = MenuItemsAdminRepository(menuItemsAdminRemote);
@@ -283,9 +436,12 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       final menuUnitsRepo = MenuUnitsRepository(http);
       final uploadRepo = UploadRepository(http);
       final localAudioSettingsRepo = LocalAudioSettingsRepository(http);
+      final localReceiptSettingsRepo = LocalReceiptSettingsRepository(http);
       final localHardwareRepo = LocalHardwareRepository(http);
       final localOrdersRepo = LocalOrdersRepository(http);
       final localPaymentsRepo = LocalPaymentsRepository(http);
+      final localPaymentMethodsRepo = LocalPaymentMethodsRepository(http);
+      final localLoyaltyRepo = LocalLoyaltyRepository(http);
       final adminReportsRepo = AdminReportsRepository(http);
       final cartRepo = CartRepository();
       final updateInfo = await _reportInstalledVersion(http);
@@ -295,6 +451,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           _blockingUpdate = updateInfo;
           _payload = null;
           _loading = false;
+          _loadingSubtitle = null;
         });
         return;
       }
@@ -302,26 +459,28 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       final authBloc = AuthBloc(
         authRepo,
         shiftRepo: shiftRepo,
-        branchId: dotenv.maybeGet('POS_BRANCH_ID')?.trim().isNotEmpty == true
-            ? dotenv.maybeGet('POS_BRANCH_ID')!.trim()
-            : 'branch_1',
+        branchId: AppConfig.storeBranchId,
         terminalId: dotenv.maybeGet('POS_TERMINAL_ID'),
       )..add(const AuthStarted());
       await authBloc.stream
           .firstWhere((s) => s.isReady)
           .timeout(const Duration(seconds: 90));
+      // Фон кухни и POST_NOTIFICATIONS — только после известной сессии (не ломаем кассу при первом запуске).
+      await KitchenBackgroundService.initialize();
       final localeBloc = LocaleBloc(kv)..add(const LocaleStarted());
       final posThemeCubit = PosThemeCubit(kv);
       final appRouter = AppRouter(authBloc: authBloc);
 
       if (!mounted) return;
       setState(() {
+        _loadingSubtitle = null;
         _payload = _BootPayload(
           authRepo: authRepo,
           shiftRepo: shiftRepo,
           menuRepo: menuRepo,
           usersAdminRepo: usersAdminRepo,
           kitchenStationsRepo: kitchenStationsRepo,
+          kitchenButtonsRepo: kitchenButtonsRepo,
           catalogAdminRepo: catalogAdminRepo,
           appVersionsRepo: appVersionsRepo,
           menuItemsAdminRepo: menuItemsAdminRepo,
@@ -332,9 +491,12 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           combosAdminRepo: combosAdminRepo,
           uploadRepo: uploadRepo,
           localAudioSettingsRepo: localAudioSettingsRepo,
+          localReceiptSettingsRepo: localReceiptSettingsRepo,
           localHardwareRepo: localHardwareRepo,
           localOrdersRepo: localOrdersRepo,
           localPaymentsRepo: localPaymentsRepo,
+          localPaymentMethodsRepo: localPaymentMethodsRepo,
+          localLoyaltyRepo: localLoyaltyRepo,
           adminReportsRepo: adminReportsRepo,
           cartRepo: cartRepo,
           startupUpdate: updateInfo?.shouldNotify == true ? updateInfo : null,
@@ -352,6 +514,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         _payload = null;
         _error = _formatStartupError(e);
         _loading = false;
+        _loadingSubtitle = null;
       });
     }
   }
@@ -364,28 +527,39 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
     try {
       final info = await PackageInfo.fromPlatform();
       final versionText = '${info.version}+${info.buildNumber}';
-      final res = await http.post(
-        'api/versions/report',
-        body: {
-          'appKey': 'pos',
-          'displayName': 'dk_pos',
-          'currentVersion': versionText,
-        },
-      );
-      final body = res.body;
-      if (body is Map<String, dynamic>) {
-        final raw = body['version'];
-        if (raw is Map<String, dynamic>) {
-          return AppUpdateInfo.fromJson(raw, installedVersion: versionText);
+      AppUpdateInfo? local;
+      try {
+        final res = await http.post(
+          'api/versions/report',
+          body: {
+            'appKey': 'pos',
+            'displayName': 'dk_pos',
+            'currentVersion': versionText,
+          },
+        );
+        final body = res.body;
+        if (body is Map<String, dynamic>) {
+          final raw = body['version'];
+          if (raw is Map<String, dynamic>) {
+            local = AppUpdateInfo.fromJson(raw, installedVersion: versionText);
+          }
         }
+      } catch (_) {
+        // локальный отчёт не обязателен
       }
+      AppUpdateInfo? global;
+      try {
+        global = await fetchGlobalReleaseUpdate(versionText);
+      } catch (_) {
+        // глобальная проверка не должна ломать запуск
+      }
+      return AppUpdateInfo.mergeLocalAndGlobal(local, global);
     } catch (_) {
-      // Отчет о версии не должен ломать запуск приложения.
+      return null;
     }
-    return null;
   }
 
-  Future<void> _saveServerIp() async {
+  Future<void> _saveServerIp({bool fromLicenseScreen = false}) async {
     final raw = _ipController.text.trim();
     if (raw.isEmpty) {
       setState(() => _error = 'Введите IP сервера');
@@ -408,7 +582,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       await _ensureApiAvailable(DioHttpClient(dio));
       await ServerEndpointStore.save(normalized);
       await clearPosLocalCaches();
-      await _bootstrapApp();
+      await _runStartupPipeline();
     } catch (e) {
       if (prevSaved != null && prevSaved.isNotEmpty) {
         AppConfig.setApiOriginOverride(prevSaved);
@@ -418,11 +592,26 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         dm_app_config.AppConfig.clearApiOriginOverride();
       }
       if (!mounted) return;
+      if (fromLicenseScreen) {
+        setState(() {
+          _payload = null;
+          _licenseNetworkError = _formatStartupError(e);
+          _licenseNetworkSuggestServer = true;
+          _licenseNeedsKey = false;
+          _loading = false;
+          _blockingUpdate = null;
+          _loadingSubtitle = null;
+          _error = null;
+        });
+        _ipController.text = normalized;
+        return;
+      }
       setState(() {
         _payload = null;
         _error = _formatStartupError(e);
         _loading = false;
         _blockingUpdate = null;
+        _loadingSubtitle = null;
       });
     }
   }
@@ -433,9 +622,30 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: buildAppTheme(),
-        home: const Scaffold(
+        home: Scaffold(
           body: Center(
-            child: CircularProgressIndicator(color: Color(0xFFE4002B)),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 32),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircularProgressIndicator(color: Color(0xFFE4002B)),
+                  if (_loadingSubtitle != null) ...[
+                    const SizedBox(height: 20),
+                    Text(
+                      _loadingSubtitle!,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 15,
+                        height: 1.35,
+                        color: Colors.grey.shade800,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
         ),
       );
@@ -445,7 +655,341 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: buildAppTheme(),
-        home: _AppUpdateGate(info: _blockingUpdate!, onRetry: _bootstrapApp),
+        home: _AppUpdateGate(
+          info: _blockingUpdate!,
+          onRetry: _runStartupPipeline,
+        ),
+      );
+    }
+
+    if (_licenseNetworkError != null) {
+      return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: buildAppTheme(),
+        home: Scaffold(
+          body: DecoratedBox(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xFFFFF4F6), Color(0xFFFBE7EC)],
+              ),
+            ),
+            child: SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(
+                    24,
+                    24,
+                    24,
+                    24 + MediaQuery.viewInsetsOf(context).bottom,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.96),
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(
+                          color: const Color(
+                            0xFFE4002B,
+                          ).withValues(alpha: 0.15),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Icon(
+                              _licenseNetworkSuggestServer
+                                  ? Icons.wifi_tethering_error_rounded
+                                  : Icons.cloud_off_rounded,
+                              size: 46,
+                              color: const Color(0xFFE4002B),
+                            ),
+                            const SizedBox(height: 14),
+                            Text(
+                              _licenseNetworkSuggestServer
+                                  ? 'Локальный сервер недоступен'
+                                  : 'Лицензия: нет связи',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 10),
+                            SelectableText(
+                              _licenseNetworkError!,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(height: 1.35),
+                            ),
+                            if (_licenseNetworkSuggestServer) ...[
+                              const SizedBox(height: 16),
+                              const Text(
+                                'IP компьютера с backend (порт 3000, если не указан). Пример: 192.168.1.100',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(fontSize: 13, height: 1.35),
+                              ),
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: _ipController,
+                                keyboardType: TextInputType.url,
+                                textInputAction: TextInputAction.done,
+                                onSubmitted: (_) =>
+                                    _saveServerIp(fromLicenseScreen: true),
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.deny(
+                                    RegExp(r'\s'),
+                                  ),
+                                ],
+                                decoration: const InputDecoration(
+                                  labelText: 'Адрес сервера',
+                                  hintText: '192.168.1.100',
+                                  prefixIcon: Icon(Icons.dns_rounded),
+                                  border: OutlineInputBorder(),
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              FilledButton(
+                                onPressed: _loading
+                                    ? null
+                                    : () => _saveServerIp(
+                                        fromLicenseScreen: true,
+                                      ),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFFE4002B),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 14,
+                                  ),
+                                ),
+                                child: Text(
+                                  _loading ? 'Подключение…' : 'Подключиться',
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                            ],
+                            if (!_licenseNetworkSuggestServer)
+                              const SizedBox(height: 16),
+                            if (!_licenseNetworkSuggestServer)
+                              FilledButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _licenseNetworkError = null;
+                                    _licenseNetworkSuggestServer = false;
+                                  });
+                                  _runStartupPipeline();
+                                },
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: const Color(0xFFE4002B),
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 14,
+                                  ),
+                                ),
+                                child: const Text('Повторить'),
+                              ),
+                            if (_licenseNetworkSuggestServer)
+                              TextButton(
+                                onPressed: _loading
+                                    ? null
+                                    : () {
+                                        setState(() {
+                                          _licenseNetworkError = null;
+                                          _licenseNetworkSuggestServer = false;
+                                        });
+                                        _runStartupPipeline();
+                                      },
+                                child: const Text('Повторить без смены адреса'),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (_licenseNeedsKey) {
+      return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        theme: buildAppTheme(),
+        home: Scaffold(
+          body: DecoratedBox(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xFFFFF4F6), Color(0xFFFBE7EC)],
+              ),
+            ),
+            child: SafeArea(
+              child: Center(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(
+                    24,
+                    24,
+                    24,
+                    24 + MediaQuery.viewInsetsOf(context).bottom,
+                  ),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.96),
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(
+                          color: const Color(
+                            0xFFE4002B,
+                          ).withValues(alpha: 0.15),
+                        ),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const Icon(
+                              Icons.vpn_key_rounded,
+                              size: 46,
+                              color: Color(0xFFE4002B),
+                            ),
+                            const SizedBox(height: 14),
+                            const Text(
+                              'Ключ франшизы',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Сначала POS спросил локальный сервер (${AppConfig.apiOrigin}): есть ли лицензия в базе точки и действует ли срок. '
+                              'Если записи нет или срок истёк — нужен ключ. После «Активировать» ключ уходит на сервер в POST /api/local/license/sync, '
+                              'в MySQL обновляется таблица local_pos_license (одна строка на точку); остальные кассы с тем же API подхватят лицензию без повторного ввода.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey.shade800,
+                                height: 1.4,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Не меняйте срок вручную в базе данных и не используйте один и тот же ключ на разных точках (разных серверах) — доступ будет некорректен. '
+                              'Несколько касс одной точки с одним локальным API — нормально.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey.shade900,
+                                height: 1.4,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Защита продумана максимально возможно для такой схемы. Обход программы нежелателен '
+                              'и вредит работе точки. Если вы нашли уязвимость и сообщите о ней нам ответственно — '
+                              'предусмотрено вознаграждение.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey.shade800,
+                                height: 1.4,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              'Получить ключ',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey.shade800,
+                                height: 1.35,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Center(
+                              child: InkWell(
+                                onTap: _openFranchisePortal,
+                                borderRadius: BorderRadius.circular(6),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 6,
+                                    horizontal: 10,
+                                  ),
+                                  child: Text(
+                                    'franchise.donerkebab.tj',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: const Color(0xFFE4002B),
+                                      height: 1.2,
+                                      fontWeight: FontWeight.w700,
+                                      decoration: TextDecoration.underline,
+                                      decorationColor: const Color(0xFFE4002B),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _licenseKeyController,
+                              keyboardType: TextInputType.text,
+                              textInputAction: TextInputAction.done,
+                              onSubmitted: (_) => _submitLicense(),
+                              decoration: const InputDecoration(
+                                labelText: 'Ключ лицензии',
+                                hintText: 'DK-…',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                            if (_licenseFormError != null) ...[
+                              const SizedBox(height: 10),
+                              Text(
+                                _licenseFormError!,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFFB42318),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                            const SizedBox(height: 16),
+                            FilledButton(
+                              onPressed: _loading ? null : _submitLicense,
+                              style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFFE4002B),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
+                                ),
+                              ),
+                              child: Text(
+                                _loading
+                                    ? 'Сохранение на сервере…'
+                                    : 'Активировать',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
       );
     }
 
@@ -580,28 +1124,68 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
     return MultiRepositoryProvider(
       providers: [
         RepositoryProvider<AuthRepository>.value(value: payload.authRepo),
-        RepositoryProvider<LocalShiftRepository>.value(value: payload.shiftRepo),
+        RepositoryProvider<LocalShiftRepository>.value(
+          value: payload.shiftRepo,
+        ),
         RepositoryProvider<MenuRepository>.value(value: payload.menuRepo),
-        RepositoryProvider<AdminReportsRepository>.value(value: payload.adminReportsRepo),
-        RepositoryProvider<UsersAdminRepository>.value(value: payload.usersAdminRepo),
-        RepositoryProvider<KitchenStationsRepository>.value(value: payload.kitchenStationsRepo),
-        RepositoryProvider<CatalogAdminRepository>.value(value: payload.catalogAdminRepo),
-        RepositoryProvider<AppVersionsRepository>.value(value: payload.appVersionsRepo),
-        RepositoryProvider<MenuItemsAdminRepository>.value(value: payload.menuItemsAdminRepo),
-        RepositoryProvider<ScreensAdminRepository>.value(value: payload.screensAdminRepo),
-        RepositoryProvider<ThemeAdminRepository>.value(value: payload.themeAdminRepo),
+        RepositoryProvider<AdminReportsRepository>.value(
+          value: payload.adminReportsRepo,
+        ),
+        RepositoryProvider<UsersAdminRepository>.value(
+          value: payload.usersAdminRepo,
+        ),
+        RepositoryProvider<KitchenStationsRepository>.value(
+          value: payload.kitchenStationsRepo,
+        ),
+        RepositoryProvider<KitchenButtonsRepository>.value(
+          value: payload.kitchenButtonsRepo,
+        ),
+        RepositoryProvider<CatalogAdminRepository>.value(
+          value: payload.catalogAdminRepo,
+        ),
+        RepositoryProvider<AppVersionsRepository>.value(
+          value: payload.appVersionsRepo,
+        ),
+        RepositoryProvider<MenuItemsAdminRepository>.value(
+          value: payload.menuItemsAdminRepo,
+        ),
+        RepositoryProvider<ScreensAdminRepository>.value(
+          value: payload.screensAdminRepo,
+        ),
+        RepositoryProvider<ThemeAdminRepository>.value(
+          value: payload.themeAdminRepo,
+        ),
         RepositoryProvider<MenuDisplayPreviewRepository>.value(
           value: payload.menuDisplayPreviewRepo,
         ),
-        RepositoryProvider<MenuUnitsRepository>.value(value: payload.menuUnitsRepo),
-        RepositoryProvider<CombosAdminRepository>.value(value: payload.combosAdminRepo),
+        RepositoryProvider<MenuUnitsRepository>.value(
+          value: payload.menuUnitsRepo,
+        ),
+        RepositoryProvider<CombosAdminRepository>.value(
+          value: payload.combosAdminRepo,
+        ),
         RepositoryProvider<UploadRepository>.value(value: payload.uploadRepo),
         RepositoryProvider<LocalAudioSettingsRepository>.value(
           value: payload.localAudioSettingsRepo,
         ),
-        RepositoryProvider<LocalHardwareRepository>.value(value: payload.localHardwareRepo),
-        RepositoryProvider<LocalOrdersRepository>.value(value: payload.localOrdersRepo),
-        RepositoryProvider<LocalPaymentsRepository>.value(value: payload.localPaymentsRepo),
+        RepositoryProvider<LocalReceiptSettingsRepository>.value(
+          value: payload.localReceiptSettingsRepo,
+        ),
+        RepositoryProvider<LocalHardwareRepository>.value(
+          value: payload.localHardwareRepo,
+        ),
+        RepositoryProvider<LocalOrdersRepository>.value(
+          value: payload.localOrdersRepo,
+        ),
+        RepositoryProvider<LocalPaymentsRepository>.value(
+          value: payload.localPaymentsRepo,
+        ),
+        RepositoryProvider<LocalPaymentMethodsRepository>.value(
+          value: payload.localPaymentMethodsRepo,
+        ),
+        RepositoryProvider<LocalLoyaltyRepository>.value(
+          value: payload.localLoyaltyRepo,
+        ),
         RepositoryProvider<CartRepository>.value(value: payload.cartRepo),
       ],
       child: MultiBlocProvider(
@@ -628,6 +1212,7 @@ class _BootPayload {
     required this.adminReportsRepo,
     required this.usersAdminRepo,
     required this.kitchenStationsRepo,
+    required this.kitchenButtonsRepo,
     required this.catalogAdminRepo,
     required this.appVersionsRepo,
     required this.menuItemsAdminRepo,
@@ -638,9 +1223,12 @@ class _BootPayload {
     required this.combosAdminRepo,
     required this.uploadRepo,
     required this.localAudioSettingsRepo,
+    required this.localReceiptSettingsRepo,
     required this.localHardwareRepo,
     required this.localOrdersRepo,
     required this.localPaymentsRepo,
+    required this.localPaymentMethodsRepo,
+    required this.localLoyaltyRepo,
     required this.cartRepo,
     required this.startupUpdate,
     required this.localeBloc,
@@ -655,6 +1243,7 @@ class _BootPayload {
   final AdminReportsRepository adminReportsRepo;
   final UsersAdminRepository usersAdminRepo;
   final KitchenStationsRepository kitchenStationsRepo;
+  final KitchenButtonsRepository kitchenButtonsRepo;
   final CatalogAdminRepository catalogAdminRepo;
   final AppVersionsRepository appVersionsRepo;
   final MenuItemsAdminRepository menuItemsAdminRepo;
@@ -665,9 +1254,12 @@ class _BootPayload {
   final CombosAdminRepository combosAdminRepo;
   final UploadRepository uploadRepo;
   final LocalAudioSettingsRepository localAudioSettingsRepo;
+  final LocalReceiptSettingsRepository localReceiptSettingsRepo;
   final LocalHardwareRepository localHardwareRepo;
   final LocalOrdersRepository localOrdersRepo;
   final LocalPaymentsRepository localPaymentsRepo;
+  final LocalPaymentMethodsRepository localPaymentMethodsRepo;
+  final LocalLoyaltyRepository localLoyaltyRepo;
   final CartRepository cartRepo;
   final AppUpdateInfo? startupUpdate;
   final LocaleBloc localeBloc;

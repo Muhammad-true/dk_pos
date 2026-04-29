@@ -12,7 +12,7 @@
 |---------|-----|------|--------------|----------|
 | `id` | `CHAR(36)` | NO | — | Первичный ключ (UUID строкой) |
 | `number` | `VARCHAR(20)` | NO | — | Человекочитаемый номер заказа (уникальный) |
-| `status` | `ENUM('new','cooking','ready','done')` | YES | `'new'` | Статус на кухне/выдаче |
+| `status` | `ENUM('new','cooking','awaiting_expeditor','ready','done','cancelled')` | YES | `'new'` | Статус на кухне/выдаче/отмене |
 | `total_price` | `DECIMAL(10,2)` | NO | — | Итоговая сумма |
 | `created_at` | `TIMESTAMP` | YES | `CURRENT_TIMESTAMP` | Создание заказа |
 

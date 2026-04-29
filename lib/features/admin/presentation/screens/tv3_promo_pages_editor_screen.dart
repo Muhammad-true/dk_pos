@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
@@ -572,8 +574,8 @@ class _Tv3PromoPagesEditorScreenState extends State<Tv3PromoPagesEditorScreen> {
             return AlertDialog(
               title: Text(l10n.adminTv2EditorPickItem),
               content: SizedBox(
-                width: 460,
-                height: 400,
+                width: math.min(460, MediaQuery.sizeOf(ctx).width * 0.94),
+                height: math.min(400, MediaQuery.sizeOf(ctx).height * 0.76),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [

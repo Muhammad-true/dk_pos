@@ -1,46 +1,154 @@
+import 'dart:math' as math;
+import 'dart:ui' show lerpDouble;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:reorderable_grid_view/reorderable_grid_view.dart';
 
 import 'package:dk_digitial_menu/widgets/robust_network_image.dart';
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/layout/window_layout.dart';
-import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
-import 'package:dk_pos/features/cart/bloc/cart_event.dart';
+import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/menu/bloc/menu_bloc.dart';
 import 'package:dk_pos/features/menu/bloc/menu_event.dart';
 import 'package:dk_pos/features/menu/bloc/menu_state.dart';
+import 'package:dk_pos/features/pos/data/pos_catalog_local_order_store.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
 import 'package:dk_pos/shared/shared.dart';
 
 import 'pos_menu_item_card.dart';
 
 /// Иерархия категорий: назад, крошки, дочерние узлы, товары текущего уровня.
-class PosCatalogBody extends StatelessWidget {
+///
+/// Порядок корневых категорий и товаров в выбранной категории можно менять
+/// удержанием и перетаскиванием; сохраняется на устройстве отдельно по роли
+/// (касса / официант и т.д.) — одинаково на Windows и Android.
+class PosCatalogBody extends StatefulWidget {
   const PosCatalogBody({
     super.key,
     required this.menu,
     required this.catalogPaneWidth,
+    required this.onAddItem,
   });
 
   final MenuState menu;
   final double catalogPaneWidth;
+  final Future<void> Function(PosMenuItem item) onAddItem;
+
+  @override
+  State<PosCatalogBody> createState() => _PosCatalogBodyState();
+}
+
+class _PosCatalogBodyState extends State<PosCatalogBody> {
+  static const Duration _kDragHoldDelay = Duration(milliseconds: 420);
+
+  final PosCatalogLocalOrderStore _orderStore = PosCatalogLocalOrderStore();
+  PosCatalogLocalOrderSnapshot _order = PosCatalogLocalOrderSnapshot.empty();
+
+  final ScrollController _rootCatScroll = ScrollController();
+  final ScrollController _horizCatScroll = ScrollController();
+  final ScrollController _itemsScroll = ScrollController();
+
+  /// Суффикс ключа SharedPreferences; меняется при смене пользователя/роли.
+  String? _orderPrefsScope;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final role = context.watch<AuthBloc>().state.user?.role;
+    final scope = posCatalogOrderPrefsScope(role);
+    if (_orderPrefsScope == scope) return;
+    _orderPrefsScope = scope;
+    _orderStore.load(scope: scope).then((s) {
+      if (!mounted) return;
+      if (_orderPrefsScope != scope) return;
+      setState(() => _order = s);
+    });
+  }
+
+  @override
+  void dispose() {
+    _rootCatScroll.dispose();
+    _horizCatScroll.dispose();
+    _itemsScroll.dispose();
+    super.dispose();
+  }
+
+  List<PosCategory> _orderedRootCategories(MenuState menu) {
+    return mergePosRootCategoryOrder(menu.categoryRoots, _order.rootCategoryIds);
+  }
+
+  List<PosMenuItem> _orderedItems(MenuState menu) {
+    if (menu.pathIds.isEmpty) return const [];
+    final catId = menu.pathIds.last;
+    final saved = _order.itemIdsByCategory[catId];
+    return mergePosItemOrder(menu.currentItems, saved);
+  }
+
+  Future<void> _persistOrder() async {
+    final scope = _orderPrefsScope ?? posCatalogOrderPrefsScope(null);
+    try {
+      await _orderStore.save(_order, scope: scope);
+    } catch (_) {}
+  }
+
+  void _onRootCategoriesReorder(int oldIndex, int newIndex) {
+    final ordered = _orderedRootCategories(widget.menu).map((c) => c.id).toList();
+    if (oldIndex < 0 || oldIndex >= ordered.length) return;
+    // [newIndex] может быть равен длине списка (вставка в конец), как у ReorderableListView.
+    if (newIndex < 0 || newIndex > ordered.length) return;
+    var ni = newIndex;
+    if (ni > oldIndex) ni -= 1;
+    final id = ordered.removeAt(oldIndex);
+    ordered.insert(ni, id);
+    setState(() => _order = _order.withRootOrder(ordered));
+    _persistOrder();
+  }
+
+  void _onItemsReorder(MenuState menu, int dragIndex, int dropIndex) {
+    if (menu.pathIds.isEmpty) return;
+    final catId = menu.pathIds.last;
+    if (dragIndex == dropIndex) return;
+    final list = List<PosMenuItem>.from(_orderedItems(menu));
+    if (dragIndex < 0 || dragIndex >= list.length) return;
+    if (dropIndex < 0 || dropIndex > list.length) return;
+    final moved = list.removeAt(dragIndex);
+    var insert = dropIndex;
+    if (dropIndex > dragIndex) insert -= 1;
+    insert = insert.clamp(0, list.length);
+    list.insert(insert, moved);
+    setState(
+      () => _order = _order.withItemOrderForCategory(
+        catId,
+        list.map((e) => e.id).toList(),
+      ),
+    );
+    _persistOrder();
+  }
+
+  double _gridEdgeScrollSpeed(int timeMs, double overSize, double itemSize) {
+    final ramp = 1.0 + (timeMs / 1800).clamp(0.0, 4.0);
+    final edge = 5.0 + (overSize * 0.22).clamp(0.0, 28.0);
+    return (edge * ramp).clamp(4.0, 36.0);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final menu = widget.menu;
     final l10n = context.appL10n;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final layout = WindowLayout(width: catalogPaneWidth);
-    final wideCat = layout.posSideCategoryNavForCatalogPane(catalogPaneWidth);
+    final layout = WindowLayout(width: widget.catalogPaneWidth);
+    final wideCat = layout.posSideCategoryNavForCatalogPane(widget.catalogPaneWidth);
     final activeRootId = menu.pathIds.isEmpty ? null : menu.pathIds.first;
-    final sideCats = menu.categoryRoots;
+    final sideCats = _orderedRootCategories(menu);
     final cats = menu.currentChildCategories;
-    final items = menu.currentItems;
+    final itemsOrdered = _orderedItems(menu);
     final crossCount = layout.posCatalogGridColumns(
-      catalogPaneWidth: catalogPaneWidth,
+      catalogPaneWidth: widget.catalogPaneWidth,
       sideCategoryNav: wideCat,
     );
-    final aspect = layout.posCatalogGridAspectRatio(catalogPaneWidth);
+    final aspect = layout.posCatalogGridAspectRatio(widget.catalogPaneWidth);
 
     final navHeader = wideCat
         ? Padding(
@@ -101,28 +209,38 @@ class PosCatalogBody extends StatelessWidget {
             ),
           );
 
-    final grid = GridView.builder(
-      padding: const EdgeInsets.all(12),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossCount,
-        childAspectRatio: aspect,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-      ),
-      itemCount: items.length,
-      itemBuilder: (_, i) {
-        final item = items[i];
-        return PosMenuItemCard(
-          item: item,
-          onAdd: () => context.read<CartBloc>().add(CartItemAdded(item)),
-          onConfigure: () => _showItemConfigDialog(context, item),
-        );
-      },
+    final gridDelegate = SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: crossCount,
+      childAspectRatio: aspect,
+      crossAxisSpacing: 12,
+      mainAxisSpacing: 12,
     );
 
+    Widget productGrid() {
+      return ReorderableGridView.builder(
+        controller: _itemsScroll,
+        primary: false,
+        padding: const EdgeInsets.all(12),
+        gridDelegate: gridDelegate,
+        dragStartDelay: _kDragHoldDelay,
+        scrollSpeedController: _gridEdgeScrollSpeed,
+        onReorder: (dragIndex, dropIndex) => _onItemsReorder(menu, dragIndex, dropIndex),
+        itemCount: itemsOrdered.length,
+        itemBuilder: (context, i) {
+          final item = itemsOrdered[i];
+          return PosMenuItemCard(
+            key: ValueKey('pos_item_${item.id}'),
+            item: item,
+            onAdd: () => widget.onAddItem(item),
+            onConfigure: () => _showItemConfigDialog(context, item),
+          );
+        },
+      );
+    }
+
     Widget rightPane() {
-      if (items.isNotEmpty) {
-        if (!wideCat) return grid;
+      if (itemsOrdered.isNotEmpty) {
+        if (!wideCat) return productGrid();
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -139,7 +257,7 @@ class PosCatalogBody extends StatelessWidget {
                 ],
               ),
             ),
-            Expanded(child: grid),
+            Expanded(child: productGrid()),
           ],
         );
       }
@@ -198,7 +316,7 @@ class PosCatalogBody extends StatelessWidget {
             ),
           );
         }
-        if (items.isNotEmpty) {
+        if (itemsOrdered.isNotEmpty) {
           return const SizedBox.shrink();
         }
         return Center(
@@ -215,22 +333,110 @@ class PosCatalogBody extends StatelessWidget {
         );
       }
       if (wideCat) {
-        return ListView.builder(
+        return ReorderableListView.builder(
+          buildDefaultDragHandles: false,
+          scrollController: _rootCatScroll,
           padding: const EdgeInsets.only(top: 4),
+          proxyDecorator: _proxyDecorator,
+          onReorder: _onRootCategoriesReorder,
           itemCount: sideCats.length,
           itemBuilder: (_, i) {
             final c = sideCats[i];
             final hasKids = c.children.isNotEmpty;
             final selected = activeRootId == c.id;
             final cardColors = _categoryCardColors(i);
-            return Card(
-              margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-              elevation: selected ? 3 : 0,
-              child: InkWell(
-                onTap: () => context.read<MenuBloc>().add(
-                  MenuCatalogPathSet([c.id]),
+            return ReorderableDelayedDragStartListener(
+              key: ValueKey('pos_root_cat_${c.id}'),
+              index: i,
+              child: Card(
+                margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+                elevation: selected ? 3 : 0,
+                child: InkWell(
+                  onTap: () => context.read<MenuBloc>().add(
+                        MenuCatalogPathSet([c.id]),
+                      ),
+                  child: Ink(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: selected
+                            ? cardColors
+                            : [
+                                cardColors.first.withValues(alpha: 0.96),
+                                cardColors.last.withValues(alpha: 0.88),
+                              ],
+                      ),
+                      boxShadow: selected
+                          ? [
+                              BoxShadow(
+                                color: cardColors.first.withValues(alpha: 0.28),
+                                blurRadius: 16,
+                                offset: const Offset(0, 6),
+                              ),
+                            ]
+                          : null,
+                    ),
+                    child: ListTile(
+                      dense: widget.catalogPaneWidth < WindowLayout.mediumMax,
+                      minLeadingWidth: 52,
+                      leading: _CategoryAvatar(category: c),
+                      title: Text(
+                        c.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodyLarge?.copyWith(
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                      subtitle: c.subtitle != null && c.subtitle!.isNotEmpty
+                          ? Text(
+                              c.subtitle!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: Colors.white.withValues(alpha: 0.86),
+                              ),
+                            )
+                          : null,
+                      trailing: hasKids
+                          ? const Icon(Icons.chevron_right_rounded, color: Colors.white)
+                          : null,
+                    ),
+                  ),
                 ),
-                child: Ink(
+              ),
+            );
+          },
+        );
+      }
+      final n = sideCats.length;
+      return ReorderableListView.builder(
+        buildDefaultDragHandles: false,
+        scrollDirection: Axis.horizontal,
+        scrollController: _horizCatScroll,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        proxyDecorator: _proxyDecorator,
+        onReorder: _onRootCategoriesReorder,
+        itemCount: n,
+        itemBuilder: (_, i) {
+          final c = sideCats[i];
+          final hasKids = c.children.isNotEmpty;
+          final selected = activeRootId == c.id;
+          final cardColors = _categoryCardColors(i);
+          return ReorderableDelayedDragStartListener(
+            key: ValueKey('pos_h_cat_${c.id}'),
+            index: i,
+            child: Padding(
+              padding: EdgeInsets.only(right: i < n - 1 ? 8 : 0),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () => context.read<MenuBloc>().add(
+                      MenuCatalogPathSet([c.id]),
+                    ),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.topLeft,
@@ -242,123 +448,56 @@ class PosCatalogBody extends StatelessWidget {
                               cardColors.last.withValues(alpha: 0.88),
                             ],
                     ),
-                    boxShadow: selected
-                        ? [
-                            BoxShadow(
-                              color: cardColors.first.withValues(alpha: 0.28),
-                              blurRadius: 16,
-                              offset: const Offset(0, 6),
-                            ),
-                          ]
-                        : null,
-                  ),
-                  child: ListTile(
-                    dense: catalogPaneWidth < WindowLayout.mediumMax,
-                    minLeadingWidth: 52,
-                    leading: _CategoryAvatar(category: c),
-                    title: Text(
-                      c.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white,
-                      ),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: selected
+                          ? Colors.white.withValues(alpha: 0.45)
+                          : scheme.outlineVariant,
                     ),
-                    subtitle: c.subtitle != null && c.subtitle!.isNotEmpty
-                        ? Text(
-                            c.subtitle!,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: Colors.white.withValues(alpha: 0.86),
-                            ),
-                          )
-                        : null,
-                    trailing: hasKids
-                        ? const Icon(Icons.chevron_right_rounded, color: Colors.white)
-                        : null,
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      }
-      return ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        itemCount: sideCats.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (_, i) {
-          final c = sideCats[i];
-          final hasKids = c.children.isNotEmpty;
-          final selected = activeRootId == c.id;
-          final cardColors = _categoryCardColors(i);
-          return InkWell(
-            borderRadius: BorderRadius.circular(16),
-            onTap: () => context.read<MenuBloc>().add(
-                  MenuCatalogPathSet([c.id]),
-                ),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: selected
-                      ? cardColors
-                      : [
-                          cardColors.first.withValues(alpha: 0.96),
-                          cardColors.last.withValues(alpha: 0.88),
-                        ],
-                ),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: selected ? Colors.white.withValues(alpha: 0.45) : scheme.outlineVariant,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: cardColors.first.withValues(alpha: selected ? 0.22 : 0.12),
-                    blurRadius: selected ? 14 : 8,
-                    offset: const Offset(0, 4),
-                  ),
-                ],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _CategoryAvatar(
-                    category: c,
-                    size: 28,
-                    borderRadius: 10,
-                    compact: true,
-                  ),
-                  const SizedBox(width: 8),
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        c.name,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: Colors.white,
-                          height: 1,
-                          fontWeight: FontWeight.w700,
-                        ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: cardColors.first.withValues(alpha: selected ? 0.22 : 0.12),
+                        blurRadius: selected ? 14 : 8,
+                        offset: const Offset(0, 4),
                       ),
-                      if (hasKids)
-                        Text(
-                          'Раздел',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: Colors.white.withValues(alpha: 0.82),
-                            height: 1,
-                          ),
-                        ),
                     ],
                   ),
-                ],
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _CategoryAvatar(
+                        category: c,
+                        size: 28,
+                        borderRadius: 10,
+                        compact: true,
+                      ),
+                      const SizedBox(width: 8),
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            c.name,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: Colors.white,
+                              height: 1,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          if (hasKids)
+                            Text(
+                              'Раздел',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: Colors.white.withValues(alpha: 0.82),
+                                height: 1,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ),
             ),
           );
@@ -403,6 +542,22 @@ class PosCatalogBody extends StatelessWidget {
         catNav,
         Expanded(child: rightPane()),
       ],
+    );
+  }
+
+  Widget _proxyDecorator(Widget child, int index, Animation<double> animation) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, _) {
+        final t = Curves.easeInOut.transform(animation.value);
+        return Material(
+          elevation: lerpDouble(0, 10, t)!,
+          shadowColor: Colors.black38,
+          borderRadius: BorderRadius.circular(14),
+          color: Colors.transparent,
+          child: child,
+        );
+      },
     );
   }
 }
@@ -663,7 +818,7 @@ Future<void> _showItemConfigDialog(BuildContext context, PosMenuItem item) {
           ),
         ),
         content: SizedBox(
-          width: 420,
+          width: math.min(420, MediaQuery.sizeOf(context).width * 0.94),
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,

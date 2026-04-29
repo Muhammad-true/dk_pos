@@ -12,6 +12,14 @@ class PosHallOrdersState extends Equatable {
   List<PosTableBill> get openBills {
     final list = bills.where((b) => !b.isPaid).toList();
     list.sort((a, b) {
+      final za = a.tableZone;
+      final zb = b.tableZone;
+      if (za != null && zb != null && za != zb) {
+        if (za == PosTableZone.hall && zb == PosTableZone.veranda) return -1;
+        if (za == PosTableZone.veranda && zb == PosTableZone.hall) return 1;
+      }
+      if (za != null && zb == null) return -1;
+      if (za == null && zb != null) return 1;
       final ta = a.tableNumber;
       final tb = b.tableNumber;
       if (ta != null && tb != null && ta != tb) return ta.compareTo(tb);

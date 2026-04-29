@@ -12,13 +12,17 @@ class UsersAdminRepository {
     required String username,
     required String password,
     required String role,
+    int? isActive,
     int? kitchenStationId,
+    int? kitchenButtonId,
   }) {
     return _remote.createUser(
       username: username,
       password: password,
       role: role,
+      isActive: isActive,
       kitchenStationId: kitchenStationId,
+      kitchenButtonId: kitchenButtonId,
     );
   }
 
@@ -27,14 +31,18 @@ class UsersAdminRepository {
     String? username,
     String? password,
     String? role,
+    int? isActive,
     int? kitchenStationId,
+    int? kitchenButtonId,
   }) {
     return _remote.updateUser(
       id,
       username: username,
       password: password,
       role: role,
+      isActive: isActive,
       kitchenStationId: kitchenStationId,
+      kitchenButtonId: kitchenButtonId,
     );
   }
 

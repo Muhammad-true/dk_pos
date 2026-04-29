@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
@@ -7,13 +9,20 @@ import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
 import 'package:dk_pos/features/cart/bloc/cart_event.dart';
 import 'package:dk_pos/features/cart/bloc/cart_state.dart';
+import 'package:dk_pos/features/pos/bloc/pos_hall_orders_cubit.dart';
 import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
 
 import 'pos_checkout_flow.dart';
 
 /// Вкладки открытых чеков — в [AppBar.bottom], стиль как у «Тип заказа».
 class PosAppBarCheckTabs extends StatelessWidget implements PreferredSizeWidget {
-  const PosAppBarCheckTabs({super.key});
+  const PosAppBarCheckTabs({
+    super.key,
+    this.openCartSheetWhenCheckSelected = false,
+  });
+
+  /// На телефоне: после смены чека открыть корзину снизу (см. [showPosCartSheet]).
+  final bool openCartSheetWhenCheckSelected;
 
   @override
   Size get preferredSize => const Size.fromHeight(52);
@@ -52,9 +61,17 @@ class PosAppBarCheckTabs extends StatelessWidget implements PreferredSizeWidget 
                             label: c.displayLabel,
                             selected: c.id == cart.activeCheckId,
                             showClose: cart.checks.length > 1,
-                            onTap: () => context.read<CartBloc>().add(
-                                  CartCheckSelected(c.id),
-                                ),
+                            onTap: () {
+                              context
+                                  .read<CartBloc>()
+                                  .add(CartCheckSelected(c.id));
+                              if (!openCartSheetWhenCheckSelected) return;
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (!context.mounted) return;
+                                final st = context.read<CartBloc>().state;
+                                if (!st.isEmpty) showPosCartSheet(context);
+                              });
+                            },
                             onClose: () => _confirmRemoveCheck(context, c),
                           ),
                         ),
@@ -87,10 +104,13 @@ class PosCartPanel extends StatelessWidget {
     super.key,
     this.scrollController,
     this.onClose,
+    /// Контекст экрана POS под модальным листом: диалоги оформления и закрытие листа перед ними.
+    this.checkoutHostContext,
   });
 
   final ScrollController? scrollController;
   final VoidCallback? onClose;
+  final BuildContext? checkoutHostContext;
 
   @override
   Widget build(BuildContext context) {
@@ -100,9 +120,13 @@ class PosCartPanel extends StatelessWidget {
 
     return BlocBuilder<CartBloc, CartState>(
       builder: (context, cart) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+        final bottomSafe =
+            MediaQuery.viewPaddingOf(context).bottom + 10;
+        return Padding(
+          padding: EdgeInsets.only(bottom: bottomSafe),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             _CartPanelHeader(
               cart: cart,
               onClose: onClose,
@@ -196,7 +220,7 @@ class PosCartPanel extends StatelessWidget {
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    '${line.item.priceText} × ${line.quantity} ${line.item.saleUnit}',
+                                    '${formatSomoni(line.item.price)} × ${line.quantity} ${line.item.saleUnit}',
                                     style: theme.textTheme.bodySmall?.copyWith(
                                       color: scheme.onSurfaceVariant,
                                     ),
@@ -211,7 +235,7 @@ class PosCartPanel extends StatelessWidget {
                                 IconButton(
                                   icon: const Icon(Icons.remove_circle_outline_rounded),
                                   onPressed: () => context.read<CartBloc>().add(
-                                        CartItemDecremented(line.item.id),
+                                        CartItemDecremented(line.lineKey),
                                       ),
                                 ),
                                 Text(
@@ -236,8 +260,13 @@ class PosCartPanel extends StatelessWidget {
                   },
                 ),
               ),
-            _OrderTypeAndTotalPanel(cart: cart),
-          ],
+            _OrderTypeAndTotalPanel(
+              cart: cart,
+              onCloseSheet: onClose,
+              checkoutHostContext: checkoutHostContext,
+            ),
+            ],
+          ),
         );
       },
     );
@@ -387,9 +416,15 @@ class _CheckTabStripItem extends StatelessWidget {
 }
 
 class _OrderTypeAndTotalPanel extends StatelessWidget {
-  const _OrderTypeAndTotalPanel({required this.cart});
+  const _OrderTypeAndTotalPanel({
+    required this.cart,
+    this.onCloseSheet,
+    this.checkoutHostContext,
+  });
 
   final CartState cart;
+  final VoidCallback? onCloseSheet;
+  final BuildContext? checkoutHostContext;
 
   @override
   Widget build(BuildContext context) {
@@ -399,8 +434,7 @@ class _OrderTypeAndTotalPanel extends StatelessWidget {
     final idx = cart.activeOrderTypeIndex;
     final user = context.watch<AuthBloc>().state.user;
     final waiterMode = user?.isWaiter == true;
-    final selectedType =
-        waiterMode ? PosCheckoutOrderType.dineIn : _checkoutOrderType(idx);
+    final selectedType = _checkoutOrderTypeOrNull(idx);
 
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
@@ -427,12 +461,10 @@ class _OrderTypeAndTotalPanel extends StatelessWidget {
                   label: 'С собой',
                   icon: Icons.shopping_bag_outlined,
                   compact: true,
-                  highlighted: waiterMode ? false : idx == 0,
-                  onTap: waiterMode
-                      ? null
-                      : () => context.read<CartBloc>().add(
-                            const CartOrderTypeIndexChanged(0),
-                          ),
+                  highlighted: idx == 0,
+                  onTap: () => context.read<CartBloc>().add(
+                        const CartOrderTypeIndexChanged(0),
+                      ),
                 ),
               ),
               const SizedBox(width: 8),
@@ -441,7 +473,7 @@ class _OrderTypeAndTotalPanel extends StatelessWidget {
                   label: 'На месте',
                   icon: Icons.table_restaurant_rounded,
                   compact: true,
-                  highlighted: waiterMode ? true : idx == 1,
+                  highlighted: idx == 1,
                   onTap: () => context.read<CartBloc>().add(
                         const CartOrderTypeIndexChanged(1),
                       ),
@@ -453,20 +485,27 @@ class _OrderTypeAndTotalPanel extends StatelessWidget {
                   label: 'Доставка',
                   icon: Icons.delivery_dining_rounded,
                   compact: true,
-                  highlighted: waiterMode ? false : idx == 2,
-                  onTap: waiterMode
-                      ? null
-                      : () => context.read<CartBloc>().add(
-                            const CartOrderTypeIndexChanged(2),
-                          ),
+                  highlighted: idx == 2,
+                  onTap: () => context.read<CartBloc>().add(
+                        const CartOrderTypeIndexChanged(2),
+                      ),
                 ),
               ),
             ],
           ),
-          if (waiterMode) ...[
+          if (selectedType == null) ...[
             const SizedBox(height: 8),
             Text(
-              'Режим официанта: заказ оформляется только на стол, оплату принимает касса.',
+              'Сначала выберите тип заказа.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.error,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ] else if (waiterMode) ...[
+            const SizedBox(height: 8),
+            Text(
+              'Официант: оплату и печать чека проводит касса. Для «На месте» при оформлении нужно выбрать стол.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: scheme.onSurfaceVariant,
               ),
@@ -502,13 +541,15 @@ class _OrderTypeAndTotalPanel extends StatelessWidget {
               const SizedBox(width: 10),
               Expanded(
                 child: FilledButton.icon(
-                  onPressed: cart.isEmpty
+                  onPressed: cart.isEmpty || selectedType == null
                       ? null
-                      : () => runPosCheckoutFlow(
-                            context,
-                            orderType: selectedType,
+                      : () => _runCheckoutFromCart(
                             cart: cart,
+                            orderType: selectedType,
                             waiterMode: waiterMode,
+                            sheetContext: context,
+                            onCloseSheet: onCloseSheet,
+                            checkoutHostContext: checkoutHostContext,
                           ),
                   icon: const Icon(Icons.receipt_long_rounded),
                   label: const Text('Оформить заказ'),
@@ -522,17 +563,42 @@ class _OrderTypeAndTotalPanel extends StatelessWidget {
   }
 }
 
-PosCheckoutOrderType _checkoutOrderType(int idx) => switch (idx) {
+PosCheckoutOrderType? _checkoutOrderTypeOrNull(int idx) => switch (idx) {
+      0 => PosCheckoutOrderType.takeAway,
       1 => PosCheckoutOrderType.dineIn,
       2 => PosCheckoutOrderType.delivery,
-      _ => PosCheckoutOrderType.takeAway,
+      _ => null,
     };
 
+/// Лист корзины живёт в отдельном overlay-route без [PosHallOrdersCubit] сверху — перед диалогами
+/// закрываем лист и вызываем оформление с [checkoutHostContext] (контекст POS под листом).
+Future<void> _runCheckoutFromCart({
+  required CartState cart,
+  required PosCheckoutOrderType orderType,
+  required bool waiterMode,
+  required BuildContext sheetContext,
+  required VoidCallback? onCloseSheet,
+  required BuildContext? checkoutHostContext,
+}) async {
+  final host = checkoutHostContext ?? sheetContext;
+  final close = onCloseSheet;
+  if (close != null && checkoutHostContext != null) {
+    close();
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+  }
+  if (!host.mounted) return;
+  await runPosCheckoutFlow(
+    host,
+    orderType: orderType,
+    cart: cart,
+    waiterMode: waiterMode,
+  );
+}
+
 Future<void> _pickTableForActiveCheck(BuildContext context) async {
-  final waiterMode = context.read<AuthBloc>().state.user?.isWaiter == true;
   final outcome = await showPosTablePickDialog(
     context,
-    allowSkipTable: !waiterMode,
+    allowSkipTable: true,
   );
   if (!context.mounted) return;
   if (outcome == null) return;
@@ -555,6 +621,7 @@ Future<void> _confirmRemoveCheck(BuildContext context, CartCheckInfo check) asyn
     final theme = Theme.of(context);
     final ok = await showDialog<bool>(
       context: context,
+      useRootNavigator: true,
       builder: (ctx) {
         return AlertDialog(
           title: Text(
@@ -592,6 +659,7 @@ Future<void> _showOrderAdjustmentsDialog(BuildContext context) {
 
   return showDialog<void>(
     context: context,
+    useRootNavigator: true,
     builder: (context) {
       return AlertDialog(
         backgroundColor: scheme.surfaceContainerLow,
@@ -601,8 +669,8 @@ Future<void> _showOrderAdjustmentsDialog(BuildContext context) {
             fontWeight: FontWeight.w800,
           ),
         ),
-        content: const SizedBox(
-          width: 420,
+        content: SizedBox(
+          width: math.min(420, MediaQuery.sizeOf(context).width * 0.94),
           child: Wrap(
             spacing: 10,
             runSpacing: 10,
@@ -697,4 +765,43 @@ class _ActionMockButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Корзина снизу: почти на весь экран, чтобы было удобно оформлять заказ с телефона.
+/// Диалоги оформления ([runPosCheckoutFlow]) используют корневой навигатор, чтобы
+/// не «терялись» под этим листом (в т.ч. выбор стола у официанта).
+void showPosCartSheet(BuildContext anchorContext) {
+  // Cubit висит только на дереве PosRoute; лист — отдельный route, без него read<> падал на Android.
+  final hall = anchorContext.read<PosHallOrdersCubit>();
+  showModalBottomSheet<void>(
+    context: anchorContext,
+    isScrollControlled: true,
+    useRootNavigator: true,
+    showDragHandle: true,
+    builder: (sheetCtx) {
+      return BlocProvider.value(
+        value: hall,
+        child: Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.viewInsetsOf(sheetCtx).bottom,
+          ),
+          child: DraggableScrollableSheet(
+            expand: false,
+            initialChildSize: 0.94,
+            minChildSize: 0.38,
+            maxChildSize: 0.98,
+            snap: true,
+            snapSizes: const [0.94, 0.98],
+            builder: (_, scrollCtrl) {
+              return PosCartPanel(
+                scrollController: scrollCtrl,
+                onClose: () => Navigator.pop(sheetCtx),
+                checkoutHostContext: anchorContext,
+              );
+            },
+          ),
+        ),
+      );
+    },
+  );
 }

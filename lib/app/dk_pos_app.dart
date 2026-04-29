@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:auto_route/auto_route.dart';
 import 'package:dk_pos/app/app_locale_scope.dart';
 import 'package:dk_pos/app/app_update_info.dart';
 import 'package:dk_pos/app/locale/locale_bloc.dart';
@@ -11,6 +12,8 @@ import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/auth/data/local_shift_repository.dart';
 import 'package:dk_pos/features/auth/bloc/auth_state.dart';
 import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
+import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
+import 'package:dk_pos/features/cart/bloc/cart_event.dart';
 import 'package:dk_pos/theme/theme.dart';
 
 /// Корень UI: тема, локализация, роутер, синхронизация с [AuthBloc].
@@ -33,12 +36,16 @@ class DkPosApp extends StatelessWidget {
 
     return AppLocaleScope(
       locale: locale,
-      child: BlocBuilder<PosThemeCubit, PosScreenTheme>(
-        builder: (context, posMode) {
+      child: BlocBuilder<PosThemeCubit, PosThemeSettings>(
+        builder: (context, themeSettings) {
           return MaterialApp.router(
             onGenerateTitle: (ctx) => ctx.appL10n.appTitle,
             debugShowCheckedModeBanner: false,
-            theme: buildPosWorkspaceTheme(baseLight, posMode),
+            theme: buildPosWorkspaceTheme(
+              baseLight,
+              themeSettings.mode,
+              themeSettings.accentColor,
+            ),
             locale: materialLocale,
             supportedLocales: AppLocalizations.supportedLocales,
             localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -203,17 +210,22 @@ class _RouterAuthSyncState extends State<_RouterAuthSync> {
     if (!state.isReady || !mounted) return;
     if (state.isAuthenticated) {
       final user = state.user;
+      late final PageRouteInfo<void> targetRoute;
       if (user != null && user.isAdmin) {
-        widget.router.replace(const AdminRoute());
+        targetRoute = const AdminRoute();
       } else if (user != null && user.role == 'warehouse') {
-        widget.router.replace(const KitchenRoute());
+        targetRoute = const KitchenRoute();
       } else if (user != null && user.role == 'expeditor') {
-        widget.router.replace(const ExpeditorRoute());
+        targetRoute = const ExpeditorRoute();
       } else {
-        widget.router.replace(const PosRoute());
+        targetRoute = const PosRoute();
       }
+      // При входе/смене роли полностью сбрасываем стек, чтобы не было перехода "назад" в чужой интерфейс.
+      widget.router.replaceAll([targetRoute]);
     } else {
-      widget.router.replace(const LoginRoute());
+      // Полный сброс сессионных данных UI при выходе.
+      context.read<CartBloc>().add(const CartResetAll());
+      widget.router.replaceAll([const LoginRoute()]);
     }
   }
 

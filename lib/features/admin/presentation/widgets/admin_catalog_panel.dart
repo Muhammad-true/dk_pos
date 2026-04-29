@@ -7,6 +7,7 @@ import 'package:dk_pos/features/admin/bloc/catalog_admin_bloc.dart';
 import 'package:dk_pos/features/admin/bloc/catalog_admin_event.dart';
 import 'package:dk_pos/features/admin/bloc/catalog_admin_state.dart';
 import 'package:dk_pos/features/admin/data/admin_category_row.dart';
+import 'package:dk_pos/features/admin/data/catalog_admin_repository.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_list_row_card.dart';
 
 String _treeIndentDots(int depth) {
@@ -26,6 +27,67 @@ class AdminCatalogPanel extends StatelessWidget {
       if (c.sortOrder > m) m = c.sortOrder;
     }
     return m + 1;
+  }
+
+  Future<void> _reorderCategories(
+    BuildContext context,
+    AppLocalizations l10n,
+    List<AdminCategoryRow> ordered,
+    int oldIndex,
+    int newIndex,
+  ) async {
+    if (ordered.length < 2) return;
+    if (newIndex > oldIndex) newIndex -= 1;
+    if (oldIndex == newIndex) return;
+    if (oldIndex < 0 ||
+        oldIndex >= ordered.length ||
+        newIndex < 0 ||
+        newIndex >= ordered.length) {
+      return;
+    }
+
+    final moved = ordered[oldIndex];
+    final targetParentId = ordered[newIndex].parentId;
+    if (moved.parentId != targetParentId) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Перемещение доступно только внутри одной группы'),
+        ),
+      );
+      return;
+    }
+
+    final next = List<AdminCategoryRow>.from(ordered);
+    final item = next.removeAt(oldIndex);
+    next.insert(newIndex, item);
+
+    final siblings = next.where((c) => c.parentId == moved.parentId).toList();
+    final repo = context.read<CatalogAdminRepository>();
+    final bloc = context.read<CatalogAdminBloc>();
+    final messenger = ScaffoldMessenger.of(context);
+
+    var changed = 0;
+    try {
+      for (var i = 0; i < siblings.length; i++) {
+        final c = siblings[i];
+        if (c.sortOrder == i) continue;
+        await repo.updateCategorySortOrder(id: c.id, sortOrder: i);
+        changed++;
+      }
+      if (!context.mounted) return;
+      if (changed > 0) {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Порядок категорий обновлен: $changed')),
+        );
+      }
+      bloc.add(const CatalogLoadRequested());
+    } catch (e) {
+      if (!context.mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('${l10n.adminCatalogLoadError}: $e')),
+      );
+      bloc.add(const CatalogLoadRequested());
+    }
   }
 
   @override
@@ -172,13 +234,22 @@ class AdminCatalogPanel extends StatelessWidget {
                                   final ordered = orderCategoriesForAdminTree(
                                     state.categories,
                                   );
-                                  return ListView.builder(
+                                  return ReorderableListView.builder(
+                                    buildDefaultDragHandles: false,
                                     padding: const EdgeInsets.only(
                                       top: 4,
                                       bottom: 20,
                                     ),
                                     physics: kAdminListScrollPhysics,
                                     itemCount: ordered.length,
+                                    onReorder: (oldIndex, newIndex) =>
+                                        _reorderCategories(
+                                      context,
+                                      l10n,
+                                      ordered,
+                                      oldIndex,
+                                      newIndex,
+                                    ),
                                     itemBuilder: (context, i) {
                                       final c = ordered[i];
                                       final extras = <String>[];
@@ -209,45 +280,71 @@ class AdminCatalogPanel extends StatelessWidget {
                                           secondaryParts.join(' · ');
 
                                       return AdminListRowCard(
+                                        key: ValueKey('cat_${c.id}'),
                                         child: Padding(
                                           padding:
                                               EdgeInsetsDirectional.fromSTEB(
                                             14 + c.depth * 12.0,
                                             12,
-                                            14,
+                                            10,
                                             12,
                                           ),
-                                          child: Column(
+                                          child: Row(
                                             crossAxisAlignment:
-                                                CrossAxisAlignment.stretch,
+                                                CrossAxisAlignment.start,
                                             children: [
-                                              Text(
-                                                c.name.ru,
-                                                maxLines: 1,
-                                                overflow:
-                                                    TextOverflow.ellipsis,
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .titleSmall
-                                                    ?.copyWith(
-                                                      fontWeight:
-                                                          FontWeight.w600,
+                                              Expanded(
+                                                child: Column(
+                                                  crossAxisAlignment:
+                                                      CrossAxisAlignment.stretch,
+                                                  children: [
+                                                    Text(
+                                                      c.name.ru,
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: Theme.of(context)
+                                                          .textTheme
+                                                          .titleSmall
+                                                          ?.copyWith(
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                          ),
                                                     ),
+                                                    const SizedBox(height: 4),
+                                                    Text(
+                                                      secondary,
+                                                      maxLines: 1,
+                                                      overflow:
+                                                          TextOverflow.ellipsis,
+                                                      style: Theme.of(context)
+                                                          .textTheme
+                                                          .bodySmall
+                                                          ?.copyWith(
+                                                            color:
+                                                                Theme.of(context)
+                                                                    .colorScheme
+                                                                    .onSurfaceVariant,
+                                                          ),
+                                                    ),
+                                                  ],
+                                                ),
                                               ),
-                                              const SizedBox(height: 4),
-                                              Text(
-                                                secondary,
-                                                maxLines: 1,
-                                                overflow:
-                                                    TextOverflow.ellipsis,
-                                                style: Theme.of(context)
-                                                    .textTheme
-                                                    .bodySmall
-                                                    ?.copyWith(
-                                                      color: Theme.of(context)
-                                                          .colorScheme
-                                                          .onSurfaceVariant,
-                                                    ),
+                                              ReorderableDragStartListener(
+                                                index: i,
+                                                child: Padding(
+                                                  padding:
+                                                      const EdgeInsets.only(
+                                                    left: 8,
+                                                    top: 2,
+                                                  ),
+                                                  child: Icon(
+                                                    Icons.drag_indicator_rounded,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurfaceVariant,
+                                                  ),
+                                                ),
                                               ),
                                             ],
                                           ),

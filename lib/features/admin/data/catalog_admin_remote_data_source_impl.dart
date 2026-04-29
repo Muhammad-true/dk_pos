@@ -76,4 +76,32 @@ class CatalogAdminRemoteDataSourceImpl implements CatalogAdminRemoteDataSource {
     }
     return AdminCategoryRow.fromJson(c);
   }
+
+  @override
+  Future<void> updateCategorySortOrder({
+    required int id,
+    required int sortOrder,
+  }) async {
+    final res = await _http.patch(
+      'api/menu/categories/$id',
+      body: {'sort_order': sortOrder},
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(res.statusCode, res.body);
+    }
+  }
+
+  @override
+  Future<void> updateCategoryTv1Page({
+    required int id,
+    int? tv1Page,
+  }) async {
+    final res = await _http.patch(
+      'api/menu/categories/$id',
+      body: <String, dynamic>{'tv1_page': tv1Page},
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(res.statusCode, res.body);
+    }
+  }
 }

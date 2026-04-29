@@ -1123,6 +1123,8 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                           builder: (_) => Tv4SlidesEditorScreen(
                             screenId: displayPayload.screenId,
                             screensRepo: widget.screensRepo!,
+                            menuRepo: context.read<MenuItemsAdminRepository>(),
+                            uploadRepo: context.read<UploadRepository>(),
                           ),
                         ),
                       );

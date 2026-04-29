@@ -16,3 +16,23 @@ Dio createDio() {
     ),
   );
 }
+
+/// Запросы только к глобальному API лицензий (`GLOBAL_LICENSE_API_BASE_URL`).
+Dio createGlobalLicenseDio() {
+  final base = AppConfig.globalLicenseApiOrigin;
+  if (base == null || base.isEmpty) {
+    throw StateError('GLOBAL_LICENSE_API_BASE_URL не задан');
+  }
+  return Dio(
+    BaseOptions(
+      baseUrl: base.endsWith('/') ? base : '$base/',
+      connectTimeout: const Duration(seconds: 25),
+      receiveTimeout: const Duration(seconds: 25),
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
+      validateStatus: (_) => true,
+    ),
+  );
+}

@@ -1,4 +1,5 @@
 import 'package:dk_pos/core/error/api_exception.dart';
+import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/network/http_client.dart';
 
 class LocalAudioSettings {
@@ -23,11 +24,12 @@ class LocalAudioSettingsRepository {
   LocalAudioSettingsRepository(this._http);
 
   final HttpClient _http;
+  String get _defaultBranchId => AppConfig.storeBranchId;
 
-  Future<LocalAudioSettings> fetch({String branchId = 'branch_1'}) async {
+  Future<LocalAudioSettings> fetch({String? branchId}) async {
     final res = await _http.get(
       'api/local/audio-settings',
-      query: {'branchId': branchId},
+      query: {'branchId': branchId ?? _defaultBranchId},
     );
     if (res.statusCode != 200) {
       throw ApiException.fromHttp(res.statusCode, res.body);
@@ -68,12 +70,12 @@ class LocalAudioSettingsRepository {
     double? kitchenTtsRate,
     String? kitchenTtsLocale,
     String? kitchenTtsVoiceName,
-    String branchId = 'branch_1',
+    String? branchId,
   }) async {
     final res = await _http.patch(
       'api/local/audio-settings',
       body: {
-        'branchId': branchId,
+        'branchId': branchId ?? _defaultBranchId,
         'readySoundPath': readySoundPath,
         'kitchenSoundPath': kitchenSoundPath,
         'kitchenTtsEnabled': kitchenTtsEnabled,

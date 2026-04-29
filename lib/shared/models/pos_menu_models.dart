@@ -20,6 +20,7 @@ class PosMenuItem {
     this.imagePath,
     this.saleUnit = 'шт',
     this.composition,
+    this.allowCustomPrice = false,
   });
 
   final String id;
@@ -33,6 +34,34 @@ class PosMenuItem {
   final String saleUnit;
   /// Состав (если задан в БД).
   final String? composition;
+  /// Разрешен ручной ввод цены на кассе.
+  final bool allowCustomPrice;
+
+  PosMenuItem copyWith({
+    String? id,
+    int? categoryId,
+    String? name,
+    String? priceText,
+    double? price,
+    String? description,
+    String? imagePath,
+    String? saleUnit,
+    String? composition,
+    bool? allowCustomPrice,
+  }) {
+    return PosMenuItem(
+      id: id ?? this.id,
+      categoryId: categoryId ?? this.categoryId,
+      name: name ?? this.name,
+      priceText: priceText ?? this.priceText,
+      price: price ?? this.price,
+      description: description ?? this.description,
+      imagePath: imagePath ?? this.imagePath,
+      saleUnit: saleUnit ?? this.saleUnit,
+      composition: composition ?? this.composition,
+      allowCustomPrice: allowCustomPrice ?? this.allowCustomPrice,
+    );
+  }
 
   factory PosMenuItem.fromJson(Map<String, dynamic> json) {
     final unit = json['sale_unit']?.toString().trim();
@@ -46,6 +75,7 @@ class PosMenuItem {
       imagePath: json['image_path']?.toString(),
       saleUnit: (unit == null || unit.isEmpty) ? 'шт' : unit,
       composition: json['composition']?.toString(),
+      allowCustomPrice: json['allow_custom_price'] == 1 || json['allowCustomPrice'] == true,
     );
   }
 }

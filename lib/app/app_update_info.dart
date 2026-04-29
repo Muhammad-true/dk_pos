@@ -26,6 +26,38 @@ class AppUpdateInfo {
 
   bool get shouldNotify => hasUpdate;
 
+  /// Локальный [versions/report] + глобальный [/releases/check].
+  /// Целевая версия — более новая из двух; [isMandatory] и минимальная поддерживаемая версия — «строже» из двух.
+  static AppUpdateInfo? mergeLocalAndGlobal(AppUpdateInfo? local, AppUpdateInfo? global) {
+    if (local == null && global == null) return null;
+    if (local == null) return global;
+    if (global == null) return local;
+    final installed = local.installedVersion;
+    final globalNewer = global.hasUpdate &&
+        (!local.hasUpdate ||
+            compareVersions(local.targetVersion, global.targetVersion) < 0);
+    final primary = globalNewer ? global : local;
+    final secondary = globalNewer ? local : global;
+    final target = (primary.hasUpdate ? primary.targetVersion : null) ??
+        (secondary.hasUpdate ? secondary.targetVersion : null);
+    final minStricter = _stricterMinVersion(local.minSupportedVersion, global.minSupportedVersion);
+    final download = (primary.hasUpdate && (primary.downloadUrl ?? '').trim().isNotEmpty)
+        ? primary.downloadUrl
+        : ((secondary.downloadUrl ?? '').trim().isNotEmpty ? secondary.downloadUrl : null);
+    final notes = (primary.releaseNotes ?? '').trim().isNotEmpty
+        ? primary.releaseNotes
+        : secondary.releaseNotes;
+    return AppUpdateInfo(
+      displayName: primary.displayName,
+      installedVersion: installed,
+      targetVersion: target,
+      minSupportedVersion: minStricter,
+      downloadUrl: download,
+      releaseNotes: notes,
+      isMandatory: local.isMandatory || global.isMandatory,
+    );
+  }
+
   factory AppUpdateInfo.fromJson(
     Map<String, dynamic> json, {
     required String installedVersion,
@@ -40,6 +72,14 @@ class AppUpdateInfo {
       isMandatory: json['isMandatory'] == true,
     );
   }
+}
+
+String? _stricterMinVersion(String? a, String? b) {
+  final ta = (a ?? '').trim();
+  final tb = (b ?? '').trim();
+  if (ta.isEmpty) return b;
+  if (tb.isEmpty) return a;
+  return compareVersions(ta, tb) >= 0 ? ta : tb;
 }
 
 int compareVersions(String? a, String? b) {

@@ -5,6 +5,8 @@ import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/auth/bloc/auth_event.dart';
 import 'package:dk_pos/features/auth/bloc/auth_state.dart';
+import 'package:dk_pos/features/auth/data/auth_remote_data_source.dart';
+import 'package:dk_pos/features/auth/data/auth_repository.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -18,25 +20,77 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _userCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+  List<LoginUserOption> _users = const [];
+  String? _selectedUsername;
+  bool _usersLoading = true;
+  String? _usersError;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadLoginUsers();
+  }
 
   @override
   void dispose() {
-    _userCtrl.dispose();
     _passCtrl.dispose();
     super.dispose();
   }
 
+  Future<void> _loadLoginUsers() async {
+    setState(() {
+      _usersLoading = true;
+      _usersError = null;
+    });
+    try {
+      final repo = context.read<AuthRepository>();
+      final users = await repo.fetchLoginUsers();
+      if (!mounted) return;
+      setState(() {
+        _users = users;
+        _selectedUsername = users.isNotEmpty ? users.first.username : null;
+        _usersLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _users = const [];
+        _selectedUsername = null;
+        _usersLoading = false;
+        _usersError = e.toString();
+      });
+    }
+  }
+
   void _submit() {
     if (!_formKey.currentState!.validate()) return;
+    final username = _selectedUsername?.trim() ?? '';
+    if (username.isEmpty) return;
     context.read<AuthBloc>().add(
       AuthLoginRequested(
-        username: _userCtrl.text.trim(),
+        username: username,
         password: _passCtrl.text,
       ),
     );
+  }
+
+  String _roleLabel(String role) {
+    switch (role) {
+      case 'admin':
+        return 'Админ';
+      case 'warehouse':
+        return 'Кухня';
+      case 'cashier':
+        return 'Касса';
+      case 'expeditor':
+        return 'Экспедитор';
+      case 'waiter':
+        return 'Официант';
+      default:
+        return role;
+    }
   }
 
   @override
@@ -119,18 +173,61 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                           ),
                           SizedBox(height: layout.isCompact ? 16 : 20),
-                          TextFormField(
-                            controller: _userCtrl,
-                            textInputAction: TextInputAction.next,
-                            autocorrect: false,
-                            decoration: InputDecoration(
-                              labelText: l10n.fieldUsername,
-                              border: const OutlineInputBorder(),
+                          if (_usersLoading)
+                            DropdownButtonFormField<String>(
+                              initialValue: null,
+                              onChanged: null,
+                              decoration: InputDecoration(
+                                labelText: l10n.fieldUsername,
+                                border: const OutlineInputBorder(),
+                              ),
+                              hint: const Text('Загрузка пользователей...'),
+                              items: const [],
+                            )
+                          else
+                            DropdownButtonFormField<String>(
+                              key: ValueKey<String?>('login-user-${_selectedUsername ?? "none"}'),
+                              initialValue: _selectedUsername,
+                              isExpanded: true,
+                              decoration: InputDecoration(
+                                labelText: l10n.fieldUsername,
+                                border: const OutlineInputBorder(),
+                              ),
+                              items: _users
+                                  .map(
+                                    (u) => DropdownMenuItem<String>(
+                                      value: u.username,
+                                      child: Text('${u.username} (${_roleLabel(u.role)})'),
+                                    ),
+                                  )
+                                  .toList(growable: false),
+                              onChanged: loading
+                                  ? null
+                                  : (v) => setState(() => _selectedUsername = v),
+                              validator: (v) => (v == null || v.trim().isEmpty)
+                                  ? l10n.fieldUsernameError
+                                  : null,
                             ),
-                            validator: (v) => (v == null || v.trim().isEmpty)
-                                ? l10n.fieldUsernameError
-                                : null,
-                          ),
+                          if (_usersError != null) ...[
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    'Не удалось загрузить список логинов',
+                                    style: TextStyle(
+                                      color: scheme.error,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: _loadLoginUsers,
+                                  child: const Text('Повторить'),
+                                ),
+                              ],
+                            ),
+                          ],
                           const SizedBox(height: 16),
                           TextFormField(
                             controller: _passCtrl,

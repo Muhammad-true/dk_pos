@@ -1,4 +1,5 @@
 import 'package:dk_pos/core/error/api_exception.dart';
+import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/network/http_client.dart';
 
 class AdminSalesReportSummary {
@@ -251,7 +252,7 @@ class AdminSalesReport {
     }
 
     return AdminSalesReport(
-      branchId: json['branchId']?.toString() ?? 'branch_1',
+      branchId: json['branchId']?.toString() ?? '',
       dateFrom: json['dateFrom']?.toString() ?? '',
       dateTo: json['dateTo']?.toString() ?? '',
       summary: summary,
@@ -266,20 +267,113 @@ class AdminSalesReport {
   }
 }
 
+class AdminSyncWorkerInfo {
+  const AdminSyncWorkerInfo({
+    required this.enabled,
+    required this.intervalMs,
+    required this.endpointConfigured,
+  });
+
+  final bool enabled;
+  final int intervalMs;
+  final bool endpointConfigured;
+}
+
+class AdminSyncOutboxInfo {
+  const AdminSyncOutboxInfo({
+    required this.pending,
+    required this.retrying,
+    required this.failed,
+    required this.sent,
+    required this.latestEventAt,
+  });
+
+  final int pending;
+  final int retrying;
+  final int failed;
+  final int sent;
+  final String? latestEventAt;
+}
+
+class AdminSyncPushState {
+  const AdminSyncPushState({
+    required this.lastPushedAt,
+    required this.lastSuccessAt,
+    required this.lastError,
+    required this.lastBatchSent,
+  });
+
+  final String? lastPushedAt;
+  final String? lastSuccessAt;
+  final String? lastError;
+  final int lastBatchSent;
+}
+
+class AdminSyncPullState {
+  const AdminSyncPullState({
+    required this.lastPulledAt,
+    required this.lastSuccessAt,
+    required this.lastError,
+    required this.lastCatalogHash,
+  });
+
+  final String? lastPulledAt;
+  final String? lastSuccessAt;
+  final String? lastError;
+  final String? lastCatalogHash;
+}
+
+class AdminSyncStatus {
+  const AdminSyncStatus({
+    required this.branchId,
+    required this.serverTime,
+    required this.pushWorker,
+    required this.pullWorker,
+    required this.outbox,
+    required this.pushState,
+    required this.pullState,
+    this.globalCatalogLocalEditDisabled = false,
+  });
+
+  final String branchId;
+  final String serverTime;
+  final AdminSyncWorkerInfo pushWorker;
+  final AdminSyncWorkerInfo pullWorker;
+  final AdminSyncOutboxInfo outbox;
+  final AdminSyncPushState? pushState;
+  final AdminSyncPullState? pullState;
+  /// Сервер: GLOBAL_CATALOG_LOCAL_EDIT_DISABLED — меню только с глобала (pull).
+  final bool globalCatalogLocalEditDisabled;
+}
+
+class AdminSyncActionResult {
+  const AdminSyncActionResult({
+    required this.ok,
+    required this.message,
+  });
+
+  final bool ok;
+  final String message;
+}
+
 class AdminReportsRepository {
   AdminReportsRepository(this._http);
 
   final HttpClient _http;
+  String get _defaultBranchId => AppConfig.storeBranchId;
 
   Future<AdminSalesReport> fetchSalesReport({
     required String dateFrom,
     required String dateTo,
-    String branchId = 'branch_1',
+    String? branchId,
   }) async {
+    final resolvedBranchId = (branchId == null || branchId.trim().isEmpty)
+        ? _defaultBranchId
+        : branchId.trim();
     final res = await _http.get(
       'api/local/reports/sales',
       query: {
-        'branchId': branchId,
+        'branchId': resolvedBranchId,
         'dateFrom': dateFrom,
         'dateTo': dateTo,
       },
@@ -301,12 +395,15 @@ class AdminReportsRepository {
   Future<AdminKitchenOpsReport> fetchKitchenOpsReport({
     required String dateFrom,
     required String dateTo,
-    String branchId = 'branch_1',
+    String? branchId,
   }) async {
+    final resolvedBranchId = (branchId == null || branchId.trim().isEmpty)
+        ? _defaultBranchId
+        : branchId.trim();
     final res = await _http.get(
       'api/local/reports/kitchen-ops',
       query: {
-        'branchId': branchId,
+        'branchId': resolvedBranchId,
         'dateFrom': dateFrom,
         'dateTo': dateTo,
       },
@@ -323,6 +420,160 @@ class AdminReportsRepository {
       throw ApiException(res.statusCode, 'Некорректный ответ kitchen-ops');
     }
     return AdminKitchenOpsReport.fromJson(Map<String, dynamic>.from(body));
+  }
+
+  Future<AdminSyncStatus> fetchSyncStatus({
+    String? branchId,
+  }) async {
+    final resolvedBranchId = (branchId == null || branchId.trim().isEmpty)
+        ? _defaultBranchId
+        : branchId.trim();
+    final res = await _http.get(
+      'api/local/sync/status',
+      query: {'branchId': resolvedBranchId},
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Не удалось загрузить статус синхронизации',
+      );
+    }
+    final body = res.body;
+    if (body is! Map) {
+      throw ApiException(res.statusCode, 'Некорректный ответ sync/status');
+    }
+    final json = Map<String, dynamic>.from(body);
+
+    int asInt(dynamic v) => v is num ? v.toInt() : int.tryParse(v?.toString() ?? '') ?? 0;
+    bool asBool(dynamic v) {
+      if (v is bool) return v;
+      final s = v?.toString().toLowerCase().trim() ?? '';
+      return s == 'true' || s == '1' || s == 'yes' || s == 'on';
+    }
+    String? asNullableString(dynamic v) {
+      final s = v?.toString();
+      if (s == null || s.trim().isEmpty) return null;
+      return s;
+    }
+
+    AdminSyncWorkerInfo parseWorker(dynamic raw) {
+      final m = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+      return AdminSyncWorkerInfo(
+        enabled: asBool(m['enabled']),
+        intervalMs: asInt(m['intervalMs']),
+        endpointConfigured: asBool(m['endpointConfigured']),
+      );
+    }
+
+    AdminSyncOutboxInfo parseOutbox(dynamic raw) {
+      final m = raw is Map ? Map<String, dynamic>.from(raw) : <String, dynamic>{};
+      return AdminSyncOutboxInfo(
+        pending: asInt(m['pending']),
+        retrying: asInt(m['retrying']),
+        failed: asInt(m['failed']),
+        sent: asInt(m['sent']),
+        latestEventAt: asNullableString(m['latestEventAt']),
+      );
+    }
+
+    AdminSyncPushState? parsePushState(dynamic raw) {
+      if (raw is! Map) return null;
+      final m = Map<String, dynamic>.from(raw);
+      return AdminSyncPushState(
+        lastPushedAt: asNullableString(m['lastPushedAt']),
+        lastSuccessAt: asNullableString(m['lastSuccessAt']),
+        lastError: asNullableString(m['lastError']),
+        lastBatchSent: asInt(m['lastBatchSent']),
+      );
+    }
+
+    AdminSyncPullState? parsePullState(dynamic raw) {
+      if (raw is! Map) return null;
+      final m = Map<String, dynamic>.from(raw);
+      return AdminSyncPullState(
+        lastPulledAt: asNullableString(m['lastPulledAt']),
+        lastSuccessAt: asNullableString(m['lastSuccessAt']),
+        lastError: asNullableString(m['lastError']),
+        lastCatalogHash: asNullableString(m['lastCatalogHash']),
+      );
+    }
+
+    final workers = json['workers'] is Map
+        ? Map<String, dynamic>.from(json['workers'] as Map)
+        : <String, dynamic>{};
+
+    return AdminSyncStatus(
+      branchId: json['branchId']?.toString() ?? resolvedBranchId,
+      serverTime: json['serverTime']?.toString() ?? '',
+      pushWorker: parseWorker(workers['push']),
+      pullWorker: parseWorker(workers['pull']),
+      outbox: parseOutbox(json['outbox']),
+      pushState: parsePushState(json['pushState']),
+      pullState: parsePullState(json['pullState']),
+      globalCatalogLocalEditDisabled: asBool(json['globalCatalogLocalEditDisabled']),
+    );
+  }
+
+  Future<AdminSyncActionResult> triggerPushNow({
+    String? branchId,
+    int limit = 50,
+  }) async {
+    final resolvedBranchId = (branchId == null || branchId.trim().isEmpty)
+        ? _defaultBranchId
+        : branchId.trim();
+    final res = await _http.post(
+      'api/local/sync/push-global',
+      body: {
+        'branchId': resolvedBranchId,
+        'limit': limit,
+      },
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Push в global не выполнен',
+      );
+    }
+    final body = res.body;
+    final map = body is Map ? Map<String, dynamic>.from(body) : <String, dynamic>{};
+    final sentRaw = map['sent'];
+    final sent = sentRaw is num ? sentRaw.toInt() : int.tryParse(sentRaw?.toString() ?? '') ?? 0;
+    return AdminSyncActionResult(ok: true, message: 'Push выполнен: отправлено $sent событий');
+  }
+
+  Future<AdminSyncActionResult> triggerPullNow({
+    String? branchId,
+  }) async {
+    final resolvedBranchId = (branchId == null || branchId.trim().isEmpty)
+        ? _defaultBranchId
+        : branchId.trim();
+    final res = await _http.post(
+      'api/local/sync/pull-global',
+      body: {'branchId': resolvedBranchId},
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Pull каталога не выполнен',
+      );
+    }
+    final body = res.body;
+    final map = body is Map ? Map<String, dynamic>.from(body) : <String, dynamic>{};
+    final skipped = map['skippedNoChanges'] == true;
+    if (skipped) {
+      return const AdminSyncActionResult(ok: true, message: 'Pull: изменений каталога нет');
+    }
+    final cRaw = map['categoriesSynced'];
+    final pRaw = map['productsSynced'];
+    final categories = cRaw is num ? cRaw.toInt() : int.tryParse(cRaw?.toString() ?? '') ?? 0;
+    final products = pRaw is num ? pRaw.toInt() : int.tryParse(pRaw?.toString() ?? '') ?? 0;
+    return AdminSyncActionResult(
+      ok: true,
+      message: 'Pull выполнен: категорий $categories, товаров $products',
+    );
   }
 }
 
@@ -355,7 +606,12 @@ class AdminKitchenUserOpsRow {
     required this.userId,
     required this.username,
     required this.role,
-    required this.ordersCount,
+    required this.kitchenButtonId,
+    required this.kitchenButtonName,
+    required this.kitchenButtonColorHex,
+    required this.ordersAcceptedCount,
+    required this.itemsAccepted,
+    required this.ordersReadyCount,
     required this.itemsReady,
     required this.spentSeconds,
   });
@@ -363,7 +619,12 @@ class AdminKitchenUserOpsRow {
   final int userId;
   final String username;
   final String role;
-  final int ordersCount;
+  final int kitchenButtonId;
+  final String kitchenButtonName;
+  final String kitchenButtonColorHex;
+  final int ordersAcceptedCount;
+  final int itemsAccepted;
+  final int ordersReadyCount;
   final int itemsReady;
   final int spentSeconds;
 }
@@ -431,7 +692,12 @@ class AdminKitchenOpsReport {
           userId: asInt(m['userId']),
           username: asString(m['username']),
           role: asString(m['role']),
-          ordersCount: asInt(m['ordersCount']),
+          kitchenButtonId: asInt(m['kitchenButtonId']),
+          kitchenButtonName: asString(m['kitchenButtonName']),
+          kitchenButtonColorHex: asString(m['kitchenButtonColorHex']),
+          ordersAcceptedCount: asInt(m['ordersAcceptedCount']),
+          itemsAccepted: asInt(m['itemsAccepted']),
+          ordersReadyCount: asInt(m['ordersReadyCount']),
           itemsReady: asInt(m['itemsReady']),
           spentSeconds: asInt(m['spentSeconds']),
         );

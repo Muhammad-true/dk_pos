@@ -1,18 +1,20 @@
+import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/network/http_client.dart';
 
 class LocalShiftRepository {
   LocalShiftRepository(this._http);
 
   final HttpClient _http;
+  String get _defaultBranchId => AppConfig.storeBranchId;
 
   Future<void> openShift({
-    String branchId = 'branch_1',
+    String? branchId,
     String? terminalId,
   }) async {
     await _http.post(
       'api/local/shifts/open',
       body: {
-        'branchId': branchId,
+        'branchId': branchId ?? _defaultBranchId,
         if (terminalId != null && terminalId.trim().isNotEmpty)
           'terminalId': terminalId.trim(),
       },
@@ -20,11 +22,11 @@ class LocalShiftRepository {
   }
 
   Future<void> closeShift({
-    String branchId = 'branch_1',
+    String? branchId,
   }) async {
     await _http.post(
       'api/local/shifts/close',
-      body: {'branchId': branchId},
+      body: {'branchId': branchId ?? _defaultBranchId},
     );
   }
 }

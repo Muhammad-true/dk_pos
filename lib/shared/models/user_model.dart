@@ -6,6 +6,9 @@ class UserModel {
     this.kitchenStationId,
     this.kitchenStationName,
     this.kitchenStationType,
+    this.kitchenButtonId,
+    this.kitchenButtonName,
+    this.kitchenButtonColorHex,
   });
 
   final int id;
@@ -14,6 +17,9 @@ class UserModel {
   final int? kitchenStationId;
   final String? kitchenStationName;
   final String? kitchenStationType;
+  final int? kitchenButtonId;
+  final String? kitchenButtonName;
+  final String? kitchenButtonColorHex;
 
   bool get isAdmin => role == 'admin';
 
@@ -28,15 +34,22 @@ class UserModel {
       role == 'cashier' || role == 'admin';
 
   factory UserModel.fromJson(Map<String, dynamic> json) {
+    final rawRole = (json['role']?.toString() ?? 'cashier').trim();
     return UserModel(
       id: _parseInt(json['id']),
       username: json['username']?.toString() ?? '',
-      role: json['role']?.toString() ?? 'cashier',
+      // API/кэш могли отдать «Waiter» — иначе isWaiter=false, тип заказа -1, кнопка «Оформить» неактивна.
+      role: rawRole.isEmpty ? 'cashier' : rawRole.toLowerCase(),
       kitchenStationId: json['kitchen_station_id'] == null
           ? null
           : _parseInt(json['kitchen_station_id']),
       kitchenStationName: json['kitchen_station_name']?.toString(),
       kitchenStationType: json['kitchen_station_type']?.toString(),
+      kitchenButtonId: json['kitchen_button_id'] == null
+          ? null
+          : _parseInt(json['kitchen_button_id']),
+      kitchenButtonName: json['kitchen_button_name']?.toString(),
+      kitchenButtonColorHex: json['kitchen_button_color_hex']?.toString(),
     );
   }
 
@@ -50,7 +63,7 @@ class UserModel {
       case 'admin':
         return 'Админ';
       case 'warehouse':
-        return 'Склад';
+        return 'Кухня';
       case 'cashier':
         return 'Касса';
       case 'expeditor':

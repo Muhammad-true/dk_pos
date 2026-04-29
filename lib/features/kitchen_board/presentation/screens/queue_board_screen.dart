@@ -1,10 +1,8 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'package:dk_pos/app/pos_theme/pos_theme_toggle_button.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
@@ -14,7 +12,6 @@ import 'package:dk_pos/theme/pos_workspace_theme.dart';
 
 const _kTonePreparing = Color(0xFFE4002B);
 const _kToneReady = Color(0xFF24B47E);
-const _kFakeDeliveryPrefix = 'demo-delivery-';
 
 @RoutePage()
 class QueueBoardScreen extends StatefulWidget {
@@ -73,9 +70,6 @@ class _QueueBoardScreenState extends State<QueueBoardScreen> {
   }
 
   static String _linesSummary(LocalKitchenQueueOrder o) {
-    if (_isFakeDeliveryOrder(o)) {
-      return 'Тестовый заказ доставки';
-    }
     if (o.items.isEmpty) return '—';
     final parts = <String>[];
     const maxLines = 4;
@@ -87,55 +81,12 @@ class _QueueBoardScreenState extends State<QueueBoardScreen> {
     return '${parts.join(' · ')}$more';
   }
 
-  static bool _isFakeDeliveryOrder(LocalKitchenQueueOrder order) {
-    return order.id.startsWith(_kFakeDeliveryPrefix);
-  }
-
-  bool get _fakeDeliveryEnabled {
-    final raw = dotenv.maybeGet('TV_FAKE_DELIVERY_ENABLED')?.trim().toLowerCase();
-    return raw == '1' || raw == 'true' || raw == 'yes' || raw == 'on';
-  }
-
-  List<LocalKitchenQueueOrder> _buildHourlyFakeDeliveryOrders(DateTime now) {
-    final hourKey = now.year * 1000000 + now.month * 10000 + now.day * 100 + now.hour;
-    final rnd = Random(hourKey);
-    final targetCount = 4 + rnd.nextInt(2); // 4..5 в час
-    final usedNumbers = <int>{};
-    final out = <LocalKitchenQueueOrder>[];
-    while (out.length < targetCount) {
-      final n = 50 + rnd.nextInt(51); // 50..100
-      if (!usedNumbers.add(n)) continue;
-      out.add(
-        LocalKitchenQueueOrder(
-          id: '$_kFakeDeliveryPrefix$hourKey-${out.length + 1}',
-          number: '$n',
-          status: 'cooking',
-          totalPrice: 0,
-          items: const [
-            LocalKitchenQueueItem(
-              menuItemId: 'demo-delivery',
-              name: 'Доставка',
-              quantity: 1,
-              kitchenLineStatus: 'accepted',
-              kitchenStationId: 99,
-              kitchenStationName: 'Доставка',
-            ),
-          ],
-        ),
-      );
-    }
-    return out;
-  }
-
   @override
   Widget build(BuildContext context) {
     final l10n = context.appL10n;
     final theme = Theme.of(context);
 
-    final fakeDelivery = _fakeDeliveryEnabled
-        ? _buildHourlyFakeDeliveryOrders(DateTime.now())
-        : const <LocalKitchenQueueOrder>[];
-    final preparing = [..._snapshot.preparing, ...fakeDelivery];
+    final preparing = _snapshot.preparing;
     final ready = _snapshot.readyForPickup;
     final allEmpty = preparing.isEmpty && ready.isEmpty && !_loading && _error == null;
 
@@ -211,7 +162,7 @@ class _QueueBoardScreenState extends State<QueueBoardScreen> {
                                 order: o,
                                 tone: _kTonePreparing,
                                 summary: _linesSummary(o),
-                                isDeliveryDemo: _isFakeDeliveryOrder(o),
+                                isDeliveryDemo: false,
                               ),
                               const SizedBox(height: 10),
                             ],
@@ -231,7 +182,7 @@ class _QueueBoardScreenState extends State<QueueBoardScreen> {
                                 order: o,
                                 tone: _kToneReady,
                                 summary: _linesSummary(o),
-                                isDeliveryDemo: _isFakeDeliveryOrder(o),
+                                isDeliveryDemo: false,
                               ),
                               const SizedBox(height: 10),
                             ],
