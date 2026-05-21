@@ -1,6 +1,6 @@
-#define MyAppName "Doner Kebab POS"
+﻿#define MyAppName "Doner Kebab POS"
 ; Версию не совмещаем с backend-installer (там отдельный релиз).
-#define MyAppVersion "1.0.12"
+#define MyAppVersion "1.0.32"
 #define MyAppPublisher "Doner Kebab"
 #define MyAppExeName "dk_pos.exe"
 #define BuildDir "build\\windows\\x64\\runner\\Release"
@@ -20,6 +20,9 @@ OutputBaseFilename=doner-kebab-pos-setup-{#MyAppVersion}
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
+PrivilegesRequired=admin
+CloseApplications=force
+CloseApplicationsFilter=dk_pos.exe
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#MyAppExeName}
@@ -37,6 +40,30 @@ Source: "{#BuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs c
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+
+[Code]
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Exec(
+    ExpandConstant('{cmd}'),
+    '/C taskkill /F /IM {#MyAppExeName}',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  );
+  Exec(
+    ExpandConstant('{cmd}'),
+    '/C ping -n 3 127.0.0.1 > nul',
+    '',
+    SW_HIDE,
+    ewWaitUntilTerminated,
+    ResultCode
+  );
+  Result := '';
+end;
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Запустить {#MyAppName}"; Flags: nowait postinstall skipifsilent
