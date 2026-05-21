@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:auto_route/auto_route.dart';
@@ -5,7 +6,15 @@ import 'package:dk_pos/app/locale/locale_bloc.dart';
 import 'package:dk_pos/app/locale/locale_event.dart';
 import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
 import 'package:dk_pos/core/config/app_config.dart';
+import 'package:dk_pos/core/network/http_client.dart';
+import 'package:dk_pos/app/app_update_info.dart';
+import 'package:dk_pos/features/update/pos_update_merged_check.dart';
+import 'package:dk_pos/features/update/silent_update_dialog.dart';
+import 'package:dk_pos/features/update/update_download_launcher.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:dk_pos/core/constants/phone_defaults.dart';
+import 'package:dk_pos/core/input/tj_phone_dial_locked_formatter.dart';
 import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/features/admin/bloc/catalog_admin_bloc.dart';
 import 'package:dk_pos/features/admin/bloc/catalog_admin_event.dart';
@@ -24,12 +33,14 @@ import 'package:dk_pos/features/admin/data/menu_items_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/upload_repository.dart';
 import 'package:dk_pos/features/admin/data/users_admin_repository.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_catalog_hub.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_kitchen_sound_guide.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_kitchen_ops_panel.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_loyalty_panel.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_payment_methods_panel.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_sales_reports_panel.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_section_card.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_users_panel.dart';
+import 'package:dk_pos/features/inventory/presentation/admin_inventory_receive_screen.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/auth/bloc/auth_event.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
@@ -38,7 +49,9 @@ import 'package:dk_pos/shared/shared.dart';
 import 'package:dk_pos/theme/theme.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 @RoutePage()
 class AdminScreen extends StatefulWidget {
@@ -51,6 +64,67 @@ class AdminScreen extends StatefulWidget {
 class _AdminScreenState extends State<AdminScreen> {
   int _index = 0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  Timer? _syncIncidentTimer;
+  int _syncIncidentCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _refreshSyncIncidentCount();
+    });
+    _syncIncidentTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (!mounted) return;
+      _refreshSyncIncidentCount();
+    });
+  }
+
+  @override
+  void dispose() {
+    _syncIncidentTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refreshSyncIncidentCount() async {
+    if (!mounted) return;
+    try {
+      final repo = context.read<AdminReportsRepository>();
+      final mode = AppConfig.adminSyncIncidentMode;
+
+      if (mode == PosAdminSyncIncidentMode.siteOnly) {
+        final failures = await repo.fetchSiteOrderFailures(
+          limit: 250,
+          includeResolved: false,
+        );
+        final n = failures.length;
+        if (!mounted) return;
+        if (n != _syncIncidentCount) {
+          setState(() => _syncIncidentCount = n);
+        }
+        return;
+      }
+
+      final status = await repo.fetchSyncStatus();
+      final failures = await repo.fetchSiteOrderFailures(
+        limit: 250,
+        includeResolved: false,
+      );
+      final pushErr = (status.pushState?.lastError ?? '').trim().isNotEmpty;
+      final pullErr = (status.pullState?.lastError ?? '').trim().isNotEmpty;
+      var n = failures.length + status.outbox.failed;
+      if (mode == PosAdminSyncIncidentMode.strict) {
+        n += status.outbox.retrying;
+      }
+      if (pushErr || pullErr) n += 1;
+      if (!mounted) return;
+      if (n != _syncIncidentCount) {
+        setState(() => _syncIncidentCount = n);
+      }
+    } catch (_) {
+      // Бейдж необязателен: при офлайне не спамим setState.
+    }
+  }
 
   void _logout(BuildContext context) {
     context.read<AuthBloc>().add(const AuthLogoutRequested());
@@ -298,9 +372,13 @@ class _AdminScreenState extends State<AdminScreen> {
           drawer: _AdminNavDrawer(
             index: _index,
             l10n: l10n,
+            syncIncidentCount: _syncIncidentCount,
             onNavTap: (i) {
               setState(() => _index = i);
               Navigator.of(context).pop();
+              if (i == 4) {
+                _refreshSyncIncidentCount();
+              }
             },
             onLogout: () {
               Navigator.of(context).pop();
@@ -309,10 +387,27 @@ class _AdminScreenState extends State<AdminScreen> {
           ),
           appBar: AppBar(
             automaticallyImplyLeading: false,
-            leading: IconButton(
-              icon: const Icon(Icons.menu_rounded),
-              tooltip: l10n.tooltipAppMenu,
-              onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+            leading: Tooltip(
+              message: _syncIncidentCount > 0
+                  ? 'Меню · проблем синхронизации: $_syncIncidentCount (откройте «Смены и кухня»)'
+                  : l10n.tooltipAppMenu,
+              child: Badge(
+                isLabelVisible: _syncIncidentCount > 0,
+                backgroundColor: Colors.red,
+                textColor: Colors.white,
+                label: Text(
+                  _syncIncidentCount > 99 ? '99+' : '$_syncIncidentCount',
+                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800),
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.menu_rounded),
+                  tooltip: '',
+                  onPressed: () {
+                    _refreshSyncIncidentCount();
+                    _scaffoldKey.currentState?.openDrawer();
+                  },
+                ),
+              ),
             ),
             title: Text(titles[_index], overflow: TextOverflow.ellipsis),
             actions: [
@@ -395,12 +490,14 @@ class _AdminNavDrawer extends StatelessWidget {
   const _AdminNavDrawer({
     required this.index,
     required this.l10n,
+    required this.syncIncidentCount,
     required this.onNavTap,
     required this.onLogout,
   });
 
   final int index;
   final AppLocalizations l10n;
+  final int syncIncidentCount;
   final ValueChanged<int> onNavTap;
   final VoidCallback onLogout;
 
@@ -434,6 +531,7 @@ class _AdminNavDrawer extends StatelessWidget {
       required IconData iconFilled,
       required String label,
       required String hint,
+      int? badgeCount,
     }) {
       final selected = index == i;
       return Padding(
@@ -458,14 +556,41 @@ class _AdminNavDrawer extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          label,
-                          style: textTheme.titleSmall?.copyWith(
-                            fontWeight: selected
-                                ? FontWeight.w700
-                                : FontWeight.w600,
-                            color: selected ? selectedFg : null,
-                          ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                label,
+                                style: textTheme.titleSmall?.copyWith(
+                                  fontWeight: selected
+                                      ? FontWeight.w700
+                                      : FontWeight.w600,
+                                  color: selected ? selectedFg : null,
+                                ),
+                              ),
+                            ),
+                            if (badgeCount != null && badgeCount > 0) ...[
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.red,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                child: Text(
+                                  badgeCount > 99 ? '99+' : '$badgeCount',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                         const SizedBox(height: 2),
                         Text(
@@ -587,6 +712,7 @@ class _AdminNavDrawer extends StatelessWidget {
                     iconFilled: Icons.schedule_rounded,
                     label: 'Смены и кухня',
                     hint: 'Смены пользователей и эффективность кухни',
+                    badgeCount: syncIncidentCount > 0 ? syncIncidentCount : null,
                   ),
                   navDestination(
                     i: 5,
@@ -740,10 +866,65 @@ class _AdminTabBody extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 const _AdminSyncQuickCard(),
+                const SizedBox(height: 12),
+                const _AdminInventoryReceiveCard(),
               ],
             ),
             _ => const SizedBox.shrink(),
           },
+        ),
+      ),
+    );
+  }
+}
+
+class _AdminInventoryReceiveCard extends StatelessWidget {
+  const _AdminInventoryReceiveCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.local_shipping_outlined, color: scheme.tertiary, size: 28),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Приём со склада',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Подтвердите накладные, отправленные из центральной админки на эту точку.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    height: 1.35,
+                  ),
+            ),
+            const SizedBox(height: 14),
+            FilledButton.tonalIcon(
+              onPressed: () {
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const AdminInventoryReceiveScreen(),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.inventory_2_outlined),
+              label: const Text('Открыть накладные'),
+            ),
+          ],
         ),
       ),
     );
@@ -978,6 +1159,7 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
   late Future<List<AppVersionRow>> _versionsFuture;
   late final TextEditingController _readySoundCtrl;
   late final TextEditingController _kitchenSoundCtrl;
+  late final TextEditingController _websiteOrderSoundCtrl;
   late final TextEditingController _kitchenTtsRateCtrl;
   late final TextEditingController _kitchenTtsLocaleCtrl;
   late final TextEditingController _kitchenTtsVoiceNameCtrl;
@@ -998,10 +1180,18 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
   late final TextEditingController _receiptFiscalRnmCtrl;
   late final TextEditingController _receiptFiscalCashierIdCtrl;
   late final TextEditingController _receiptFiscalShiftNoCtrl;
+  late final TextEditingController _receiptPrinterNameCtrl;
+  late final TextEditingController _cashDrawerPrinterNameCtrl;
+  String _receiptWindowsMode = 'gdi';
+  List<HardwarePrinterDevice> _availablePrinters = const [];
+  bool _loadingPrinters = false;
   bool _audioLoading = false;
   bool _audioSaving = false;
   bool _audioUploading = false;
   bool _kitchenTtsEnabled = true;
+  double _tvReadySoundVolume = 1;
+  double _tvTtsVolume = 1;
+  double _tvVideoVolume = 0;
   bool _receiptLoading = false;
   bool _receiptSaving = false;
   bool _receiptTesting = false;
@@ -1018,6 +1208,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
   bool _receiptShowTax = false;
   bool _receiptTaxIncluded = true;
   bool _receiptTrimItemPriceZeros = true;
+  bool _posUpdateCheckBusy = false;
+  bool _syncFromGlobalBusy = false;
+  bool _silentUpdateAllBusy = false;
   _AdminSettingsSection _settingsSection = _AdminSettingsSection.languageTheme;
 
   @override
@@ -1026,6 +1219,7 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
     _versionsFuture = context.read<AppVersionsRepository>().fetchVersions();
     _readySoundCtrl = TextEditingController();
     _kitchenSoundCtrl = TextEditingController();
+    _websiteOrderSoundCtrl = TextEditingController();
     _kitchenTtsRateCtrl = TextEditingController(text: '0.48');
     _kitchenTtsLocaleCtrl = TextEditingController(text: 'ru-RU');
     _kitchenTtsVoiceNameCtrl = TextEditingController();
@@ -1046,6 +1240,8 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
     _receiptFiscalRnmCtrl = TextEditingController();
     _receiptFiscalCashierIdCtrl = TextEditingController();
     _receiptFiscalShiftNoCtrl = TextEditingController();
+    _receiptPrinterNameCtrl = TextEditingController();
+    _cashDrawerPrinterNameCtrl = TextEditingController();
     _loadAudioSettings();
     _loadReceiptSettings();
   }
@@ -1054,6 +1250,7 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
   void dispose() {
     _readySoundCtrl.dispose();
     _kitchenSoundCtrl.dispose();
+    _websiteOrderSoundCtrl.dispose();
     _kitchenTtsRateCtrl.dispose();
     _kitchenTtsLocaleCtrl.dispose();
     _kitchenTtsVoiceNameCtrl.dispose();
@@ -1074,6 +1271,8 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
     _receiptFiscalRnmCtrl.dispose();
     _receiptFiscalCashierIdCtrl.dispose();
     _receiptFiscalShiftNoCtrl.dispose();
+    _receiptPrinterNameCtrl.dispose();
+    _cashDrawerPrinterNameCtrl.dispose();
     super.dispose();
   }
 
@@ -1083,15 +1282,299 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
     await future;
   }
 
+  Future<void> _checkPosUpdatesManually() async {
+    setState(() => _posUpdateCheckBusy = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final http = context.read<HttpClient>();
+      final pkg = await PackageInfo.fromPlatform();
+      final installed = '${pkg.version}+${pkg.buildNumber}';
+      final merged = await fetchMergedPosUpdateInfo(http);
+      if (!mounted) return;
+      await _reload();
+      if (!mounted) return;
+
+      if (merged == null) {
+        final globalOff =
+            (AppConfig.globalReleasesBaseUrl ?? '').trim().isEmpty;
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Проверка обновлений'),
+            content: Text(
+              'Серверы не вернули сведений о более новой версии для этой кассы.\n\n'
+              'Текущая версия: $installed\n\n'
+              '${globalOff ? 'Глобальная проверка выключена (в assets/.env нет GLOBAL_RELEASES_BASE_URL).\n\n' : ''}'
+              'Локальный backend должен отвечать на api/versions/report.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('ОК'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+
+      if (!merged.hasUpdate) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Обновлений нет'),
+            content: Text(
+              'Текущая версия: $installed\n'
+              'По данным сервера установленная сборка актуальна.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('ОК'),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(
+            merged.requiresBlock
+                ? 'Требуется обновление'
+                : 'Доступно обновление',
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '${merged.displayName}: $installed → '
+                  '${merged.targetVersion ?? "новее"}',
+                ),
+                if ((merged.releaseNotes ?? '').trim().isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  Text(merged.releaseNotes!),
+                ],
+                if ((merged.downloadUrl ?? '').trim().isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  SelectableText(merged.downloadUrl!),
+                ],
+                if (merged.requiresBlock)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 12),
+                    child: Text(
+                      'Эта версия ниже минимально допустимой или обновление обязательное — '
+                      'при следующем запуске касса может быть заблокирована.',
+                      style: TextStyle(color: Theme.of(ctx).colorScheme.error),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Закрыть'),
+            ),
+            if ((merged.downloadUrl ?? '').trim().isNotEmpty) ...[
+              FilledButton(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  if (!mounted) return;
+                  await showSilentUpdateDialog(
+                    context: context,
+                    appKey: 'pos',
+                    downloadUrl: merged.downloadUrl!.trim(),
+                    http: context.read<HttpClient>(),
+                  );
+                },
+                child: const Text('Тихо установить'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  final ok = await openUpdateDownloadUrl(merged.downloadUrl!);
+                  if (!ctx.mounted) return;
+                  if (!ok) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(
+                        content: Text('Не удалось открыть ссылку'),
+                      ),
+                    );
+                  }
+                },
+                child: const Text('В браузере'),
+              ),
+              FilledButton(
+                onPressed: () async {
+                  await Clipboard.setData(
+                    ClipboardData(text: merged.downloadUrl ?? ''),
+                  );
+                  if (ctx.mounted) Navigator.pop(ctx);
+                },
+                child: const Text('Скопировать ссылку'),
+              ),
+            ],
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Проверка не удалась: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _posUpdateCheckBusy = false);
+    }
+  }
+
+  bool _versionRowHasPendingUpdate(AppVersionRow row) {
+    final target = (row.targetVersion ?? '').trim();
+    if (target.isEmpty) return false;
+    if ((row.downloadUrl ?? '').trim().isEmpty) return false;
+    return compareVersions(row.currentVersion, target) < 0;
+  }
+
+  bool _canSilentInstallRow(AppVersionRow row) {
+    final key = row.appKey.trim().toLowerCase();
+    if (key == 'pos_android' || key == 'pos') {
+      if (kIsWeb) return false;
+      if (key == 'pos_android') return defaultTargetPlatform == TargetPlatform.android;
+      if (key == 'pos') {
+        return defaultTargetPlatform == TargetPlatform.windows;
+      }
+    }
+    if (key == 'server') {
+      return !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+    }
+    return false;
+  }
+
+  Future<void> _silentUpdateAll() async {
+    setState(() => _silentUpdateAllBusy = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final versions = await context.read<AppVersionsRepository>().fetchVersions();
+      final pending = versions.where(_versionRowHasPendingUpdate).where(_canSilentInstallRow).toList();
+      pending.sort((a, b) {
+        int rank(String k) {
+          if (k == 'server') return 0;
+          if (k == 'pos') return 1;
+          if (k == 'pos_android') return 2;
+          return 9;
+        }
+        return rank(a.appKey).compareTo(rank(b.appKey));
+      });
+      if (pending.isEmpty) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Нет доступных тихих обновлений на этом устройстве (сначала «Заполнить с глобалки»)',
+            ),
+          ),
+        );
+        return;
+      }
+      if (!mounted) return;
+      final http = context.read<HttpClient>();
+      for (final row in pending) {
+        if (!mounted) return;
+        final url = row.downloadUrl!.trim();
+        final result = await showSilentUpdateDialog(
+          context: context,
+          appKey: row.appKey,
+          downloadUrl: url,
+          http: http,
+        );
+        if (result == null || !result.ok) {
+          messenger.showSnackBar(
+            SnackBar(
+              content: Text(
+                '${row.displayName}: ${result?.message ?? "отменено"}',
+              ),
+            ),
+          );
+          return;
+        }
+        if (result.restartApp) return;
+      }
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Тихие обновления запущены')),
+      );
+      await _reload();
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      if (mounted) setState(() => _silentUpdateAllBusy = false);
+    }
+  }
+
+  Future<void> _syncVersionsFromGlobal() async {
+    setState(() => _syncFromGlobalBusy = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final data =
+          await context.read<AppVersionsRepository>().syncVersionsFromGlobal();
+      await _reload();
+      if (!mounted) return;
+      final results = data['results'];
+      final lines = <String>[];
+      if (results is List) {
+        for (final r in results) {
+          if (r is Map) {
+            final key = r['appKey']?.toString() ?? '?';
+            if (r['synced'] == true) {
+              lines.add('$key: целевая версия и ссылка записаны в локальную БД');
+            } else {
+              lines.add('$key: ${r['reason'] ?? "—"}');
+            }
+          }
+        }
+      }
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Ссылки с глобалки'),
+          content: SingleChildScrollView(
+            child: SelectableText(
+              lines.isEmpty ? 'Нет данных в ответе' : lines.join('\n'),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('ОК'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      if (mounted) setState(() => _syncFromGlobalBusy = false);
+    }
+  }
+
   Future<void> _loadAudioSettings() async {
     setState(() => _audioLoading = true);
     try {
       final settings = await context
           .read<LocalAudioSettingsRepository>()
-          .fetch();
+          .fetch(forceRefresh: true);
       if (!mounted) return;
       _readySoundCtrl.text = settings.readySoundPath ?? '';
       _kitchenSoundCtrl.text = settings.kitchenSoundPath ?? '';
+      _websiteOrderSoundCtrl.text = settings.websiteOrderSoundPath ?? '';
+      _tvReadySoundVolume = settings.tvReadySoundVolume;
+      _tvTtsVolume = settings.tvTtsVolume;
+      _tvVideoVolume = settings.tvVideoVolume;
       _kitchenTtsRateCtrl.text = settings.kitchenTtsRate.toStringAsFixed(2);
       _kitchenTtsLocaleCtrl.text = settings.kitchenTtsLocale;
       _kitchenTtsVoiceNameCtrl.text = settings.kitchenTtsVoiceName ?? '';
@@ -1151,12 +1634,18 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
         kitchenSoundPath: _kitchenSoundCtrl.text.trim().isEmpty
             ? null
             : _kitchenSoundCtrl.text.trim(),
+        websiteOrderSoundPath: _websiteOrderSoundCtrl.text.trim().isEmpty
+            ? null
+            : _websiteOrderSoundCtrl.text.trim(),
         kitchenTtsEnabled: _kitchenTtsEnabled,
         kitchenTtsRate: ttsRate,
         kitchenTtsLocale: _kitchenTtsLocaleCtrl.text.trim(),
         kitchenTtsVoiceName: _kitchenTtsVoiceNameCtrl.text.trim().isEmpty
             ? null
             : _kitchenTtsVoiceNameCtrl.text.trim(),
+        tvReadySoundVolume: _tvReadySoundVolume,
+        tvTtsVolume: _tvTtsVolume,
+        tvVideoVolume: _tvVideoVolume,
       );
       if (!mounted) return;
       messenger.showSnackBar(
@@ -1189,12 +1678,18 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
       _receiptCompanyNameCtrl.text = settings.companyName ?? '';
       _receiptCompanyAddressCtrl.text = settings.companyAddress ?? '';
       final cp = (settings.companyPhone ?? '').trim();
-      _receiptCompanyPhoneCtrl.text = cp.isEmpty ? kDefaultPhoneDialPrefix : cp;
+      _receiptCompanyPhoneCtrl.text = TjPhoneDialLockedFormatter.ensureStored(cp);
       _receiptCompanyInnCtrl.text = settings.companyInn ?? '';
       _receiptFiscalKkmCtrl.text = settings.fiscalKkm ?? '';
       _receiptFiscalRnmCtrl.text = settings.fiscalRnm ?? '';
       _receiptFiscalCashierIdCtrl.text = settings.fiscalCashierId ?? '';
       _receiptFiscalShiftNoCtrl.text = settings.fiscalShiftNo ?? '';
+      _receiptPrinterNameCtrl.text = settings.receiptPrinterName ?? '';
+      _cashDrawerPrinterNameCtrl.text = settings.cashDrawerPrinterName ?? '';
+      _receiptWindowsMode =
+          (settings.receiptWindowsPrintMode ?? 'gdi').toLowerCase() == 'raw'
+          ? 'raw'
+          : 'gdi';
       _receiptQrEnabled = settings.qrEnabled;
       _receiptShowFooterLine1 = settings.showFooterLine1;
       _receiptShowFooterLine2 = settings.showFooterLine2;
@@ -1264,7 +1759,7 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
             : _receiptCompanyAddressCtrl.text.trim(),
         companyPhone: _receiptCompanyPhoneCtrl.text.trim().isEmpty
             ? null
-            : _receiptCompanyPhoneCtrl.text.trim(),
+            : TjPhoneDialLockedFormatter.ensureStored(_receiptCompanyPhoneCtrl.text),
         companyInn: _receiptCompanyInnCtrl.text.trim().isEmpty
             ? null
             : _receiptCompanyInnCtrl.text.trim(),
@@ -1288,6 +1783,13 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
         gdiLeftOffset: gdiLeftOffset,
         receiptCharsPerLine: receiptCharsPerLine,
         trimItemPriceZeros: _receiptTrimItemPriceZeros,
+        receiptPrinterName: _receiptPrinterNameCtrl.text.trim().isEmpty
+            ? null
+            : _receiptPrinterNameCtrl.text.trim(),
+        cashDrawerPrinterName: _cashDrawerPrinterNameCtrl.text.trim().isEmpty
+            ? null
+            : _cashDrawerPrinterNameCtrl.text.trim(),
+        receiptWindowsPrintMode: _receiptWindowsMode,
         branchId: AppConfig.storeBranchId,
       );
       if (!mounted) return;
@@ -1330,6 +1832,41 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
       );
     } finally {
       if (mounted) setState(() => _receiptTesting = false);
+    }
+  }
+
+  Future<void> _detectWindowsPrinters() async {
+    if (_loadingPrinters) return;
+    setState(() => _loadingPrinters = true);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final list = await context.read<LocalHardwareRepository>().fetchAvailablePrinters();
+      if (!mounted) return;
+      setState(() {
+        _availablePrinters = list;
+        if (_receiptPrinterNameCtrl.text.trim().isEmpty && list.isNotEmpty) {
+          _receiptPrinterNameCtrl.text = list.first.name;
+        }
+        if (_cashDrawerPrinterNameCtrl.text.trim().isEmpty && list.isNotEmpty) {
+          _cashDrawerPrinterNameCtrl.text = list.first.name;
+        }
+      });
+      if (list.isEmpty) {
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Принтеры не найдены на сервере')),
+        );
+      } else {
+        messenger.showSnackBar(
+          SnackBar(content: Text('Найдено принтеров: ${list.length}')),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(content: Text('Не удалось получить принтеры: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _loadingPrinters = false);
     }
   }
 
@@ -1643,11 +2180,75 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Здесь видно версии backend, POS и APK меню. Эта же таблица станет основой для будущих удаленных обновлений.',
+              'После публикации Inno Setup в глобальной админке нажмите «Заполнить с глобалки» — '
+              'локальный сервер подтянет ссылки для POS и backend в эту таблицу. '
+              '«Тихо обновить» скачивает и ставит без мастера (backend и POS на Windows; APK на планшете). '
+              'Backend — сначала, затем касса. Может понадобиться UAC (Windows) или подтверждение APK (Android).',
               style: textTheme.bodyMedium?.copyWith(
                 color: scheme.onSurfaceVariant,
                 height: 1.35,
               ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: _syncFromGlobalBusy ? null : _syncVersionsFromGlobal,
+                  icon: _syncFromGlobalBusy
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: scheme.primary,
+                          ),
+                        )
+                      : const Icon(Icons.cloud_download_rounded),
+                  label: Text(
+                    _syncFromGlobalBusy
+                        ? 'Глобалка…'
+                        : 'Заполнить с глобалки (POS + сервер + Android)',
+                  ),
+                ),
+                FilledButton.icon(
+                  onPressed: _silentUpdateAllBusy ? null : _silentUpdateAll,
+                  icon: _silentUpdateAllBusy
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: scheme.onPrimary,
+                          ),
+                        )
+                      : const Icon(Icons.install_mobile_rounded),
+                  label: Text(
+                    _silentUpdateAllBusy
+                        ? 'Установка…'
+                        : 'Тихо обновить всё (на этом устройстве)',
+                  ),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _posUpdateCheckBusy ? null : _checkPosUpdatesManually,
+                  icon: _posUpdateCheckBusy
+                      ? SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: scheme.primary,
+                          ),
+                        )
+                      : const Icon(Icons.system_update_alt_rounded),
+                  label: Text(
+                    _posUpdateCheckBusy
+                        ? 'Проверка…'
+                        : 'Проверить обновления на этой кассе',
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             sectionGuide(
@@ -1689,14 +2290,15 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
           if (_settingsSection == _AdminSettingsSection.sound) ...[
             const SizedBox(height: 28),
             Text(
-              'Озвучка очереди',
+              'Звуки точки',
               style: textTheme.titleLarge?.copyWith(
                 fontWeight: FontWeight.bold,
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              'Звук "Заказ готов" для отдельного экрана очереди (TV_QUEUE_ONLY=true).',
+              'Три независимых сигнала: кухня (новый заказ в очереди), касса (готов к выдаче), онлайн-заказ с сайта. '
+              'Для экрана очереди TV также используется звук «готово».',
               style: textTheme.bodyMedium?.copyWith(
                 color: scheme.onSurfaceVariant,
                 height: 1.35,
@@ -1704,8 +2306,11 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
             ),
             const SizedBox(height: 12),
             sectionGuide(
-              'Справочник: настройки звуков и TTS для очереди и кухни. Можно загружать файлы и настраивать голос.',
+              'Кухня: встроенный сигнал, если путь пустой; свой MP3/WAV — «Загрузить» → «Сохранить». '
+              'TTS — отдельно, после звонка. Подробности — в справочнике ниже.',
             ),
+            const SizedBox(height: 12),
+            const AdminKitchenSoundGuide(),
             const SizedBox(height: 12),
             Card(
               child: Padding(
@@ -1713,88 +2318,46 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    TextField(
-                      controller: _readySoundCtrl,
-                      enabled: !_audioLoading,
-                      decoration: const InputDecoration(
-                        labelText: 'Путь звука (uploads/audio/...)',
-                        border: OutlineInputBorder(),
-                      ),
+                    Text(
+                      '1. Кухня — новый заказ',
+                      style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
                     ),
-                    const SizedBox(height: 10),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: (_audioUploading || _audioSaving)
-                                ? null
-                                : () => _pickAndUploadSound(_readySoundCtrl),
-                            icon: _audioUploading
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.upload_file_rounded),
-                            label: const Text('Загрузить звук'),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: FilledButton.icon(
-                            onPressed:
-                                (_audioLoading ||
-                                    _audioUploading ||
-                                    _audioSaving)
-                                ? null
-                                : _saveAudioSettings,
-                            icon: _audioSaving
-                                ? const SizedBox(
-                                    width: 16,
-                                    height: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : const Icon(Icons.save_rounded),
-                            label: const Text('Сохранить'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    const Divider(),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Кухня: звук + TTS',
-                      style: TextStyle(fontWeight: FontWeight.w600),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Планшет кухни, колонка «Готовят». Сначала звук (встроенный или ваш файл), затем TTS — если включён.',
+                      style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                     const SizedBox(height: 10),
                     TextField(
                       controller: _kitchenSoundCtrl,
                       enabled: !_audioLoading,
                       decoration: const InputDecoration(
-                        labelText: 'Путь кухонного звука (uploads/audio/...)',
+                        labelText: 'Путь звука (uploads/audio/...)',
                         border: OutlineInputBorder(),
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 8),
                     OutlinedButton.icon(
                       onPressed: (_audioUploading || _audioSaving)
                           ? null
                           : () => _pickAndUploadSound(_kitchenSoundCtrl),
                       icon: const Icon(Icons.upload_file_rounded),
-                      label: const Text('Загрузить звук кухни'),
+                      label: const Text('Загрузить'),
                     ),
+                    const SizedBox(height: 16),
+                    const Divider(),
                     const SizedBox(height: 10),
+                    Text(
+                      'Озвучка TTS на кухне',
+                      style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 8),
                     SwitchListTile(
                       value: _kitchenTtsEnabled,
                       onChanged: (_audioLoading || _audioSaving)
                           ? null
                           : (v) => setState(() => _kitchenTtsEnabled = v),
-                      title: const Text('Включить озвучку TTS на кухне'),
+                      title: const Text('Озвучить номер заказа (TTS после сигнала)'),
                       contentPadding: EdgeInsets.zero,
                     ),
                     const SizedBox(height: 8),
@@ -1823,6 +2386,110 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                         labelText: 'Имя голоса TTS (необязательно)',
                         border: OutlineInputBorder(),
                       ),
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(),
+                    const SizedBox(height: 10),
+                    Text(
+                      '2. Касса — готов к выдаче',
+                      style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Когда в очереди экспедитора растёт список «К выдаче» (заказ готов отдать гостю).',
+                      style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _readySoundCtrl,
+                      enabled: !_audioLoading,
+                      decoration: const InputDecoration(
+                        labelText: 'Путь звука «готово» (uploads/audio/...)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: (_audioUploading || _audioSaving)
+                          ? null
+                          : () => _pickAndUploadSound(_readySoundCtrl),
+                      icon: const Icon(Icons.upload_file_rounded),
+                      label: const Text('Загрузить'),
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(),
+                    const SizedBox(height: 10),
+                    Text(
+                      '3. Касса — новый онлайн-заказ (сайт)',
+                      style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Когда во «Входящих» появляется новый заказ с order_source=website.',
+                      style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _websiteOrderSoundCtrl,
+                      enabled: !_audioLoading,
+                      decoration: const InputDecoration(
+                        labelText: 'Путь звука онлайн-заказа (uploads/audio/...)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton.icon(
+                      onPressed: (_audioUploading || _audioSaving)
+                          ? null
+                          : () => _pickAndUploadSound(_websiteOrderSoundCtrl),
+                      icon: const Icon(Icons.upload_file_rounded),
+                      label: const Text('Загрузить'),
+                    ),
+                    const SizedBox(height: 16),
+                    const Divider(),
+                    const SizedBox(height: 10),
+                    Text(
+                      '4. Телевизор (клиентский экран)',
+                      style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Громкость на ТВ2/ТВ3/ТВ4: сигнал «готово», озвучка номера заказа и видео на слайдах. '
+                      'Файл «готово» — тот же, что в блоке 2 выше.',
+                      style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                    const SizedBox(height: 12),
+                    _TvVolumeSlider(
+                      label: 'Звук «готово» на ТВ',
+                      value: _tvReadySoundVolume,
+                      enabled: !_audioLoading && !_audioSaving,
+                      onChanged: (v) => setState(() => _tvReadySoundVolume = v),
+                    ),
+                    _TvVolumeSlider(
+                      label: 'Озвучка номера (TTS) на ТВ',
+                      value: _tvTtsVolume,
+                      enabled: !_audioLoading && !_audioSaving,
+                      onChanged: (v) => setState(() => _tvTtsVolume = v),
+                    ),
+                    _TvVolumeSlider(
+                      label: 'Звук видео-фона на слайдах',
+                      value: _tvVideoVolume,
+                      enabled: !_audioLoading && !_audioSaving,
+                      onChanged: (v) => setState(() => _tvVideoVolume = v),
+                    ),
+                    const SizedBox(height: 18),
+                    FilledButton.icon(
+                      onPressed: (_audioLoading || _audioUploading || _audioSaving)
+                          ? null
+                          : _saveAudioSettings,
+                      icon: _audioSaving
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.save_rounded),
+                      label: const Text('Сохранить все звуки и TTS'),
                     ),
                   ],
                 ),
@@ -1935,6 +2602,153 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                           ),
                         ),
                       ],
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Оборудование печати (локальный сервер)',
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: (_receiptLoading || _receiptSaving || _loadingPrinters)
+                              ? null
+                              : _detectWindowsPrinters,
+                          icon: _loadingPrinters
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.print_rounded),
+                          label: Text(
+                            _loadingPrinters
+                                ? 'Ищем принтеры...'
+                                : 'Определить принтеры автоматически',
+                          ),
+                        ),
+                        if (_availablePrinters.isNotEmpty)
+                          OutlinedButton.icon(
+                            onPressed: (_receiptLoading || _receiptSaving)
+                                ? null
+                                : () {
+                                    final name = _availablePrinters.first.name;
+                                    setState(() {
+                                      _receiptPrinterNameCtrl.text = name;
+                                      _cashDrawerPrinterNameCtrl.text = name;
+                                    });
+                                  },
+                            icon: const Icon(Icons.done_all_rounded),
+                            label: const Text('Использовать первый для всего'),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _receiptPrinterNameCtrl,
+                            enabled: !_receiptLoading,
+                            decoration: const InputDecoration(
+                              labelText: 'Имя принтера чека',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextField(
+                            controller: _cashDrawerPrinterNameCtrl,
+                            enabled: !_receiptLoading,
+                            decoration: const InputDecoration(
+                              labelText: 'Имя принтера ящика',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (_availablePrinters.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        initialValue: _availablePrinters.any(
+                              (p) => p.name == _receiptPrinterNameCtrl.text.trim(),
+                            )
+                            ? _receiptPrinterNameCtrl.text.trim()
+                            : null,
+                        decoration: const InputDecoration(
+                          labelText: 'Выбрать принтер чека из найденных',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: _availablePrinters
+                            .map(
+                              (p) => DropdownMenuItem<String>(
+                                value: p.name,
+                                child: Text(
+                                  p.status == null || p.status!.isEmpty
+                                      ? p.name
+                                      : '${p.name} (${p.status})',
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (_receiptLoading || _receiptSaving)
+                            ? null
+                            : (v) {
+                                if (v == null) return;
+                                setState(() => _receiptPrinterNameCtrl.text = v);
+                              },
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        initialValue: _availablePrinters.any(
+                              (p) => p.name == _cashDrawerPrinterNameCtrl.text.trim(),
+                            )
+                            ? _cashDrawerPrinterNameCtrl.text.trim()
+                            : null,
+                        decoration: const InputDecoration(
+                          labelText: 'Выбрать принтер ящика из найденных',
+                          border: OutlineInputBorder(),
+                        ),
+                        items: _availablePrinters
+                            .map(
+                              (p) => DropdownMenuItem<String>(
+                                value: p.name,
+                                child: Text(
+                                  p.status == null || p.status!.isEmpty
+                                      ? p.name
+                                      : '${p.name} (${p.status})',
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (_receiptLoading || _receiptSaving)
+                            ? null
+                            : (v) {
+                                if (v == null) return;
+                                setState(() => _cashDrawerPrinterNameCtrl.text = v);
+                              },
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment<String>(value: 'gdi', label: Text('Режим GDI')),
+                        ButtonSegment<String>(value: 'raw', label: Text('Режим RAW')),
+                      ],
+                      selected: <String>{_receiptWindowsMode},
+                      onSelectionChanged: (_receiptLoading || _receiptSaving)
+                          ? null
+                          : (sel) {
+                              final v = sel.isEmpty ? 'gdi' : sel.first;
+                              setState(() => _receiptWindowsMode = v);
+                            },
                     ),
                     const SizedBox(height: 10),
                     Row(
@@ -2163,6 +2977,8 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                                 child: TextField(
                                   controller: _receiptCompanyPhoneCtrl,
                                   enabled: !_receiptLoading,
+                                  keyboardType: TextInputType.phone,
+                                  inputFormatters: const [TjPhoneDialLockedFormatter()],
                                   decoration: InputDecoration(
                                     labelText: 'Телефон',
                                     hintText: '$kDefaultPhoneDialPrefix…',
@@ -2407,8 +3223,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
       'ИТОГО К ОПЛАТЕ                       ${payable.toStringAsFixed(2)} TJS',
     );
     out.add('');
-    if (_receiptShowPaymentMethod)
+    if (_receiptShowPaymentMethod) {
       out.add('СПОСОБ ОПЛАТЫ                   Наличными');
+    }
     out.add('Сайт: $site');
     if (_receiptQrEnabled) out.add('[QR: $site]');
     if (_receiptShowFooterLine1) out.add(footer1);
@@ -2535,6 +3352,41 @@ class _VersionCardEditorState extends State<_VersionCardEditor> {
     super.dispose();
   }
 
+  Future<void> _silentInstall(String downloadUrl) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final key = widget.item.appKey.trim().toLowerCase();
+    if (key == 'pos_android' && defaultTargetPlatform != TargetPlatform.android) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text(
+            'APK ставится на Android-планшете: откройте настройки на устройстве кассы.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (key == 'server' && defaultTargetPlatform != TargetPlatform.windows) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Backend обновляется с Windows-кассы, где установлен сервер.'),
+        ),
+      );
+      return;
+    }
+    final result = await showSilentUpdateDialog(
+      context: context,
+      appKey: widget.item.appKey,
+      downloadUrl: downloadUrl,
+      http: context.read<HttpClient>(),
+    );
+    if (!mounted || result == null) return;
+    if (!result.ok) {
+      messenger.showSnackBar(SnackBar(content: Text(result.message)));
+    } else {
+      messenger.showSnackBar(SnackBar(content: Text(result.message)));
+    }
+  }
+
   Future<void> _save() async {
     setState(() => _saving = true);
     final messenger = ScaffoldMessenger.of(context);
@@ -2641,19 +3493,116 @@ class _VersionCardEditorState extends State<_VersionCardEditor> {
               maxLines: 4,
             ),
             const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _saving ? null : _save,
-              icon: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save_rounded),
-              label: const Text('Сохранить'),
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: _urlCtrl,
+              builder: (context, urlVal, _) {
+                final hasUrl = urlVal.text.trim().isNotEmpty;
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: FilledButton.icon(
+                        onPressed: _saving ? null : _save,
+                        icon: _saving
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.save_rounded),
+                        label: const Text('Сохранить'),
+                      ),
+                    ),
+                    if (hasUrl) ...[
+                      const SizedBox(width: 8),
+                      OutlinedButton.icon(
+                        onPressed: _saving
+                            ? null
+                            : () async {
+                                final ok = await openUpdateDownloadUrl(
+                                  urlVal.text.trim(),
+                                );
+                                if (!context.mounted) return;
+                                if (!ok) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('Не удалось открыть ссылку'),
+                                    ),
+                                  );
+                                }
+                              },
+                        icon: const Icon(Icons.download_rounded),
+                        label: const Text('В браузере'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton.tonalIcon(
+                        onPressed: _saving ? null : () => _silentInstall(urlVal.text.trim()),
+                        icon: const Icon(Icons.install_desktop_rounded),
+                        label: const Text('Тихо установить'),
+                      ),
+                    ],
+                  ],
+                );
+              },
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _TvVolumeSlider extends StatelessWidget {
+  const _TvVolumeSlider({
+    required this.label,
+    required this.value,
+    required this.enabled,
+    required this.onChanged,
+  });
+
+  final String label;
+  final double value;
+  final bool enabled;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final pct = (value.clamp(0.0, 1.0) * 100).round();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Text(
+                '$pct%',
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          Slider(
+            value: value.clamp(0.0, 1.0),
+            min: 0,
+            max: 1,
+            divisions: 20,
+            label: '$pct%',
+            onChanged: enabled ? onChanged : null,
+          ),
+        ],
       ),
     );
   }

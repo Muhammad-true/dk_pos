@@ -7,7 +7,6 @@ import 'package:fvp/fvp.dart' as fvp;
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:dk_digitial_menu/core/app_config.dart' as dm_app_config;
 
@@ -19,12 +18,14 @@ import 'package:dk_pos/features/license/license_global_api.dart';
 import 'package:dk_pos/app/dk_pos_app.dart';
 import 'package:dk_pos/app/locale/locale_bloc.dart';
 import 'package:dk_pos/app/locale/locale_event.dart';
+import 'package:dk_pos/app/pos_catalog_grid/pos_catalog_grid_cubit.dart';
 import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
 import 'package:dk_pos/app/router/app_router.dart' show AppRouter;
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/config/server_endpoint_store.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/core/network/dio_factory.dart';
+import 'package:dk_pos/core/network/http_client.dart';
 import 'package:dk_pos/data/network/dio_http_client.dart';
 import 'package:dk_pos/data/storage/shared_preferences_key_value_store.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
@@ -48,6 +49,7 @@ import 'package:dk_pos/features/admin/data/menu_units_repository.dart';
 import 'package:dk_pos/features/admin/data/combos_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/upload_repository.dart';
 import 'package:dk_pos/features/admin/data/admin_reports_repository.dart';
+import 'package:dk_pos/features/inventory/data/local_inventory_repository.dart';
 import 'package:dk_pos/features/admin/data/users_admin_remote_data_source_impl.dart';
 import 'package:dk_pos/features/admin/data/users_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/kitchen_stations_repository.dart';
@@ -63,7 +65,9 @@ import 'package:dk_pos/features/payments/data/local_payment_methods_repository.d
 import 'package:dk_pos/features/loyalty/data/local_loyalty_repository.dart';
 import 'package:dk_pos/features/kitchen_board/background/kitchen_background_service.dart';
 import 'package:dk_pos/features/pos/presentation/screens/customer_display_window.dart';
-import 'package:dk_pos/features/update/global_release_check.dart';
+import 'package:dk_pos/features/update/pos_update_merged_check.dart';
+import 'package:dk_pos/features/update/silent_update_dialog.dart';
+import 'package:dk_pos/features/update/update_download_launcher.dart';
 import 'package:dk_pos/theme/app_theme.dart';
 
 String _formatDotenvError(Object e) =>
@@ -443,8 +447,9 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       final localPaymentMethodsRepo = LocalPaymentMethodsRepository(http);
       final localLoyaltyRepo = LocalLoyaltyRepository(http);
       final adminReportsRepo = AdminReportsRepository(http);
+      final localInventoryRepo = LocalInventoryRepository(http);
       final cartRepo = CartRepository();
-      final updateInfo = await _reportInstalledVersion(http);
+      final updateInfo = await fetchMergedPosUpdateInfo(http);
       if (updateInfo != null && updateInfo.requiresBlock) {
         if (!mounted) return;
         setState(() {
@@ -469,12 +474,14 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       await KitchenBackgroundService.initialize();
       final localeBloc = LocaleBloc(kv)..add(const LocaleStarted());
       final posThemeCubit = PosThemeCubit(kv);
+      final posCatalogGridCubit = PosCatalogGridCubit(kv);
       final appRouter = AppRouter(authBloc: authBloc);
 
       if (!mounted) return;
       setState(() {
         _loadingSubtitle = null;
         _payload = _BootPayload(
+          httpClient: http,
           authRepo: authRepo,
           shiftRepo: shiftRepo,
           menuRepo: menuRepo,
@@ -498,10 +505,12 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           localPaymentMethodsRepo: localPaymentMethodsRepo,
           localLoyaltyRepo: localLoyaltyRepo,
           adminReportsRepo: adminReportsRepo,
+          localInventoryRepo: localInventoryRepo,
           cartRepo: cartRepo,
           startupUpdate: updateInfo?.shouldNotify == true ? updateInfo : null,
           localeBloc: localeBloc,
           posThemeCubit: posThemeCubit,
+          posCatalogGridCubit: posCatalogGridCubit,
           authBloc: authBloc,
           appRouter: appRouter,
         );
@@ -521,42 +530,6 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
 
   Future<void> _ensureApiAvailable(DioHttpClient http) async {
     await http.get('api/health');
-  }
-
-  Future<AppUpdateInfo?> _reportInstalledVersion(DioHttpClient http) async {
-    try {
-      final info = await PackageInfo.fromPlatform();
-      final versionText = '${info.version}+${info.buildNumber}';
-      AppUpdateInfo? local;
-      try {
-        final res = await http.post(
-          'api/versions/report',
-          body: {
-            'appKey': 'pos',
-            'displayName': 'dk_pos',
-            'currentVersion': versionText,
-          },
-        );
-        final body = res.body;
-        if (body is Map<String, dynamic>) {
-          final raw = body['version'];
-          if (raw is Map<String, dynamic>) {
-            local = AppUpdateInfo.fromJson(raw, installedVersion: versionText);
-          }
-        }
-      } catch (_) {
-        // локальный отчёт не обязателен
-      }
-      AppUpdateInfo? global;
-      try {
-        global = await fetchGlobalReleaseUpdate(versionText);
-      } catch (_) {
-        // глобальная проверка не должна ломать запуск
-      }
-      return AppUpdateInfo.mergeLocalAndGlobal(local, global);
-    } catch (_) {
-      return null;
-    }
   }
 
   Future<void> _saveServerIp({bool fromLicenseScreen = false}) async {
@@ -1123,6 +1096,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
     final payload = _payload!;
     return MultiRepositoryProvider(
       providers: [
+        RepositoryProvider<HttpClient>.value(value: payload.httpClient),
         RepositoryProvider<AuthRepository>.value(value: payload.authRepo),
         RepositoryProvider<LocalShiftRepository>.value(
           value: payload.shiftRepo,
@@ -1130,6 +1104,9 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         RepositoryProvider<MenuRepository>.value(value: payload.menuRepo),
         RepositoryProvider<AdminReportsRepository>.value(
           value: payload.adminReportsRepo,
+        ),
+        RepositoryProvider<LocalInventoryRepository>.value(
+          value: payload.localInventoryRepo,
         ),
         RepositoryProvider<UsersAdminRepository>.value(
           value: payload.usersAdminRepo,
@@ -1192,6 +1169,9 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         providers: [
           BlocProvider<LocaleBloc>.value(value: payload.localeBloc),
           BlocProvider<PosThemeCubit>.value(value: payload.posThemeCubit),
+          BlocProvider<PosCatalogGridCubit>.value(
+            value: payload.posCatalogGridCubit,
+          ),
           BlocProvider<AuthBloc>.value(value: payload.authBloc),
           BlocProvider<CartBloc>(create: (_) => CartBloc(payload.cartRepo)),
         ],
@@ -1206,10 +1186,12 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
 
 class _BootPayload {
   const _BootPayload({
+    required this.httpClient,
     required this.authRepo,
     required this.shiftRepo,
     required this.menuRepo,
     required this.adminReportsRepo,
+    required this.localInventoryRepo,
     required this.usersAdminRepo,
     required this.kitchenStationsRepo,
     required this.kitchenButtonsRepo,
@@ -1233,14 +1215,17 @@ class _BootPayload {
     required this.startupUpdate,
     required this.localeBloc,
     required this.posThemeCubit,
+    required this.posCatalogGridCubit,
     required this.authBloc,
     required this.appRouter,
   });
 
+  final HttpClient httpClient;
   final AuthRepository authRepo;
   final LocalShiftRepository shiftRepo;
   final MenuRepository menuRepo;
   final AdminReportsRepository adminReportsRepo;
+  final LocalInventoryRepository localInventoryRepo;
   final UsersAdminRepository usersAdminRepo;
   final KitchenStationsRepository kitchenStationsRepo;
   final KitchenButtonsRepository kitchenButtonsRepo;
@@ -1264,6 +1249,7 @@ class _BootPayload {
   final AppUpdateInfo? startupUpdate;
   final LocaleBloc localeBloc;
   final PosThemeCubit posThemeCubit;
+  final PosCatalogGridCubit posCatalogGridCubit;
   final AuthBloc authBloc;
   final AppRouter appRouter;
 }
@@ -1319,7 +1305,37 @@ class _AppUpdateGate extends StatelessWidget {
                         ),
                       ],
                       const SizedBox(height: 16),
-                      FilledButton(
+                      if ((info.downloadUrl ?? '').trim().isNotEmpty) ...[
+                        FilledButton(
+                          onPressed: () async {
+                            await showSilentUpdateDialog(
+                              context: context,
+                              appKey: 'pos',
+                              downloadUrl: info.downloadUrl!.trim(),
+                            );
+                          },
+                          child: const Text('Тихо установить'),
+                        ),
+                        const SizedBox(height: 10),
+                        FilledButton.tonal(
+                          onPressed: () async {
+                            final ok = await openUpdateDownloadUrl(
+                              info.downloadUrl!,
+                            );
+                            if (!context.mounted) return;
+                            if (!ok) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Не удалось открыть ссылку'),
+                                ),
+                              );
+                            }
+                          },
+                          child: const Text('Открыть в браузере'),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      FilledButton.tonal(
                         onPressed: () => Clipboard.setData(
                           ClipboardData(text: info.downloadUrl ?? ''),
                         ),
