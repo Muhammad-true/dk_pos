@@ -27,6 +27,7 @@ import 'package:dk_pos/features/admin/data/app_versions_repository.dart';
 import 'package:dk_pos/features/admin/data/admin_reports_repository.dart';
 import 'package:dk_pos/features/admin/data/catalog_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/local_audio_settings_repository.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_auto_handout_section.dart';
 import 'package:dk_pos/features/admin/data/local_receipt_settings_repository.dart';
 import 'package:dk_pos/features/hardware/data/local_hardware_repository.dart';
 import 'package:dk_pos/features/admin/data/menu_items_admin_repository.dart';
@@ -37,7 +38,7 @@ import 'package:dk_pos/features/admin/presentation/widgets/admin_kitchen_sound_g
 import 'package:dk_pos/features/admin/presentation/widgets/admin_kitchen_ops_panel.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_loyalty_panel.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_payment_methods_panel.dart';
-import 'package:dk_pos/features/admin/presentation/widgets/admin_sales_reports_panel.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_orders_hub.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_section_card.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_users_panel.dart';
 import 'package:dk_pos/features/inventory/presentation/admin_inventory_receive_screen.dart';
@@ -815,7 +816,7 @@ class _AdminTabBody extends StatelessWidget {
     if (index == 3) {
       return Padding(
         padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
-        child: AdminSalesReportsPanel(maxBodyWidth: maxBodyWidth),
+        child: AdminOrdersHub(maxBodyWidth: maxBodyWidth),
       );
     }
 
@@ -1151,6 +1152,7 @@ enum _AdminSettingsSection {
   languageTheme,
   updates,
   sound,
+  orders,
   paymentMethods,
   receipt,
 }
@@ -2035,6 +2037,11 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                 icon: Icons.volume_up_rounded,
               ),
               settingsSectionChip(
+                section: _AdminSettingsSection.orders,
+                label: 'Заказы',
+                icon: Icons.takeout_dining_rounded,
+              ),
+              settingsSectionChip(
                 section: _AdminSettingsSection.paymentMethods,
                 label: 'Оплата',
                 icon: Icons.account_balance_wallet_rounded,
@@ -2495,6 +2502,29 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                 ),
               ),
             ),
+          ],
+          if (_settingsSection == _AdminSettingsSection.orders) ...[
+            const SizedBox(height: 28),
+            Text(
+              'Автовыдача',
+              style: textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Заказы в статусе «Готов к выдаче» автоматически переводятся в «Выдан» через заданное время. Изменения применяются на сервере сразу, без перезапуска.',
+              style: textTheme.bodyMedium?.copyWith(
+                color: scheme.onSurfaceVariant,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 12),
+            sectionGuide(
+              'Справочник: автовыдача снимает заказ с очереди выдачи, если кассир не нажал «Выдать». Таймер идёт с момента перехода в «Готов к выдаче».',
+            ),
+            const SizedBox(height: 12),
+            const AdminAutoHandoutSection(),
           ],
           if (_settingsSection == _AdminSettingsSection.paymentMethods) ...[
             const SizedBox(height: 28),

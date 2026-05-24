@@ -4,7 +4,9 @@ import 'dart:math' as math;
 import 'package:auto_route/auto_route.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
 
 import 'package:dk_pos/app/locale/locale_bloc.dart';
@@ -21,6 +23,7 @@ import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/auth/bloc/auth_event.dart';
 import 'package:dk_pos/features/auth/bloc/auth_state.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
+import 'package:dk_pos/features/cash/presentation/pos_cash_flow.dart';
 import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
 import 'package:dk_pos/features/cart/bloc/cart_event.dart';
 import 'package:dk_pos/features/cart/bloc/cart_state.dart';
@@ -30,10 +33,14 @@ import 'package:dk_pos/features/menu/bloc/menu_state.dart';
 import 'package:dk_pos/features/menu/data/menu_repository.dart';
 import 'package:dk_pos/features/admin/data/screens_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/local_audio_settings_repository.dart';
+import 'package:dk_pos/features/kitchen_board/audio/kitchen_order_alert.dart';
+import 'package:dk_pos/features/pos/presentation/widgets/pos_catalog_grid_settings_editor.dart';
+import 'package:dk_pos/features/pos/presentation/widgets/pos_modifier_sheet.dart';
 import 'package:dk_pos/features/expeditor/presentation/widgets/expeditor_queue_panel.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
 import 'package:dk_pos/features/orders/data/local_orders_realtime.dart';
 import 'package:dk_pos/features/payments/data/local_payments_repository.dart';
+import 'package:dk_pos/features/hardware/data/local_hardware_repository.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_content_config.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_window_service.dart';
 import 'package:dk_pos/features/pos/bloc/pos_hall_orders_cubit.dart';
@@ -42,7 +49,10 @@ import 'package:dk_pos/shared/shared.dart';
 import 'package:dk_pos/theme/pos_workspace_theme.dart';
 
 import '../widgets/pos_cart_panel.dart';
+import '../utils/website_order_delivery_meta.dart';
 import '../widgets/pos_catalog_body.dart';
+import '../widgets/pos_checkout_flow.dart';
+import '../widgets/pos_online_order_edit_flow.dart';
 import '../widgets/pos_table_bills_dialog.dart';
 
 String _cashierOrderStatusRu(String status) {
@@ -93,9 +103,125 @@ String? _cashierKitchenActorHint(LocalKitchenQueueOrder order) {
   return null;
 }
 
+/// Иконка и подпись: автовыдача по таймеру или ручная выдача (статус «Выдан»).
+class _CashierHandOutSourceRow extends StatelessWidget {
+  const _CashierHandOutSourceRow({required this.source});
+
+  final String? source;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final norm = source?.trim().toLowerCase();
+    late final IconData icon;
+    late final String label;
+    late final String tip;
+    if (norm == 'auto') {
+      icon = Icons.schedule_rounded;
+      label = 'Автовыдача';
+      tip = 'Переведено в «Выдан» автоматически через заданный интервал.';
+    } else if (norm == 'manual') {
+      icon = Icons.touch_app_rounded;
+      label = 'Ручная выдача';
+      tip = 'Закрыто кассой или экспедитором вручную.';
+    } else {
+      icon = Icons.help_outline_rounded;
+      label = 'Выдача';
+      tip = 'Способ выдачи не записан (заказ до обновления).';
+    }
+    return Tooltip(
+      message: tip,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 17, color: scheme.primary),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 bool _isWaiterOrderLabel(String? value) {
   final v = (value ?? '').trim().toLowerCase();
   return v.contains('официант') || v.contains('waiter');
+}
+
+String _cashierBoardOrderTypeRu(String? orderTypeRaw) {
+  final v = (orderTypeRaw ?? '').trim();
+  if (v.isEmpty) return 'Заказ';
+  final low = v.toLowerCase();
+  if (low == 'delivery') return 'Доставка';
+  if (low == 'pickup') return 'Самовывоз';
+  if (low == 'parking') return 'Парковка';
+  return v;
+}
+
+String _paymentHistoryTableFallback(LocalPaymentHistoryEntry e) {
+  final ot = (e.orderType ?? '').trim().toLowerCase();
+  if (ot.contains('собой') ||
+      ot == 'takeaway' ||
+      ot.contains('takeaway') ||
+      ot.contains('take_away')) {
+    return 'С собой';
+  }
+  if (ot.contains('доставк') || ot == 'delivery') {
+    return 'Доставка';
+  }
+  return 'Без стола';
+}
+
+String _posReceiptPrintedShortRu(bool? printed) {
+  if (printed == true) return 'Чек напечатан';
+  if (printed == false) return 'Чек не напечатан';
+  return 'Чек: нет данных';
+}
+
+String _posHardwarePrinterShortLabel(HardwareStatusSnapshot? s) {
+  if (s == null) return 'Печать…';
+  switch (s.receiptPrinterStatusCode) {
+    case 'mock':
+      return 'Печать: тест';
+    case 'not_configured':
+      return 'Печать: нет имени';
+    case 'offline_or_missing':
+      return 'Печать: офлайн';
+    case 'online':
+      return 'Печать: ОК';
+    case 'probe_windows_only':
+      return 'Печать: проверка…';
+    case 'probe_failed':
+      return 'Печать: ошибка';
+    default:
+      return 'Печать';
+  }
+}
+
+String _posHardwarePrinterTooltip(HardwareStatusSnapshot s) {
+  final buf = StringBuffer(_posHardwarePrinterShortLabel(s));
+  final name = s.receiptPrinterName?.trim();
+  if (name != null && name.isNotEmpty) {
+    buf.writeln();
+    buf.write('Принтер: $name');
+  }
+  if (s.driverPrinterStatus != null) {
+    buf.writeln();
+    buf.write('Драйвер: ${s.driverPrinterStatus}');
+  }
+  final err = s.probeError?.trim();
+  if (err != null && err.isNotEmpty) {
+    buf.writeln();
+    buf.write(err);
+  }
+  return buf.toString();
 }
 
 bool _canUseCashierBoard(String? role) =>
@@ -147,12 +273,32 @@ class _PosViewState extends State<_PosView> {
 
   final AudioPlayer _cashierAlertPlayer = AudioPlayer();
   bool _cashierAlertInitialized = false;
+  bool _expeditorPickupSoundPrimed = false;
   final Set<String> _knownIncomingOrderIds = <String>{};
   final Set<String> _knownOpenTableBillIds = <String>{};
   final GlobalKey<ScaffoldState> _posScaffoldKey = GlobalKey<ScaffoldState>();
 
   /// Локальный код точки: `AppConfig.storeBranchId` (franchise id из лицензии).
   String get _branchId => AppConfig.storeBranchId;
+
+  /// Заказы с сайта (`order_source=website`) — только раздел «Онлайн заказы».
+  List<LocalCashierBoardOrder> get _incomingWebsiteOrders => _incomingBoard
+      .where((o) => (o.orderSource ?? 'pos').toLowerCase() == 'website')
+      .toList(growable: false);
+
+  /// Прочие входящие без стола — показываем в общем списке «Заказы».
+  List<LocalCashierBoardOrder> get _incomingNonWebsiteOrders => _incomingBoard
+      .where((o) => (o.orderSource ?? 'pos').toLowerCase() != 'website')
+      .toList(growable: false);
+
+  /// Входящие сайт + активные сайт без дублей по id (входящие первыми).
+  List<LocalCashierBoardOrder> get _allWebsiteCashierOrders {
+    final inc = _incomingWebsiteOrders;
+    final incIds = inc.map((e) => e.order.id).toSet();
+    final act =
+        _activeBoard.where((o) => (o.orderSource ?? 'pos').toLowerCase() == 'website' && !incIds.contains(o.order.id));
+    return [...inc, ...act];
+  }
 
   bool get _customerDisplaySupported =>
       CustomerDisplayWindowService.instance.isSupportedPlatform;
@@ -168,6 +314,10 @@ class _PosViewState extends State<_PosView> {
       if (!mounted) return;
       _syncExpeditorPollingForCashier();
       _startCashierSessionSync();
+      final role = context.read<AuthBloc>().state.user?.role;
+      if (role == 'cashier' || role == 'admin') {
+        await ensureCashShiftOpen(context);
+      }
     });
   }
 
@@ -184,6 +334,7 @@ class _PosViewState extends State<_PosView> {
       _cashierSessionRefreshInFlight = false;
       _lastCashierSessionRefreshAt = null;
       _cashierAlertInitialized = false;
+      _expeditorPickupSoundPrimed = false;
       _knownIncomingOrderIds.clear();
       _knownOpenTableBillIds.clear();
       unawaited(CustomerDisplayWindowService.instance.close());
@@ -261,18 +412,22 @@ class _PosViewState extends State<_PosView> {
 
   Future<void> _refreshCashierSessionData() async {
     final newTableBill = await _refreshOpenTableBills(sessionBatch: true);
-    final newIncoming = await _refreshCashierBoard(sessionBatch: true);
+    final incoming = await _refreshCashierBoard(sessionBatch: true);
     if (!mounted) return;
     if (!_cashierAlertInitialized) {
       _cashierAlertInitialized = true;
       return;
     }
-    if (newTableBill || newIncoming) {
-      unawaited(_playCashierNewOrderSound());
-    }
+    unawaited(
+      _playCashierSessionSounds(
+        newBill: newTableBill,
+        newWebsite: incoming.newWebsite,
+        newOther: incoming.newOther,
+      ),
+    );
   }
 
-  /// Новые счета на столах (по данным сервера). `true` — появился id, которого не было в прошлом опросе.
+  /// Новые счета на оплату (по данным сервера). `true` — появился id, которого не было в прошлом опросе.
   Future<bool> _refreshOpenTableBills({bool sessionBatch = false}) async {
     if (!mounted) return false;
     final role = context.read<AuthBloc>().state.user?.role;
@@ -290,12 +445,18 @@ class _PosViewState extends State<_PosView> {
         ..addAll(serverIds);
 
       final bills = dtos
-          .where((d) => d.id.isNotEmpty)
+          .where(
+            (d) =>
+                d.id.isNotEmpty &&
+                d.status.trim().toLowerCase() != 'cancelled',
+          )
           .map(posTableBillFromServerDto)
           .toList(growable: false);
       context.read<PosHallOrdersCubit>().mergeHydrateFromServer(bills);
       if (hasNew && !sessionBatch) {
-        unawaited(_playCashierNewOrderSound());
+        unawaited(
+          _playCashierSessionSounds(newBill: true, newWebsite: false, newOther: false),
+        );
       }
       return hasNew;
     } catch (_) {
@@ -303,19 +464,41 @@ class _PosViewState extends State<_PosView> {
     }
   }
 
-  /// Онлайн-входящие на кассу. `true` — новый заказ в списке «принять».
-  Future<bool> _refreshCashierBoard({bool sessionBatch = false}) async {
-    if (!mounted) return false;
+  /// Входящие на кассу: новые id в «принять».
+  Future<({bool newWebsite, bool newOther})> _refreshCashierBoard({
+    bool sessionBatch = false,
+  }) async {
+    if (!mounted) return (newWebsite: false, newOther: false);
     final role = context.read<AuthBloc>().state.user?.role;
-    if (!_canUseCashierBoard(role)) return false;
+    if (!_canUseCashierBoard(role)) return (newWebsite: false, newOther: false);
     try {
       final repo = context.read<LocalOrdersRepository>();
-      final incoming = await repo.fetchCashierIncomingOrders(branchId: _branchId);
-      final active = await repo.fetchCashierActiveOrders(branchId: _branchId);
-      if (!mounted) return false;
+      final pair = await Future.wait<List<LocalCashierBoardOrder>>([
+        repo.fetchCashierIncomingOrders(branchId: _branchId),
+        repo.fetchCashierActiveOrders(branchId: _branchId),
+      ]);
+      final incoming = pair[0];
+      final active = pair[1];
+      if (!mounted) return (newWebsite: false, newOther: false);
       final ids = incoming.map((e) => e.order.id).where((id) => id.isNotEmpty).toSet();
-      final hasNew =
-          _cashierAlertInitialized && ids.difference(_knownIncomingOrderIds).isNotEmpty;
+      final previousKnown = Set<String>.from(_knownIncomingOrderIds);
+
+      var newWebsite = false;
+      var newOther = false;
+      if (_cashierAlertInitialized) {
+        final newIds = ids.difference(previousKnown);
+        final byId = {for (final o in incoming) o.order.id: o};
+        for (final id in newIds) {
+          final row = byId[id];
+          if (row == null) continue;
+          if ((row.orderSource ?? 'pos').toLowerCase() == 'website') {
+            newWebsite = true;
+          } else {
+            newOther = true;
+          }
+        }
+      }
+
       _knownIncomingOrderIds
         ..clear()
         ..addAll(ids);
@@ -324,29 +507,103 @@ class _PosViewState extends State<_PosView> {
         _incomingBoard = incoming;
         _activeBoard = active;
       });
-      if (hasNew && !sessionBatch) {
-        unawaited(_playCashierNewOrderSound());
+      if (!sessionBatch && (newWebsite || newOther)) {
+        unawaited(
+          _playCashierSessionSounds(
+            newBill: false,
+            newWebsite: newWebsite,
+            newOther: newOther,
+          ),
+        );
       }
-      return hasNew;
+      return (newWebsite: newWebsite, newOther: newOther);
     } catch (_) {
-      return false;
+      return (newWebsite: false, newOther: false);
     }
   }
 
-  Future<void> _playCashierNewOrderSound() async {
+  String? _firstNonEmptySoundPath(Iterable<String?> paths) {
+    for (final p in paths) {
+      final t = (p ?? '').trim();
+      if (t.isNotEmpty) return t;
+    }
+    return null;
+  }
+
+  Future<void> _playCashierAlertPath(String path) async {
+    if (!mounted) return;
+    final url = AppConfig.mediaUrl(path);
+    if (url.isEmpty) return;
+    try {
+      await _cashierAlertPlayer.stop();
+      await _cashierAlertPlayer.play(UrlSource(url));
+    } catch (_) {
+      // не мешаем кассе
+    }
+  }
+
+  /// Кастом из админки → WAV из assets → системный alert (как на кухне).
+  Future<void> _playCashierAlertWithFallback(String? uploadPath) async {
+    if (!mounted) return;
+    final custom = (uploadPath ?? '').trim();
+    if (custom.isNotEmpty) {
+      await _playCashierAlertPath(custom);
+      return;
+    }
+    try {
+      await KitchenOrderAlert.play(_cashierAlertPlayer);
+    } catch (_) {
+      try {
+        await SystemSound.play(SystemSoundType.alert);
+      } catch (_) {}
+    }
+  }
+
+  /// Касса: онлайн отдельно, затем новый счёт / прочие входящие — свой звук из админки.
+  Future<void> _playCashierSessionSounds({
+    required bool newBill,
+    required bool newWebsite,
+    required bool newOther,
+  }) async {
+    if (!newBill && !newWebsite && !newOther) return;
     if (!mounted) return;
     try {
       final settings = await context.read<LocalAudioSettingsRepository>().fetch(
             branchId: _branchId,
           );
-      final kitchen = (settings.kitchenSoundPath ?? '').trim();
-      final ready = (settings.readySoundPath ?? '').trim();
-      final path = kitchen.isNotEmpty ? kitchen : ready;
-      if (path.isEmpty) return;
-      final url = AppConfig.mediaUrl(path);
-      if (url.isEmpty) return;
-      await _cashierAlertPlayer.stop();
-      await _cashierAlertPlayer.play(UrlSource(url));
+      if (newWebsite) {
+        final path = _firstNonEmptySoundPath([
+          settings.websiteOrderSoundPath,
+          settings.readySoundPath,
+          settings.kitchenSoundPath,
+        ]);
+        await _playCashierAlertWithFallback(path);
+        await Future<void>.delayed(const Duration(milliseconds: 320));
+        if (!mounted) return;
+      }
+      if (newBill || newOther) {
+        final path = _firstNonEmptySoundPath([
+          settings.readySoundPath,
+          settings.kitchenSoundPath,
+        ]);
+        await _playCashierAlertWithFallback(path);
+      }
+    } catch (_) {
+      // не мешаем кассе
+    }
+  }
+
+  Future<void> _playCashierReadySound() async {
+    if (!mounted) return;
+    try {
+      final settings = await context.read<LocalAudioSettingsRepository>().fetch(
+            branchId: _branchId,
+          );
+      final path = _firstNonEmptySoundPath([
+        settings.readySoundPath,
+        settings.kitchenSoundPath,
+      ]);
+      await _playCashierAlertWithFallback(path);
     } catch (_) {
       // не мешаем кассе
     }
@@ -360,7 +617,10 @@ class _PosViewState extends State<_PosView> {
             branchId: _branchId,
           );
       if (!mounted) return;
-      await _refreshCashierBoard();
+      await Future.wait([
+        _refreshCashierBoard(),
+        _refreshOpenTableBills(),
+      ]);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -381,6 +641,7 @@ class _PosViewState extends State<_PosView> {
     _expeditorQueueTimer = null;
     if (!AppConfig.posEnableExpeditor) {
       _expeditorRefreshInFlight = false;
+      _expeditorPickupSoundPrimed = false;
       if (mounted) {
         setState(() {
           _expeditorBundlingCount = 0;
@@ -391,6 +652,7 @@ class _PosViewState extends State<_PosView> {
     }
     if (user?.role != 'cashier') {
       _expeditorRefreshInFlight = false;
+      _expeditorPickupSoundPrimed = false;
       if (mounted) {
         setState(() {
           _expeditorBundlingCount = 0;
@@ -411,13 +673,21 @@ class _PosViewState extends State<_PosView> {
     if (context.read<AuthBloc>().state.user?.role != 'cashier') return;
     if (_expeditorRefreshInFlight) return;
     _expeditorRefreshInFlight = true;
+    final prevPickup = _expeditorPickupCount;
     try {
       final snap = await context.read<LocalOrdersRepository>().fetchExpeditorQueue();
       if (!mounted) return;
+      final pickupUp = snap.pickup.length > prevPickup;
       setState(() {
         _expeditorBundlingCount = snap.bundling.length;
         _expeditorPickupCount = snap.pickup.length;
       });
+      if (AppConfig.posEnableExpeditor &&
+          _expeditorPickupSoundPrimed &&
+          pickupUp) {
+        unawaited(_playCashierReadySound());
+      }
+      _expeditorPickupSoundPrimed = true;
     } catch (_) {
       // сеть/API — не блокируем кассу
     } finally {
@@ -459,6 +729,10 @@ class _PosViewState extends State<_PosView> {
       context.read<CartBloc>().add(CartItemAdded(item, unitPrice: customPrice));
       return;
     }
+    if (item.hasModifiers) {
+      await showPosModifierSheet(context, item: item);
+      return;
+    }
     context.read<CartBloc>().add(CartItemAdded(item));
   }
 
@@ -467,11 +741,20 @@ class _PosViewState extends State<_PosView> {
     if (!mounted) return;
     final showHandoffTab = context.read<AuthBloc>().state.user?.role == 'cashier' &&
         AppConfig.posEnableExpeditor;
+    final mergedOrders = <LocalCashierBoardOrder>[
+      ..._incomingNonWebsiteOrders,
+      ..._activeBoard.where((o) => (o.orderSource ?? 'pos').toLowerCase() != 'website'),
+    ];
     return showDialog<void>(
       context: context,
       builder: (dialogContext) => _PosOrdersDialog(
         showHandoffTab: showHandoffTab,
-        orders: List<LocalCashierBoardOrder>.unmodifiable(_activeBoard),
+        orders: List<LocalCashierBoardOrder>.unmodifiable(mergedOrders),
+        onCashierAck: (order) async {
+          Navigator.of(dialogContext).pop();
+          await _onAcceptIncoming(order);
+          if (mounted) await _showOrdersDialog();
+        },
         onCloseOrder: (order) async {
           Navigator.of(dialogContext).pop();
           await _closeActiveOrder(order);
@@ -492,11 +775,34 @@ class _PosViewState extends State<_PosView> {
     return showDialog<void>(
       context: context,
       builder: (dialogContext) => _OnlineOrdersDialog(
-        orders: List<LocalCashierBoardOrder>.unmodifiable(_incomingBoard),
-        onAccept: (order) async {
+        orders: List<LocalCashierBoardOrder>.unmodifiable(_allWebsiteCashierOrders),
+        onCashierAck: (order) async {
           Navigator.of(dialogContext).pop();
           await _onAcceptIncoming(order);
           if (mounted) await _showOnlineOrdersDialog();
+        },
+        onCloseOrder: (order) async {
+          Navigator.of(dialogContext).pop();
+          await _closeActiveOrder(order);
+          if (mounted) await _showOnlineOrdersDialog();
+        },
+        onCancelOrder: (order) async {
+          Navigator.of(dialogContext).pop();
+          await _cancelActiveOrder(order);
+          if (mounted) await _showOnlineOrdersDialog();
+        },
+        onEditOrder: (order) async {
+          Navigator.of(dialogContext).pop();
+          await startOnlineOrderEditWithCustomerConsent(
+            context,
+            row: order,
+            onAcknowledgeIncoming: () => _onAcceptIncoming(order),
+          );
+        },
+        onCallCustomer: (order) {
+          final label = order.tableLabel?.trim() ?? '';
+          final meta = parseWebsiteOrderDeliveryMeta(label);
+          callWebsiteOrderCustomer(context, meta.phone);
         },
       ),
     );
@@ -505,33 +811,14 @@ class _PosViewState extends State<_PosView> {
   Future<void> _showTodayPaymentsHistoryDialog() async {
     final role = context.read<AuthBloc>().state.user?.role;
     if (role != 'cashier' && role != 'admin') return;
-    try {
-      final history = await context
-          .read<LocalPaymentsRepository>()
-          .fetchTodayHistoryBundle(
-            branchId: _branchId,
-            limit: 200,
-            lang: context.appUiLocale.languageCode,
-          );
-      if (!mounted) return;
-      await showDialog<void>(
-        context: context,
-        builder: (dialogContext) => _TodayPaymentsDialog(
-          entries: history.payments,
-          refunds: history.refunds,
-        ),
-      );
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Не удалось открыть историю оплат: $e')),
-      );
-    }
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => _TodayPaymentsDialogLoader(
+        branchId: _branchId,
+        lang: context.appUiLocale.languageCode,
+      ),
+    );
   }
 
   Future<void> _closeActiveOrder(LocalCashierBoardOrder row) async {
@@ -553,6 +840,8 @@ class _PosViewState extends State<_PosView> {
     }
     final notReady = status != 'ready';
     final needsPayment = row.requiresPayment;
+    final isWebsite = (row.orderSource ?? 'pos').toLowerCase() == 'website';
+    final isDelivery = (row.orderType ?? '').trim().toLowerCase() == 'delivery';
     if (notReady || needsPayment) {
       if (!mounted) return;
       final ok = await showDialog<bool>(
@@ -565,7 +854,7 @@ class _PosViewState extends State<_PosView> {
                 if (notReady)
                   'Заказ №${o.number} ещё не в статусе «Готов».',
                 if (needsPayment)
-                  'По заказу отмечено «нужна оплата».',
+                  'Оплата ещё не проведена — после выдачи примите её в «Счета на оплату».',
                 'Подтвердите ручное закрытие/выдачу.',
               ].join('\n'),
             ),
@@ -585,6 +874,31 @@ class _PosViewState extends State<_PosView> {
       if (ok != true || !mounted) return;
     }
     try {
+      if (isWebsite && isDelivery) {
+        final rawLabel = row.tableLabel?.trim() ?? '';
+        final meta = parseWebsiteOrderDeliveryMeta(rawLabel);
+        final fallbackAddress =
+            rawLabel.isNotEmpty && meta.label != rawLabel ? rawLabel : null;
+        final deliveryAddress = meta.address ?? fallbackAddress;
+        try {
+          await context.read<LocalHardwareRepository>().printReceipt(
+                orderId: o.id,
+                totalAmount: o.totalPrice,
+                paymentMethod: 'courier_delivery',
+                receiptTitle: 'ЧЕК ДЛЯ КУРЬЕРА',
+                customerName: meta.contact,
+                customerPhone: meta.phone,
+                deliveryAddress: deliveryAddress,
+                deliveryNote: meta.comment,
+              );
+        } catch (e) {
+          if (mounted) {
+            messenger.showSnackBar(
+              SnackBar(content: Text('Печать чека курьеру не удалась: $e')),
+            );
+          }
+        }
+      }
       await ordersRepo.handoffOrder(
             orderId: o.id,
             action: 'hand_out',
@@ -592,7 +906,13 @@ class _PosViewState extends State<_PosView> {
       await _refreshCashierBoard();
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Заказ №${o.number} выдан')),
+        SnackBar(
+          content: Text(
+            needsPayment
+                ? 'Заказ №${o.number} выдан. Оплату проведите в «Счета на оплату».'
+                : 'Заказ №${o.number} выдан',
+          ),
+        ),
       );
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -642,6 +962,7 @@ class _PosViewState extends State<_PosView> {
             branchId: _branchId,
           );
       await _refreshCashierBoard();
+      await _refreshOpenTableBills();
       if (!mounted) return;
       messenger.showSnackBar(
         SnackBar(content: Text('Заказ №${o.number} отменен')),
@@ -923,11 +1244,12 @@ class _PosViewState extends State<_PosView> {
                 ),
               ),
               content: SizedBox(
-                width: _dialogWidth(dialogContext, 420),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+                width: _dialogWidth(dialogContext, 480),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                     Text(
                       'Язык',
                       style: theme.textTheme.titleSmall?.copyWith(
@@ -1002,7 +1324,12 @@ class _PosViewState extends State<_PosView> {
                         );
                       },
                     ),
+                    const SizedBox(height: 22),
+                    const Divider(),
+                    const SizedBox(height: 16),
+                    const PosCatalogGridSettingsEditor(),
                   ],
+                ),
                 ),
               ),
               actions: [
@@ -1055,6 +1382,9 @@ class _PosViewState extends State<_PosView> {
             builder: (context, cart) {
               final narrowBar = MediaQuery.sizeOf(context).width < 420;
               final dockedCart = WindowLayout.of(context).dockPosCart;
+              final appendFullscreenMode = dockedCart &&
+                  context.watch<PosHallOrdersCubit>().state.openBillAppendDraft !=
+                      null;
               final rootContext = context;
 
               return Scaffold(
@@ -1088,7 +1418,9 @@ class _PosViewState extends State<_PosView> {
                           onLogout: () => _logout(rootContext),
                         )
                       : null,
-                  appBar: AppBar(
+                  appBar: (dockedCart && !narrowBar)
+                      ? null
+                      : AppBar(
                     automaticallyImplyLeading: false,
                     toolbarHeight: 84,
                     titleSpacing: 16,
@@ -1099,21 +1431,119 @@ class _PosViewState extends State<_PosView> {
                     title: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Doner Kebab',
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w800,
+                        if (narrowBar)
+                          Text(
+                            'Doner Kebab',
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          )
+                        else
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                Text(
+                                  'Doner Kebab',
+                                  style: theme.textTheme.titleLarge?.copyWith(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                if (user != null) ...[
+                                  const SizedBox(width: 8),
+                                  Chip(
+                                    avatar: const Icon(
+                                      Icons.badge_outlined,
+                                      size: 18,
+                                    ),
+                                    label: Text(user.roleLabel(l10n)),
+                                    visualDensity: VisualDensity.compact,
+                                  ),
+                                ],
+                                const SizedBox(width: 8),
+                                _TopInfoBadge(
+                                  icon: Icons.receipt_long_rounded,
+                                  label: '${cart.itemCount} поз.',
+                                  iconOnly: true,
+                                ),
+                                const SizedBox(width: 8),
+                                const _TopInfoBadge(
+                                  icon: Icons.wifi_rounded,
+                                  label: 'Online',
+                                  iconOnly: true,
+                                ),
+                                if (user?.role == 'cashier' ||
+                                    user?.role == 'admin') ...[
+                                  const SizedBox(width: 8),
+                                  const _PrinterStatusBadge(iconOnly: true),
+                                ],
+                              ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Кассовое рабочее место • Быстрая сборка заказа',
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
+                        if (!narrowBar) const SizedBox(height: 2),
+                        if (!narrowBar && appendFullscreenMode) ...[
+                          const SizedBox(height: 6),
+                          SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: Row(
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.settings_rounded),
+                                  tooltip: 'Настройки',
+                                  onPressed: _showSettingsDialog,
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.refresh_rounded),
+                                  tooltip: l10n.actionRefreshMenu,
+                                  onPressed: menu.loading
+                                      ? null
+                                      : () => context.read<MenuBloc>().add(
+                                            MenuLoadRequested(
+                                              lang: menuApiLanguageCode(
+                                                context.appUiLocale.languageCode,
+                                              ),
+                                            ),
+                                          ),
+                                ),
+                                if ((user?.role == 'cashier' ||
+                                        user?.role == 'admin') &&
+                                    _canUseCustomerDisplay)
+                                  IconButton(
+                                    icon: const Icon(Icons.tv_rounded),
+                                    tooltip: 'Экран клиента',
+                                    onPressed: _openCustomerDisplayByClick,
+                                  ),
+                                if ((user?.role == 'cashier' ||
+                                        user?.role == 'admin') &&
+                                    _canUseCustomerDisplay)
+                                  IconButton(
+                                    icon: const Icon(Icons.sync_rounded),
+                                    tooltip: 'Обновить экран клиента',
+                                    onPressed: _refreshCustomerDisplayConfigByClick,
+                                  ),
+                                if (user?.role == 'cashier' || user?.role == 'admin')
+                                  IconButton(
+                                    icon: const Icon(Icons.account_balance_wallet_outlined),
+                                    tooltip: 'Касса: внесение и выемка',
+                                    onPressed: () => showPosCashManagementDialog(context),
+                                  ),
+                                if (user?.role == 'cashier' || user?.role == 'admin')
+                                  IconButton(
+                                    icon: const Icon(Icons.payments_rounded),
+                                    tooltip: 'Оплаты за сегодня',
+                                    onPressed: _showTodayPaymentsHistoryDialog,
+                                  ),
+                                TextButton.icon(
+                                  onPressed: () => _logout(context),
+                                  icon: const Icon(Icons.logout_rounded),
+                                  label: Text(l10n.actionExit),
+                                ),
+                                const SizedBox(width: 8),
+                              ],
+                            ),
                           ),
-                        ),
+                        ],
                       ],
                     ),
                     actions: narrowBar
@@ -1140,82 +1570,60 @@ class _PosViewState extends State<_PosView> {
                             ),
                           ]
                         : [
-                            if (user != null)
-                              Padding(
-                                padding: const EdgeInsets.only(right: 8),
-                                child: Center(
-                                  child: Chip(
-                                    avatar: const Icon(
-                                      Icons.badge_outlined,
-                                      size: 18,
-                                    ),
-                                    label: Text(user.roleLabel(l10n)),
-                                    visualDensity: VisualDensity.compact,
-                                  ),
-                                ),
+                            if (!appendFullscreenMode) ...[
+                              IconButton(
+                                icon: const Icon(Icons.settings_rounded),
+                                tooltip: 'Настройки',
+                                onPressed: _showSettingsDialog,
                               ),
-                            const Padding(
-                              padding: EdgeInsets.only(right: 8),
-                              child: Center(
-                                child: _TopInfoBadge(
-                                  icon: Icons.wifi_rounded,
-                                  label: 'Online',
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.only(right: 8),
-                              child: Center(
-                                child: _TopInfoBadge(
-                                  icon: Icons.receipt_long_rounded,
-                                  label: '${cart.itemCount} поз.',
-                                ),
-                              ),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.settings_rounded),
-                              tooltip: 'Настройки',
-                              onPressed: _showSettingsDialog,
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.refresh_rounded),
-                              tooltip: l10n.actionRefreshMenu,
-                              onPressed: menu.loading
-                                  ? null
-                                  : () => context.read<MenuBloc>().add(
-                                      MenuLoadRequested(
-                                        lang: menuApiLanguageCode(
-                                          context.appUiLocale.languageCode,
+                              IconButton(
+                                icon: const Icon(Icons.refresh_rounded),
+                                tooltip: l10n.actionRefreshMenu,
+                                onPressed: menu.loading
+                                    ? null
+                                    : () => context.read<MenuBloc>().add(
+                                          MenuLoadRequested(
+                                            lang: menuApiLanguageCode(
+                                              context.appUiLocale.languageCode,
+                                            ),
+                                          ),
                                         ),
-                                      ),
-                                    ),
-                            ),
-                            if ((user?.role == 'cashier' || user?.role == 'admin') &&
-                                _canUseCustomerDisplay)
-                              IconButton(
-                                icon: const Icon(Icons.tv_rounded),
-                                tooltip: 'Экран клиента',
-                                onPressed: _openCustomerDisplayByClick,
                               ),
-                            if ((user?.role == 'cashier' || user?.role == 'admin') &&
-                                _canUseCustomerDisplay)
-                              IconButton(
-                                icon: const Icon(Icons.sync_rounded),
-                                tooltip: 'Обновить экран клиента',
-                                onPressed: _refreshCustomerDisplayConfigByClick,
+                              if ((user?.role == 'cashier' ||
+                                      user?.role == 'admin') &&
+                                  _canUseCustomerDisplay)
+                                IconButton(
+                                  icon: const Icon(Icons.tv_rounded),
+                                  tooltip: 'Экран клиента',
+                                  onPressed: _openCustomerDisplayByClick,
+                                ),
+                              if ((user?.role == 'cashier' ||
+                                      user?.role == 'admin') &&
+                                  _canUseCustomerDisplay)
+                                IconButton(
+                                  icon: const Icon(Icons.sync_rounded),
+                                  tooltip: 'Обновить экран клиента',
+                                  onPressed: _refreshCustomerDisplayConfigByClick,
+                                ),
+                              if (user?.role == 'cashier' || user?.role == 'admin')
+                                IconButton(
+                                  icon: const Icon(Icons.account_balance_wallet_outlined),
+                                  tooltip: 'Касса: внесение и выемка',
+                                  onPressed: () => showPosCashManagementDialog(context),
+                                ),
+                              if (user?.role == 'cashier' || user?.role == 'admin')
+                                IconButton(
+                                  icon: const Icon(Icons.payments_rounded),
+                                  tooltip: 'Оплаты за сегодня',
+                                  onPressed: _showTodayPaymentsHistoryDialog,
+                                ),
+                              TextButton.icon(
+                                onPressed: () => _logout(context),
+                                icon: const Icon(Icons.logout_rounded),
+                                label: Text(l10n.actionExit),
                               ),
-                            if (user?.role == 'cashier' || user?.role == 'admin')
-                              IconButton(
-                                icon: const Icon(Icons.payments_rounded),
-                                tooltip: 'Оплаты за сегодня',
-                                onPressed: _showTodayPaymentsHistoryDialog,
-                              ),
-                            TextButton.icon(
-                              onPressed: () => _logout(context),
-                              icon: const Icon(Icons.logout_rounded),
-                              label: Text(l10n.actionExit),
-                            ),
-                            const SizedBox(width: 8),
+                              const SizedBox(width: 8),
+                            ],
                           ],
                   ),
                   floatingActionButton:
@@ -1272,17 +1680,43 @@ class _PosViewState extends State<_PosView> {
                         ? Center(child: Text(l10n.menuEmpty))
                         : LayoutBuilder(
                             builder: (context, constraints) {
-                              final catalog = PosCatalogBody(
-                                menu: menu,
-                                catalogPaneWidth: WindowLayout(
-                                  width: constraints.maxWidth,
-                                ).posCatalogPaneWidth,
-                                onAddItem: _handleCatalogItemAdd,
-                              );
                               return BlocBuilder<PosHallOrdersCubit,
                                   PosHallOrdersState>(
                                 builder: (context, hall) {
+                                  final appendMode =
+                                      hall.openBillAppendDraft != null;
+                                  final cartPanelWidth = dockedCart
+                                      ? (appendMode
+                                          ? (constraints.maxWidth * 0.40).clamp(
+                                              320.0,
+                                              480.0,
+                                            )
+                                          : WindowLayout.posCartPanelWidth)
+                                      : 0.0;
+                                  final catalogPaneWidth = dockedCart
+                                      ? WindowLayout(
+                                          width: constraints.maxWidth,
+                                        ).posCatalogPaneWidthBesideCart(
+                                          constraints.maxWidth,
+                                          cartPanelWidth,
+                                        )
+                                      : WindowLayout(
+                                          width: constraints.maxWidth,
+                                        ).posCatalogPaneWidth;
+                                  final catalog = PosCatalogBody(
+                                    menu: menu,
+                                    catalogPaneWidth: catalogPaneWidth,
+                                    orderAppendMode: appendMode,
+                                    onAddItem: _handleCatalogItemAdd,
+                                  );
                                   final openBillsCount = hall.openBills.length;
+                                  final incomingWebsiteCount =
+                                      _incomingWebsiteOrders.length;
+                                  final ordersToHandOutCount =
+                                      user?.role == 'cashier'
+                                          ? _expeditorBundlingCount +
+                                              _expeditorPickupCount
+                                          : 0;
                                   final metrics = narrowBar
                                       ? const SizedBox.shrink()
                                       : Row(
@@ -1304,9 +1738,7 @@ class _PosViewState extends State<_PosView> {
                                                 label: 'Заказы',
                                                 value: _ordersWorkspaceValue(l10n),
                                                 tone: const Color(0xFF24B47E),
-                                                urgent: user?.role == 'cashier' &&
-                                                    (_expeditorBundlingCount > 0 ||
-                                                        _expeditorPickupCount > 0),
+                                                badgeCount: ordersToHandOutCount,
                                                 onTap: _showOrdersDialog,
                                               ),
                                             ),
@@ -1316,14 +1748,18 @@ class _PosViewState extends State<_PosView> {
                                                 icon:
                                                     Icons.phone_in_talk_rounded,
                                                 label: 'Онлайн заказы',
-                                                value:
-                                                    '${_incomingBoard.length} новых',
-                                                tone: theme.brightness ==
-                                                        Brightness.dark
-                                                    ? scheme.secondary
-                                                    : const Color(0xFFB26A00),
-                                                urgent:
-                                                    _incomingBoard.isNotEmpty,
+                                                value: incomingWebsiteCount > 0
+                                                    ? '$incomingWebsiteCount новых'
+                                                    : 'нет новых',
+                                                tone: incomingWebsiteCount > 0
+                                                    ? const Color(0xFFE4002B)
+                                                    : (theme.brightness ==
+                                                            Brightness.dark
+                                                        ? scheme.secondary
+                                                        : const Color(
+                                                            0xFFB26A00,
+                                                          )),
+                                                badgeCount: incomingWebsiteCount,
                                                 onTap: _showOnlineOrdersDialog,
                                               ),
                                             ),
@@ -1332,11 +1768,12 @@ class _PosViewState extends State<_PosView> {
                                               child: _WorkspaceActionCard(
                                                 icon: Icons
                                                     .table_restaurant_rounded,
-                                                label: 'Счета на столах',
-                                                value:
-                                                    '$openBillsCount открытых',
+                                                label: 'Счета на оплату',
+                                                value: openBillsCount > 0
+                                                    ? '$openBillsCount не оплачено'
+                                                    : 'все оплачены',
                                                 tone: const Color(0xFF5B8DEF),
-                                                urgent: openBillsCount > 0,
+                                                badgeCount: openBillsCount,
                                                 onTap: () =>
                                                     showOpenTableBillsDialog(
                                                   context,
@@ -1345,75 +1782,250 @@ class _PosViewState extends State<_PosView> {
                                             ),
                                           ],
                                         );
-                                  final showWorkspaceCards = !narrowBar;
+                                  final showWorkspaceCards =
+                                      !narrowBar && !appendMode;
+                                  final cartPane = SizedBox(
+                                    width: cartPanelWidth,
+                                    child: ColoredBox(
+                                      color: scheme.surfaceContainerLow,
+                                      child: const PosCartPanel(),
+                                    ),
+                                  );
+                                  final catalogPane = Expanded(
+                                    child: Column(
+                                      children: [
+                                        if (dockedCart && !narrowBar)
+                                          Container(
+                                            width: double.infinity,
+                                            padding: const EdgeInsets.fromLTRB(
+                                              16,
+                                              10,
+                                              16,
+                                              6,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: scheme.surface,
+                                              border: Border(
+                                                bottom: BorderSide(
+                                                  color: scheme.outlineVariant,
+                                                ),
+                                              ),
+                                            ),
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                SingleChildScrollView(
+                                                  scrollDirection:
+                                                      Axis.horizontal,
+                                                  child: Row(
+                                                    children: [
+                                                      Text(
+                                                        'Doner Kebab',
+                                                        style: theme
+                                                            .textTheme
+                                                            .titleLarge
+                                                            ?.copyWith(
+                                                              fontWeight:
+                                                                  FontWeight.w800,
+                                                            ),
+                                                      ),
+                                                      if (user != null) ...[
+                                                        const SizedBox(width: 8),
+                                                        Chip(
+                                                          avatar: const Icon(
+                                                            Icons.badge_outlined,
+                                                            size: 18,
+                                                          ),
+                                                          label: Text(
+                                                            user.roleLabel(l10n),
+                                                          ),
+                                                          visualDensity:
+                                                              VisualDensity
+                                                                  .compact,
+                                                        ),
+                                                      ],
+                                                      const SizedBox(width: 8),
+                                                      _TopInfoBadge(
+                                                        icon: Icons
+                                                            .receipt_long_rounded,
+                                                        label:
+                                                            '${cart.itemCount} поз.',
+                                                        iconOnly: true,
+                                                      ),
+                                                      const SizedBox(width: 8),
+                                                      const _TopInfoBadge(
+                                                        icon: Icons.wifi_rounded,
+                                                        label: 'Online',
+                                                        iconOnly: true,
+                                                      ),
+                                                      if (user?.role ==
+                                                              'cashier' ||
+                                                          user?.role ==
+                                                              'admin') ...[
+                                                        const SizedBox(width: 8),
+                                                        const _PrinterStatusBadge(
+                                                          iconOnly: true,
+                                                        ),
+                                                      ],
+                                                      const SizedBox(width: 8),
+                                                      IconButton(
+                                                        icon: const Icon(
+                                                          Icons.settings_rounded,
+                                                        ),
+                                                        tooltip: 'Настройки',
+                                                        onPressed:
+                                                            _showSettingsDialog,
+                                                      ),
+                                                      IconButton(
+                                                        icon: const Icon(
+                                                          Icons.refresh_rounded,
+                                                        ),
+                                                        tooltip:
+                                                            l10n.actionRefreshMenu,
+                                                        onPressed: menu.loading
+                                                            ? null
+                                                            : () => context
+                                                                    .read<MenuBloc>()
+                                                                    .add(
+                                                                      MenuLoadRequested(
+                                                                        lang:
+                                                                            menuApiLanguageCode(
+                                                                          context
+                                                                              .appUiLocale
+                                                                              .languageCode,
+                                                                        ),
+                                                                      ),
+                                                                    ),
+                                                      ),
+                                                      if ((user?.role ==
+                                                                  'cashier' ||
+                                                              user?.role ==
+                                                                  'admin') &&
+                                                          _canUseCustomerDisplay)
+                                                        IconButton(
+                                                          icon: const Icon(
+                                                            Icons.tv_rounded,
+                                                          ),
+                                                          tooltip: 'Экран клиента',
+                                                          onPressed:
+                                                              _openCustomerDisplayByClick,
+                                                        ),
+                                                      if ((user?.role ==
+                                                                  'cashier' ||
+                                                              user?.role ==
+                                                                  'admin') &&
+                                                          _canUseCustomerDisplay)
+                                                        IconButton(
+                                                          icon: const Icon(
+                                                            Icons.sync_rounded,
+                                                          ),
+                                                          tooltip:
+                                                              'Обновить экран клиента',
+                                                          onPressed:
+                                                              _refreshCustomerDisplayConfigByClick,
+                                                        ),
+                                                      if (user?.role ==
+                                                              'cashier' ||
+                                                          user?.role == 'admin')
+                                                        IconButton(
+                                                          icon: const Icon(
+                                                            Icons
+                                                                .payments_rounded,
+                                                          ),
+                                                          tooltip:
+                                                              'Оплаты за сегодня',
+                                                          onPressed:
+                                                              _showTodayPaymentsHistoryDialog,
+                                                        ),
+                                                      IconButton(
+                                                        tooltip: l10n.actionExit,
+                                                        onPressed: () =>
+                                                            _logout(context),
+                                                        icon: const Icon(
+                                                          Icons.logout_rounded,
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 2),
+                                                const PosAppBarCheckTabs(
+                                                  openCartSheetWhenCheckSelected:
+                                                      false,
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        if (showWorkspaceCards)
+                                          Padding(
+                                            padding: const EdgeInsets.fromLTRB(
+                                              16,
+                                              12,
+                                              16,
+                                              8,
+                                            ),
+                                            child: metrics,
+                                          ),
+                                        Expanded(
+                                          child: catalog,
+                                        ),
+                                      ],
+                                    ),
+                                  );
+
+                                  final immersiveDockedMode = dockedCart;
 
                                   return Padding(
-                                    padding: const EdgeInsets.fromLTRB(
-                                      14,
-                                      12,
-                                      14,
-                                      14,
-                                    ),
+                                    padding: immersiveDockedMode
+                                        ? EdgeInsets.zero
+                                        : const EdgeInsets.fromLTRB(
+                                            14,
+                                            12,
+                                            14,
+                                            14,
+                                          ),
                                     child: Container(
                                       decoration: BoxDecoration(
                                         color: scheme.surface.withValues(
                                           alpha: 0.94,
                                         ),
-                                        borderRadius: BorderRadius.circular(28),
-                                        border: Border.all(
-                                          color: scheme.outlineVariant,
+                                        borderRadius: BorderRadius.circular(
+                                          immersiveDockedMode ? 0 : 28,
                                         ),
-                                        boxShadow: const [
-                                          BoxShadow(
-                                            color: Color(0x66000000),
-                                            blurRadius: 28,
-                                            offset: Offset(0, 12),
-                                          ),
-                                        ],
+                                        border: immersiveDockedMode
+                                            ? null
+                                            : Border.all(
+                                                color: scheme.outlineVariant,
+                                              ),
+                                        boxShadow: immersiveDockedMode
+                                            ? null
+                                            : const [
+                                                BoxShadow(
+                                                  color: Color(0x66000000),
+                                                  blurRadius: 28,
+                                                  offset: Offset(0, 12),
+                                                ),
+                                              ],
                                       ),
                                       child: ClipRRect(
-                                        borderRadius: BorderRadius.circular(28),
+                                        borderRadius: BorderRadius.circular(
+                                          immersiveDockedMode ? 0 : 28,
+                                        ),
                                         child: dockedCart
                                             ? Row(
                                                 crossAxisAlignment:
                                                     CrossAxisAlignment.stretch,
                                                 children: [
-                                                  Expanded(
-                                                    child: Column(
-                                                      children: [
-                                                        if (showWorkspaceCards)
-                                                          Padding(
-                                                            padding:
-                                                                const EdgeInsets
-                                                                    .fromLTRB(
-                                                              16,
-                                                              12,
-                                                              16,
-                                                              8,
-                                                            ),
-                                                            child: metrics,
-                                                          ),
-                                                        Expanded(
-                                                          child: catalog,
-                                                        ),
-                                                      ],
-                                                    ),
-                                                  ),
+                                                  catalogPane,
                                                   VerticalDivider(
-                                                    width: 1,
-                                                    thickness: 1,
-                                                    color: scheme.outlineVariant,
-                                                  ),
-                                                  SizedBox(
-                                                    width: WindowLayout
-                                                        .posCartPanelWidth,
-                                                    child: ColoredBox(
-                                                      color: scheme
-                                                          .surfaceContainerLow,
-                                                      child:
-                                                          const PosCartPanel(),
+                                                    width: 2,
+                                                    thickness: 2,
+                                                    color: scheme.outline.withValues(
+                                                      alpha: 0.45,
                                                     ),
                                                   ),
+                                                  cartPane,
                                                 ],
                                               )
                                             : Column(
@@ -1672,7 +2284,7 @@ class _PosMobileDrawer extends StatelessWidget {
             ),
             ListTile(
               leading: const Icon(Icons.table_restaurant_rounded),
-              title: const Text('Счета на столах'),
+              title: const Text('Счета на оплату'),
               onTap: () {
                 Navigator.pop(context);
                 onOpenTableBills();
@@ -1733,35 +2345,142 @@ class _PosMobileDrawer extends StatelessWidget {
   }
 }
 
+class _PrinterStatusBadge extends StatefulWidget {
+  const _PrinterStatusBadge({this.iconOnly = false});
+
+  final bool iconOnly;
+
+  @override
+  State<_PrinterStatusBadge> createState() => _PrinterStatusBadgeState();
+}
+
+class _PrinterStatusBadgeState extends State<_PrinterStatusBadge> {
+  HardwareStatusSnapshot? _snap;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
+    _timer = Timer.periodic(const Duration(seconds: 45), (_) => _refresh());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    if (!mounted) return;
+    try {
+      final s =
+          await context.read<LocalHardwareRepository>().fetchHardwareStatus();
+      if (!mounted) return;
+      setState(() => _snap = s);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _snap = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final snap = _snap;
+    final code = snap?.receiptPrinterStatusCode ?? '';
+    final ok = snap?.receiptPrinterReachable == true &&
+        (code == 'online' || code == 'mock');
+    final warnConfigured =
+        snap != null && snap.receiptPrinterConfigured && !ok && code != 'mock';
+    final icon = ok ? Icons.print_rounded : Icons.print_disabled_outlined;
+    final fg = ok
+        ? scheme.primary
+        : (warnConfigured ? scheme.error : scheme.onSurfaceVariant);
+    final bg = ok
+        ? scheme.primary.withValues(alpha: 0.08)
+        : (warnConfigured
+            ? scheme.error.withValues(alpha: 0.08)
+            : scheme.surfaceContainerHighest.withValues(alpha: 0.9));
+
+    return Tooltip(
+      message: snap == null
+          ? 'Статус принтера недоступен (нет связи с сервером)'
+          : _posHardwarePrinterTooltip(snap),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: _refresh,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 18, color: fg),
+              if (!widget.iconOnly) ...[
+                const SizedBox(width: 8),
+                Text(
+                  _posHardwarePrinterShortLabel(snap),
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                        color: fg,
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _TopInfoBadge extends StatelessWidget {
-  const _TopInfoBadge({required this.icon, required this.label});
+  const _TopInfoBadge({
+    required this.icon,
+    required this.label,
+    this.iconOnly = false,
+  });
 
   final IconData icon;
   final String label;
+  final bool iconOnly;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: scheme.primary.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: scheme.primary),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: scheme.primary,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ],
+    return Tooltip(
+      message: label,
+      child: Container(
+        padding: EdgeInsets.symmetric(
+          horizontal: iconOnly ? 9 : 12,
+          vertical: 8,
+        ),
+        decoration: BoxDecoration(
+          color: scheme.primary.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 18, color: scheme.primary),
+            if (!iconOnly) ...[
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: scheme.primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -1773,12 +2492,14 @@ class _WorkspaceMetricCard extends StatelessWidget {
     required this.label,
     required this.value,
     required this.tone,
+    this.emphasized = false,
   });
 
   final IconData icon;
   final String label;
   final String value;
   final Color tone;
+  final bool emphasized;
 
   @override
   Widget build(BuildContext context) {
@@ -1787,9 +2508,12 @@ class _WorkspaceMetricCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: tone.withValues(alpha: 0.08),
+        color: tone.withValues(alpha: emphasized ? 0.14 : 0.08),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: tone.withValues(alpha: 0.20)),
+        border: Border.all(
+          color: tone.withValues(alpha: emphasized ? 0.55 : 0.20),
+          width: emphasized ? 2 : 1,
+        ),
       ),
       child: Row(
         children: [
@@ -1842,7 +2566,7 @@ class _WorkspaceActionCard extends StatelessWidget {
     required this.value,
     required this.tone,
     required this.onTap,
-    this.urgent = false,
+    this.badgeCount = 0,
   });
 
   final IconData icon;
@@ -1850,10 +2574,12 @@ class _WorkspaceActionCard extends StatelessWidget {
   final String value;
   final Color tone;
   final VoidCallback onTap;
-  final bool urgent;
+  /// Сколько заказов/счетов требует внимания (показываем число вместо «!»).
+  final int badgeCount;
 
   @override
   Widget build(BuildContext context) {
+    final showBadge = badgeCount > 0;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
@@ -1865,9 +2591,14 @@ class _WorkspaceActionCard extends StatelessWidget {
             label: label,
             value: value,
             tone: tone,
+            emphasized: showBadge,
           ),
-          if (urgent)
-            const Positioned(right: -4, top: -6, child: _UrgentOrderBadge()),
+          if (showBadge)
+            Positioned(
+              right: -4,
+              top: -6,
+              child: _UrgentCountBadge(count: badgeCount),
+            ),
         ],
       ),
     );
@@ -1932,14 +2663,16 @@ class _SettingsChoiceChip extends StatelessWidget {
   }
 }
 
-class _UrgentOrderBadge extends StatefulWidget {
-  const _UrgentOrderBadge();
+class _UrgentCountBadge extends StatefulWidget {
+  const _UrgentCountBadge({required this.count});
+
+  final int count;
 
   @override
-  State<_UrgentOrderBadge> createState() => _UrgentOrderBadgeState();
+  State<_UrgentCountBadge> createState() => _UrgentCountBadgeState();
 }
 
-class _UrgentOrderBadgeState extends State<_UrgentOrderBadge>
+class _UrgentCountBadgeState extends State<_UrgentCountBadge>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
@@ -1960,15 +2693,20 @@ class _UrgentOrderBadgeState extends State<_UrgentOrderBadge>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final label = widget.count > 99 ? '99+' : '${widget.count}';
+    final wide = label.length > 1;
 
     return ScaleTransition(
       scale: _scale,
       child: Container(
-        width: 28,
-        height: 28,
+        constraints: BoxConstraints(
+          minWidth: wide ? 32 : 28,
+          minHeight: 28,
+        ),
+        padding: EdgeInsets.symmetric(horizontal: wide ? 6 : 0),
         decoration: BoxDecoration(
           color: const Color(0xFFE4002B),
-          shape: BoxShape.circle,
+          borderRadius: BorderRadius.circular(999),
           boxShadow: const [
             BoxShadow(
               color: Color(0x66E4002B),
@@ -1979,10 +2717,14 @@ class _UrgentOrderBadgeState extends State<_UrgentOrderBadge>
         ),
         alignment: Alignment.center,
         child: Text(
-          '!',
-          style: theme.textTheme.titleMedium?.copyWith(
+          label,
+          style: (wide
+                  ? theme.textTheme.labelLarge
+                  : theme.textTheme.titleMedium)
+              ?.copyWith(
             color: Colors.white,
             fontWeight: FontWeight.w900,
+            height: 1.0,
           ),
         ),
       ),
@@ -1994,12 +2736,14 @@ class _PosOrdersDialog extends StatelessWidget {
   const _PosOrdersDialog({
     required this.orders,
     required this.showHandoffTab,
+    required this.onCashierAck,
     required this.onCloseOrder,
     required this.onCancelOrder,
   });
 
   final List<LocalCashierBoardOrder> orders;
   final bool showHandoffTab;
+  final Future<void> Function(LocalCashierBoardOrder) onCashierAck;
   final Future<void> Function(LocalCashierBoardOrder) onCloseOrder;
   final Future<void> Function(LocalCashierBoardOrder) onCancelOrder;
 
@@ -2020,6 +2764,7 @@ class _PosOrdersDialog extends StatelessWidget {
           width: _dialogWidth(context, 720),
           child: _HallOrdersList(
             orders: orders,
+            onCashierAck: onCashierAck,
             onCloseOrder: onCloseOrder,
             onCancelOrder: onCancelOrder,
           ),
@@ -2061,6 +2806,7 @@ class _PosOrdersDialog extends StatelessWidget {
                     children: [
                       _HallOrdersList(
                         orders: orders,
+                        onCashierAck: onCashierAck,
                         onCloseOrder: onCloseOrder,
                         onCancelOrder: onCancelOrder,
                       ),
@@ -2104,11 +2850,13 @@ enum _OrdersPaymentFilter { all, needPayment, noPaymentNeeded }
 class _HallOrdersList extends StatefulWidget {
   const _HallOrdersList({
     required this.orders,
+    required this.onCashierAck,
     required this.onCloseOrder,
     required this.onCancelOrder,
   });
 
   final List<LocalCashierBoardOrder> orders;
+  final Future<void> Function(LocalCashierBoardOrder) onCashierAck;
   final Future<void> Function(LocalCashierBoardOrder) onCloseOrder;
   final Future<void> Function(LocalCashierBoardOrder) onCancelOrder;
 
@@ -2300,6 +3048,7 @@ class _HallOrdersListState extends State<_HallOrdersList> {
         for (var i = 0; i < filtered.length; i++) ...[
           _OrderListTile(
             order: filtered[i],
+            onCashierAck: () => widget.onCashierAck(filtered[i]),
             onCloseOrder: () => widget.onCloseOrder(filtered[i]),
             onCancelOrder: () => widget.onCancelOrder(filtered[i]),
           ),
@@ -2311,10 +3060,21 @@ class _HallOrdersListState extends State<_HallOrdersList> {
 }
 
 class _OnlineOrdersDialog extends StatelessWidget {
-  const _OnlineOrdersDialog({required this.orders, required this.onAccept});
+  const _OnlineOrdersDialog({
+    required this.orders,
+    required this.onCashierAck,
+    required this.onCloseOrder,
+    required this.onCancelOrder,
+    required this.onEditOrder,
+    required this.onCallCustomer,
+  });
 
   final List<LocalCashierBoardOrder> orders;
-  final Future<void> Function(LocalCashierBoardOrder) onAccept;
+  final Future<void> Function(LocalCashierBoardOrder) onCashierAck;
+  final Future<void> Function(LocalCashierBoardOrder) onCloseOrder;
+  final Future<void> Function(LocalCashierBoardOrder) onCancelOrder;
+  final Future<void> Function(LocalCashierBoardOrder) onEditOrder;
+  final void Function(LocalCashierBoardOrder) onCallCustomer;
 
   @override
   Widget build(BuildContext context) {
@@ -2331,22 +3091,27 @@ class _OnlineOrdersDialog extends StatelessWidget {
       ),
       content: SizedBox(
         width: _dialogWidth(context, 760),
+        height: math.min(520, MediaQuery.sizeOf(context).height * 0.75),
         child: orders.isEmpty
             ? const Padding(
                 padding: EdgeInsets.all(24),
-                child: Text('Новых онлайн-заказов нет'),
+                child: Text('Онлайн-заказов нет'),
               )
-            : Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  for (var i = 0; i < orders.length; i++) ...[
-                    _OnlineOrderTile(
-                      order: orders[i],
-                      onAccept: () => onAccept(orders[i]),
-                    ),
-                    if (i != orders.length - 1) const SizedBox(height: 10),
-                  ],
-                ],
+            : ListView.separated(
+                padding: EdgeInsets.zero,
+                itemCount: orders.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 10),
+                itemBuilder: (context, i) {
+                  final o = orders[i];
+                  return _OrderListTile(
+                    order: o,
+                    onCashierAck: () => onCashierAck(o),
+                    onCloseOrder: () => onCloseOrder(o),
+                    onCancelOrder: () => onCancelOrder(o),
+                    onCallCustomer: () => onCallCustomer(o),
+                    onEditOrder: () => onEditOrder(o),
+                  );
+                },
               ),
       ),
       actions: [
@@ -2359,14 +3124,163 @@ class _OnlineOrdersDialog extends StatelessWidget {
   }
 }
 
+class _TodayPaymentsDialogLoader extends StatefulWidget {
+  const _TodayPaymentsDialogLoader({
+    required this.branchId,
+    required this.lang,
+  });
+
+  final String branchId;
+  final String lang;
+
+  @override
+  State<_TodayPaymentsDialogLoader> createState() =>
+      _TodayPaymentsDialogLoaderState();
+}
+
+class _TodayPaymentsDialogLoaderState extends State<_TodayPaymentsDialogLoader> {
+  static const int _pageSize = 40;
+
+  bool _loading = true;
+  bool _loadingMore = false;
+  List<LocalPaymentHistoryEntry> _payments = const [];
+  List<LocalRefundHistoryEntry> _refunds = const [];
+  bool _hasMorePayments = false;
+  bool _hasMoreRefunds = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadInitial());
+  }
+
+  Future<void> _loadInitial() async {
+    try {
+      final history =
+          await context.read<LocalPaymentsRepository>().fetchTodayHistoryBundle(
+                branchId: widget.branchId,
+                limit: _pageSize,
+                paymentOffset: 0,
+                refundOffset: 0,
+                lang: widget.lang,
+              );
+      if (!mounted) return;
+      setState(() {
+        _payments = history.payments;
+        _refunds = history.refunds;
+        _hasMorePayments = history.hasMorePayments;
+        _hasMoreRefunds = history.hasMoreRefunds;
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Не удалось загрузить историю оплат: $e';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || (!_hasMorePayments && !_hasMoreRefunds)) return;
+    setState(() => _loadingMore = true);
+    try {
+      final next =
+          await context.read<LocalPaymentsRepository>().fetchTodayHistoryBundle(
+                branchId: widget.branchId,
+                limit: _pageSize,
+                paymentOffset: _payments.length,
+                refundOffset: _refunds.length,
+                lang: widget.lang,
+              );
+      if (!mounted) return;
+      setState(() {
+        _payments = [..._payments, ...next.payments];
+        _refunds = [..._refunds, ...next.refunds];
+        _hasMorePayments = next.hasMorePayments;
+        _hasMoreRefunds = next.hasMoreRefunds;
+        _loadingMore = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loadingMore = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось подгрузить записи: $e')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final titleStyle = Theme.of(context).textTheme.titleLarge?.copyWith(
+          fontWeight: FontWeight.w800,
+        );
+    if (_loading) {
+      return AlertDialog(
+        backgroundColor: scheme.surfaceContainerLow,
+        title: Text('Оплаты за сегодня', style: titleStyle),
+        content: SizedBox(
+          width: math.min(400, MediaQuery.sizeOf(context).width * 0.9),
+          height: 120,
+          child: const Center(child: CircularProgressIndicator()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      );
+    }
+    if (_error != null) {
+      return AlertDialog(
+        backgroundColor: scheme.surfaceContainerLow,
+        title: Text('Оплаты за сегодня', style: titleStyle),
+        content: Text(_error!),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      );
+    }
+    return _TodayPaymentsDialog(
+      entries: _payments,
+      refunds: _refunds,
+      hasMorePayments: _hasMorePayments,
+      hasMoreRefunds: _hasMoreRefunds,
+      loadingMore: _loadingMore,
+      onLoadMore:
+          (_hasMorePayments || _hasMoreRefunds) ? _loadMore : null,
+    );
+  }
+}
+
 class _TodayPaymentsDialog extends StatelessWidget {
   const _TodayPaymentsDialog({
     required this.entries,
     required this.refunds,
+    required this.hasMorePayments,
+    required this.hasMoreRefunds,
+    required this.loadingMore,
+    this.onLoadMore,
   });
 
   final List<LocalPaymentHistoryEntry> entries;
   final List<LocalRefundHistoryEntry> refunds;
+  final bool hasMorePayments;
+  final bool hasMoreRefunds;
+  final bool loadingMore;
+  final Future<void> Function()? onLoadMore;
 
   @override
   Widget build(BuildContext context) {
@@ -2376,6 +3290,10 @@ class _TodayPaymentsDialog extends StatelessWidget {
     final totalRefunds = refunds.fold<double>(0, (sum, e) => sum + e.amount);
     final netTotal = totalPayments - totalRefunds;
     final methodRows = _buildMethodTotals(entries, refunds);
+    final dialogWidth =
+        math.min(820.0, MediaQuery.sizeOf(context).width * 0.94).toDouble();
+    final dialogHeight =
+        math.min(560.0, MediaQuery.sizeOf(context).height * 0.72).toDouble();
 
     Widget topMetric({
       required String title,
@@ -2412,6 +3330,165 @@ class _TodayPaymentsDialog extends StatelessWidget {
       );
     }
 
+    Widget scrollBody() {
+      return CustomScrollView(
+        slivers: [
+          SliverToBoxAdapter(
+            child: Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                SizedBox(
+                  width: 240,
+                  child: topMetric(
+                    title: 'Итого оплат',
+                    value: formatSomoni(totalPayments),
+                    color: const Color(0xFF1565C0),
+                  ),
+                ),
+                SizedBox(
+                  width: 240,
+                  child: topMetric(
+                    title: 'Итого возвратов',
+                    value: '- ${formatSomoni(totalRefunds)}',
+                    color: const Color(0xFFD32F2F),
+                  ),
+                ),
+                SizedBox(
+                  width: 240,
+                  child: topMetric(
+                    title: 'Чистый итог',
+                    value: formatSomoni(netTotal),
+                    color: const Color(0xFF2E7D32),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 12)),
+          SliverToBoxAdapter(
+            child: Text(
+              'Итог по способу оплаты',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 8)),
+          SliverToBoxAdapter(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: DataTable(
+                headingRowColor: WidgetStatePropertyAll(
+                  scheme.surfaceContainerHighest.withValues(alpha: 0.65),
+                ),
+                columns: const [
+                  DataColumn(label: Text('Способ')),
+                  DataColumn(label: Text('Оплаты'), numeric: true),
+                  DataColumn(label: Text('Возвраты'), numeric: true),
+                  DataColumn(label: Text('Итого'), numeric: true),
+                ],
+                rows: methodRows
+                    .map(
+                      (row) => DataRow(
+                        cells: [
+                          DataCell(Text(_paymentMethodRu(row.method))),
+                          DataCell(Text(formatSomoni(row.payments))),
+                          DataCell(Text('- ${formatSomoni(row.refunds)}')),
+                          DataCell(
+                            Text(
+                              formatSomoni(row.net),
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                    .toList(growable: false),
+              ),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 18)),
+          SliverToBoxAdapter(
+            child: Text(
+              'Оплаты',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 10)),
+          if (entries.isEmpty)
+            const SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.only(bottom: 12),
+                child: Text('Оплат пока нет'),
+              ),
+            )
+          else
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  return Padding(
+                    padding: EdgeInsets.only(
+                      bottom: index < entries.length - 1 ? 10 : 0,
+                    ),
+                    child: _PaymentHistoryTile(entry: entries[index]),
+                  );
+                },
+                childCount: entries.length,
+              ),
+            ),
+          const SliverToBoxAdapter(child: SizedBox(height: 18)),
+          SliverToBoxAdapter(
+            child: Text(
+              'Возвраты',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 10)),
+          if (refunds.isEmpty)
+            const SliverToBoxAdapter(child: Text('Возвратов пока нет'))
+          else
+            SliverList(
+              delegate: SliverChildBuilderDelegate(
+                (context, index) {
+                  return Padding(
+                    padding: EdgeInsets.only(
+                      bottom: index < refunds.length - 1 ? 10 : 0,
+                    ),
+                    child: _RefundHistoryTile(entry: refunds[index]),
+                  );
+                },
+                childCount: refunds.length,
+              ),
+            ),
+          if (onLoadMore != null && (hasMorePayments || hasMoreRefunds))
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.only(top: 16, bottom: 8),
+                child: Center(
+                  child: loadingMore
+                      ? const Padding(
+                          padding: EdgeInsets.all(14),
+                          child: CircularProgressIndicator(),
+                        )
+                      : TextButton.icon(
+                          onPressed: () => onLoadMore!(),
+                          icon: const Icon(Icons.expand_more),
+                          label: const Text('Показать ещё'),
+                        ),
+                ),
+              ),
+            ),
+        ],
+      );
+    }
+
     return AlertDialog(
       backgroundColor: scheme.surfaceContainerLow,
       title: Text(
@@ -2421,125 +3498,14 @@ class _TodayPaymentsDialog extends StatelessWidget {
         ),
       ),
       content: SizedBox(
-        width: math.min(820, MediaQuery.sizeOf(context).width * 0.94),
+        width: dialogWidth,
+        height: (entries.isEmpty && refunds.isEmpty) ? null : dialogHeight,
         child: (entries.isEmpty && refunds.isEmpty)
             ? const Padding(
                 padding: EdgeInsets.all(24),
                 child: Text('За сегодня оплат и возвратов пока нет'),
               )
-            : ListView(
-                shrinkWrap: true,
-                children: [
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      SizedBox(
-                        width: 240,
-                        child: topMetric(
-                          title: 'Итого оплат',
-                          value: formatSomoni(totalPayments),
-                          color: const Color(0xFF1565C0),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 240,
-                        child: topMetric(
-                          title: 'Итого возвратов',
-                          value: '- ${formatSomoni(totalRefunds)}',
-                          color: const Color(0xFFD32F2F),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 240,
-                        child: topMetric(
-                          title: 'Чистый итог',
-                          value: formatSomoni(netTotal),
-                          color: const Color(0xFF2E7D32),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Итог по способу оплаты',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: DataTable(
-                      headingRowColor: WidgetStatePropertyAll(
-                        scheme.surfaceContainerHighest.withValues(alpha: 0.65),
-                      ),
-                      columns: const [
-                        DataColumn(label: Text('Способ')),
-                        DataColumn(label: Text('Оплаты'), numeric: true),
-                        DataColumn(label: Text('Возвраты'), numeric: true),
-                        DataColumn(label: Text('Итого'), numeric: true),
-                      ],
-                      rows: methodRows
-                          .map(
-                            (row) => DataRow(
-                              cells: [
-                                DataCell(Text(_paymentMethodRu(row.method))),
-                                DataCell(Text(formatSomoni(row.payments))),
-                                DataCell(Text('- ${formatSomoni(row.refunds)}')),
-                                DataCell(
-                                  Text(
-                                    formatSomoni(row.net),
-                                    style: theme.textTheme.bodyMedium?.copyWith(
-                                      fontWeight: FontWeight.w800,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          )
-                          .toList(growable: false),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  Text(
-                    'Оплаты',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  if (entries.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 12),
-                      child: Text('Оплат пока нет'),
-                    )
-                  else
-                    ...[
-                      for (var i = 0; i < entries.length; i++) ...[
-                        _PaymentHistoryTile(entry: entries[i]),
-                        if (i != entries.length - 1) const SizedBox(height: 10),
-                      ],
-                    ],
-                  const SizedBox(height: 18),
-                  Text(
-                    'Возвраты',
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  if (refunds.isEmpty)
-                    const Text('Возвратов пока нет')
-                  else
-                    ...[
-                      for (var i = 0; i < refunds.length; i++) ...[
-                        _RefundHistoryTile(entry: refunds[i]),
-                        if (i != refunds.length - 1) const SizedBox(height: 10),
-                      ],
-                    ],
-                ],
-              ),
+            : scrollBody(),
       ),
       actions: [
         TextButton(
@@ -2664,6 +3630,18 @@ class _RefundHistoryTile extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  _posReceiptPrintedShortRu(entry.receiptPrinted),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: entry.receiptPrinted == true
+                        ? const Color(0xFF2E7D32)
+                        : entry.receiptPrinted == false
+                            ? scheme.error
+                            : scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ],
             ),
           ),
@@ -2700,6 +3678,17 @@ class _PaymentHistoryTile extends StatelessWidget {
             .join(' · ');
     final paidAt = _formatPaidAt(entry.createdAt);
     final method = _paymentMethodRu(entry.method);
+    final typeLine = _cashierBoardOrderTypeRu(entry.orderType);
+    final tableRaw = entry.tableLabel?.trim();
+    final tableLabel = tableRaw != null && tableRaw.isNotEmpty
+        ? tableRaw
+        : _paymentHistoryTableFallback(entry);
+    final websiteMeta = parseWebsiteOrderDeliveryMeta(tableLabel);
+    final chipBag =
+        typeLine == 'Доставка' || websiteMeta.address != null;
+
+    final orderId = entry.orderId.trim();
+    final canPrint = orderId.isNotEmpty;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -2723,6 +3712,62 @@ class _PaymentHistoryTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
+                  typeLine,
+                  style: theme.textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: scheme.outlineVariant),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        chipBag
+                            ? Icons.shopping_bag_outlined
+                            : Icons.table_restaurant_rounded,
+                        size: 16,
+                        color: scheme.primary,
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        websiteMeta.label,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (websiteMeta.address != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Адрес: ${websiteMeta.address}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                if (websiteMeta.courierHandoff != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    websiteMeta.courierHandoff!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 6),
+                Text(
                   itemPreview,
                   style: theme.textTheme.bodyMedium,
                   maxLines: 3,
@@ -2736,16 +3781,50 @@ class _PaymentHistoryTile extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                const SizedBox(height: 4),
+                Text(
+                  _posReceiptPrintedShortRu(entry.receiptPrinted),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: entry.receiptPrinted == true
+                        ? const Color(0xFF2E7D32)
+                        : entry.receiptPrinted == false
+                            ? scheme.error
+                            : scheme.onSurfaceVariant,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ],
             ),
           ),
           const SizedBox(width: 12),
-          Text(
-            formatSomoni(entry.amount),
-            style: theme.textTheme.titleMedium?.copyWith(
-              color: scheme.primary,
-              fontWeight: FontWeight.w800,
-            ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                formatSomoni(entry.amount),
+                style: theme.textTheme.titleMedium?.copyWith(
+                  color: scheme.primary,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              IconButton.filledTonal(
+                tooltip: 'Печать чека',
+                onPressed: !canPrint
+                    ? null
+                    : () {
+                        unawaited(
+                          retryPosReceiptPrint(
+                            context,
+                            orderId: orderId,
+                            total: entry.amount,
+                            paymentMethod: entry.method.trim(),
+                          ),
+                        );
+                      },
+                icon: const Icon(Icons.print_outlined),
+              ),
+            ],
           ),
         ],
       ),
@@ -2770,31 +3849,62 @@ String _formatPaidAt(DateTime? dt) {
   return '$h:$m:$s';
 }
 
+Future<void> _openDeliveryCoordsOnMap(BuildContext context, String coordsRaw) async {
+  final coords = coordsRaw.trim();
+  if (coords.isEmpty) return;
+  final uri = Uri.parse('https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(coords)}');
+  final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+  if (!ok && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Не удалось открыть карту')),
+    );
+  }
+}
+
+Future<void> _copyDeliveryCoords(BuildContext context, String coordsRaw) async {
+  final coords = coordsRaw.trim();
+  if (coords.isEmpty) return;
+  await Clipboard.setData(ClipboardData(text: coords));
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Координаты скопированы')),
+    );
+  }
+}
+
 class _OrderListTile extends StatelessWidget {
   const _OrderListTile({
     required this.order,
+    required this.onCashierAck,
     required this.onCloseOrder,
     required this.onCancelOrder,
+    this.onCallCustomer,
+    this.onEditOrder,
   });
 
   final LocalCashierBoardOrder order;
+  final Future<void> Function() onCashierAck;
   final Future<void> Function() onCloseOrder;
   final Future<void> Function() onCancelOrder;
+  final VoidCallback? onCallCustomer;
+  final Future<void> Function()? onEditOrder;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final o = order.order;
-    final typeLine =
-        order.orderType?.trim().isNotEmpty == true ? order.orderType!.trim() : 'Заказ';
-    final waiterOrder = _isWaiterOrderLabel(typeLine);
+    final typeLine = _cashierBoardOrderTypeRu(order.orderType);
+    final waiterOrder = _isWaiterOrderLabel(order.orderType);
     final status = o.status.toLowerCase();
     final completed = status == 'done' || status == 'cancelled';
     final tableLabel = order.tableLabel?.trim().isNotEmpty == true
         ? order.tableLabel!.trim()
         : 'Без стола';
+    final websiteMeta = parseWebsiteOrderDeliveryMeta(tableLabel);
     final actorHint = _cashierKitchenActorHint(o);
+    final isWebsite =
+        (order.orderSource ?? 'pos').toLowerCase() == 'website';
     final visibleItems = o.items.take(5).toList(growable: false);
     final hiddenItems = o.items.length - visibleItems.length;
 
@@ -2835,13 +3945,15 @@ class _OrderListTile extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        Icons.table_restaurant_rounded,
+                        isWebsite
+                            ? Icons.shopping_bag_outlined
+                            : Icons.table_restaurant_rounded,
                         size: 16,
                         color: scheme.primary,
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        tableLabel,
+                        websiteMeta.label,
                         style: theme.textTheme.bodySmall?.copyWith(
                           fontWeight: FontWeight.w700,
                         ),
@@ -2849,6 +3961,54 @@ class _OrderListTile extends StatelessWidget {
                     ],
                   ),
                 ),
+                if (websiteMeta.address != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Адрес: ${websiteMeta.address}',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                if (websiteMeta.courierHandoff != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    websiteMeta.courierHandoff!,
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.primary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+                if (websiteMeta.coords != null) ...[
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Коорд: ${websiteMeta.coords}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => _copyDeliveryCoords(context, websiteMeta.coords!),
+                        child: const Text('Копировать'),
+                      ),
+                      TextButton(
+                        onPressed: () => _openDeliveryCoordsOnMap(context, websiteMeta.coords!),
+                        child: const Text('На карте'),
+                      ),
+                    ],
+                  ),
+                ],
                 if (waiterOrder) ...[
                   const SizedBox(height: 6),
                   _WaiterSourceChip(compact: true),
@@ -2861,12 +4021,30 @@ class _OrderListTile extends StatelessWidget {
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                if (status == 'done') ...[
+                  const SizedBox(height: 6),
+                  _CashierHandOutSourceRow(source: o.handOutSource),
+                ],
                 if (actorHint != null) ...[
                   const SizedBox(height: 2),
                   Text(
                     actorHint,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: scheme.primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+                if (!order.requiresPayment && o.totalPrice > 0) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    _posReceiptPrintedShortRu(order.receiptPrinted),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: order.receiptPrinted == true
+                          ? const Color(0xFF2E7D32)
+                          : order.receiptPrinted == false
+                              ? scheme.error
+                              : scheme.onSurfaceVariant,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -2911,15 +4089,38 @@ class _OrderListTile extends StatelessWidget {
           Column(
             children: [
               if (!completed) ...[
-                FilledButton.tonal(
-                  onPressed: () => onCloseOrder(),
-                  child: Text(status == 'ready' ? 'Выдать' : 'Закрыть'),
-                ),
-                const SizedBox(height: 6),
-                TextButton(
-                  onPressed: () => onCancelOrder(),
-                  child: const Text('Отменить'),
-                ),
+                if (isWebsite && onCallCustomer != null && websiteMeta.phone != null) ...[
+                  OutlinedButton.icon(
+                    onPressed: onCallCustomer,
+                    icon: const Icon(Icons.phone_rounded, size: 18),
+                    label: const Text('Позвонить'),
+                  ),
+                  const SizedBox(height: 6),
+                ],
+                if (isWebsite && onEditOrder != null) ...[
+                  OutlinedButton.icon(
+                    onPressed: () => onEditOrder!(),
+                    icon: const Icon(Icons.edit_note_rounded, size: 18),
+                    label: const Text('Изменить'),
+                  ),
+                  const SizedBox(height: 6),
+                ],
+                if (order.needsCashierAck) ...[
+                  FilledButton(
+                    onPressed: () => onCashierAck(),
+                    child: const Text('Принять'),
+                  ),
+                ] else ...[
+                  FilledButton.tonal(
+                    onPressed: () => onCloseOrder(),
+                    child: Text(status == 'ready' ? 'Выдать' : 'Закрыть'),
+                  ),
+                  const SizedBox(height: 6),
+                  TextButton(
+                    onPressed: () => onCancelOrder(),
+                    child: const Text('Отменить'),
+                  ),
+                ],
               ] else ...[
                 Text(
                   'Только просмотр',
@@ -2931,140 +4132,6 @@ class _OrderListTile extends StatelessWidget {
               ],
               if (order.requiresPayment) ...[
                 const SizedBox(height: 6),
-                Text(
-                  'Нужна оплата',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: scheme.error,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _OnlineOrderTile extends StatelessWidget {
-  const _OnlineOrderTile({required this.order, required this.onAccept});
-
-  final LocalCashierBoardOrder order;
-  final Future<void> Function() onAccept;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final o = order.order;
-    final typeLine =
-        order.orderType?.trim().isNotEmpty == true ? order.orderType!.trim() : 'Заказ';
-    final waiterOrder = _isWaiterOrderLabel(typeLine);
-    final tableLabel = order.tableLabel?.trim().isNotEmpty == true
-        ? order.tableLabel!.trim()
-        : 'Без стола';
-    final visibleItems = o.items.take(4).toList(growable: false);
-    final hiddenItems = o.items.length - visibleItems.length;
-
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '№ ${o.number}',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(typeLine),
-                const SizedBox(height: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: scheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: scheme.outlineVariant),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.table_restaurant_rounded,
-                        size: 16,
-                        color: scheme.primary,
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        tableLabel,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (waiterOrder) ...[
-                  const SizedBox(height: 6),
-                  _WaiterSourceChip(compact: true),
-                ],
-                const SizedBox(height: 4),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    for (final it in visibleItems)
-                      Text(
-                        '• ${it.quantity > 1 ? '${it.quantity}x ' : ''}${it.name} (${it.assemblyStatusShortRu})',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: _cashierItemStatusColor(context, it.kitchenLineStatus),
-                          height: 1.25,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    if (hiddenItems > 0)
-                      Text(
-                        '+$hiddenItems позиций',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            formatSomoni(o.totalPrice),
-            style: theme.textTheme.titleMedium?.copyWith(
-              color: scheme.primary,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              FilledButton(
-                onPressed: () => onAccept(),
-                child: const Text('Принять'),
-              ),
-              if (order.requiresPayment) ...[
-                const SizedBox(height: 8),
                 Text(
                   'Нужна оплата',
                   style: theme.textTheme.labelSmall?.copyWith(

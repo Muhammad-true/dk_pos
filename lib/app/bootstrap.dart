@@ -55,7 +55,9 @@ import 'package:dk_pos/features/admin/data/users_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/kitchen_stations_repository.dart';
 import 'package:dk_pos/features/admin/data/kitchen_buttons_repository.dart';
 import 'package:dk_pos/features/admin/data/local_audio_settings_repository.dart';
+import 'package:dk_pos/features/admin/data/local_order_handout_settings_repository.dart';
 import 'package:dk_pos/features/admin/data/local_receipt_settings_repository.dart';
+import 'package:dk_pos/features/cash/data/local_cash_repository.dart';
 import 'package:dk_pos/features/hardware/data/local_hardware_repository.dart';
 import 'package:dk_pos/features/menu/data/menu_remote_data_source_impl.dart';
 import 'package:dk_pos/features/menu/data/menu_repository.dart';
@@ -440,8 +442,11 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       final menuUnitsRepo = MenuUnitsRepository(http);
       final uploadRepo = UploadRepository(http);
       final localAudioSettingsRepo = LocalAudioSettingsRepository(http);
+      final localOrderHandoutSettingsRepo =
+          LocalOrderHandoutSettingsRepository(http);
       final localReceiptSettingsRepo = LocalReceiptSettingsRepository(http);
       final localHardwareRepo = LocalHardwareRepository(http);
+      final localCashRepo = LocalCashRepository(http);
       final localOrdersRepo = LocalOrdersRepository(http);
       final localPaymentsRepo = LocalPaymentsRepository(http);
       final localPaymentMethodsRepo = LocalPaymentMethodsRepository(http);
@@ -498,8 +503,10 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           combosAdminRepo: combosAdminRepo,
           uploadRepo: uploadRepo,
           localAudioSettingsRepo: localAudioSettingsRepo,
+          localOrderHandoutSettingsRepo: localOrderHandoutSettingsRepo,
           localReceiptSettingsRepo: localReceiptSettingsRepo,
           localHardwareRepo: localHardwareRepo,
+          localCashRepo: localCashRepo,
           localOrdersRepo: localOrdersRepo,
           localPaymentsRepo: localPaymentsRepo,
           localPaymentMethodsRepo: localPaymentMethodsRepo,
@@ -1145,11 +1152,17 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         RepositoryProvider<LocalAudioSettingsRepository>.value(
           value: payload.localAudioSettingsRepo,
         ),
+        RepositoryProvider<LocalOrderHandoutSettingsRepository>.value(
+          value: payload.localOrderHandoutSettingsRepo,
+        ),
         RepositoryProvider<LocalReceiptSettingsRepository>.value(
           value: payload.localReceiptSettingsRepo,
         ),
         RepositoryProvider<LocalHardwareRepository>.value(
           value: payload.localHardwareRepo,
+        ),
+        RepositoryProvider<LocalCashRepository>.value(
+          value: payload.localCashRepo,
         ),
         RepositoryProvider<LocalOrdersRepository>.value(
           value: payload.localOrdersRepo,
@@ -1205,8 +1218,10 @@ class _BootPayload {
     required this.combosAdminRepo,
     required this.uploadRepo,
     required this.localAudioSettingsRepo,
+    required this.localOrderHandoutSettingsRepo,
     required this.localReceiptSettingsRepo,
     required this.localHardwareRepo,
+    required this.localCashRepo,
     required this.localOrdersRepo,
     required this.localPaymentsRepo,
     required this.localPaymentMethodsRepo,
@@ -1239,8 +1254,10 @@ class _BootPayload {
   final CombosAdminRepository combosAdminRepo;
   final UploadRepository uploadRepo;
   final LocalAudioSettingsRepository localAudioSettingsRepo;
+  final LocalOrderHandoutSettingsRepository localOrderHandoutSettingsRepo;
   final LocalReceiptSettingsRepository localReceiptSettingsRepo;
   final LocalHardwareRepository localHardwareRepo;
+  final LocalCashRepository localCashRepo;
   final LocalOrdersRepository localOrdersRepo;
   final LocalPaymentsRepository localPaymentsRepo;
   final LocalPaymentMethodsRepository localPaymentMethodsRepo;
