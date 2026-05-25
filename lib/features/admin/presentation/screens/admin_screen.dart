@@ -44,6 +44,7 @@ import 'package:dk_pos/features/admin/presentation/widgets/admin_users_panel.dar
 import 'package:dk_pos/features/inventory/presentation/admin_inventory_receive_screen.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/auth/bloc/auth_event.dart';
+import 'package:dk_pos/features/shifts/presentation/shift_close_guard.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
 import 'package:dk_pos/shared/shared.dart';
@@ -127,7 +128,10 @@ class _AdminScreenState extends State<AdminScreen> {
     }
   }
 
-  void _logout(BuildContext context) {
+  Future<void> _logout(BuildContext context) async {
+    final role = context.read<AuthBloc>().state.user?.role ?? '';
+    final ok = await confirmLogoutWithShiftChecks(context, role: role);
+    if (!ok || !context.mounted) return;
     context.read<AuthBloc>().add(const AuthLogoutRequested());
   }
 
@@ -1407,9 +1411,17 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                         content: Text('Не удалось открыть ссылку'),
                       ),
                     );
+                  } else {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Если браузер блокирует .exe — закройте диалог и нажмите «Тихо установить»',
+                        ),
+                      ),
+                    );
                   }
                 },
-                child: const Text('В браузере'),
+                child: const Text('В браузере (часто блокируется)'),
               ),
               FilledButton(
                 onPressed: () async {
@@ -2189,8 +2201,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
             Text(
               'После публикации Inno Setup в глобальной админке нажмите «Заполнить с глобалки» — '
               'локальный сервер подтянет ссылки для POS и backend в эту таблицу. '
-              '«Тихо обновить» скачивает и ставит без мастера (backend и POS на Windows; APK на планшете). '
-              'Backend — сначала, затем касса. Может понадобиться UAC (Windows) или подтверждение APK (Android).',
+              'Для обновления на точке используйте «Тихо обновить» / «Тихо установить»: касса сама скачает .exe и запустит установку '
+              '(backend и POS на Windows; APK на планшете). Через браузер Windows часто блокирует скачивание установщика — '
+              'это защита системы, не ошибка кассы. Backend — сначала, затем POS. Может понадобиться UAC (Windows) или подтверждение APK (Android).',
               style: textTheme.bodyMedium?.copyWith(
                 color: scheme.onSurfaceVariant,
                 height: 1.35,
@@ -3547,6 +3560,12 @@ class _VersionCardEditorState extends State<_VersionCardEditor> {
                     ),
                     if (hasUrl) ...[
                       const SizedBox(width: 8),
+                      FilledButton.icon(
+                        onPressed: _saving ? null : () => _silentInstall(urlVal.text.trim()),
+                        icon: const Icon(Icons.install_desktop_rounded),
+                        label: const Text('Тихо установить'),
+                      ),
+                      const SizedBox(width: 8),
                       OutlinedButton.icon(
                         onPressed: _saving
                             ? null
@@ -3561,16 +3580,18 @@ class _VersionCardEditorState extends State<_VersionCardEditor> {
                                       content: Text('Не удалось открыть ссылку'),
                                     ),
                                   );
+                                } else {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Если браузер блокирует .exe — используйте «Тихо установить»',
+                                      ),
+                                    ),
+                                  );
                                 }
                               },
-                        icon: const Icon(Icons.download_rounded),
+                        icon: const Icon(Icons.open_in_browser_rounded),
                         label: const Text('В браузере'),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton.tonalIcon(
-                        onPressed: _saving ? null : () => _silentInstall(urlVal.text.trim()),
-                        icon: const Icon(Icons.install_desktop_rounded),
-                        label: const Text('Тихо установить'),
                       ),
                     ],
                   ],

@@ -5,6 +5,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/core/formatting/money_format.dart';
 import 'package:dk_pos/features/cash/presentation/cash_shift_report_dialog.dart';
+import 'package:dk_pos/features/shifts/data/shift_close_preflight.dart';
+import 'package:dk_pos/features/shifts/presentation/shift_close_guard.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/cash/data/local_cash_repository.dart';
 
@@ -94,6 +96,16 @@ class _PosCashManagementDialogState extends State<_PosCashManagementDialog> {
   Future<void> _closeShiftFlow() async {
     final snap = _snapshot;
     if (snap == null || !snap.hasOpenShift) return;
+    if (!mounted) return;
+    final allowed = await confirmShiftCloseAllowed(
+      context,
+      title: 'Закрыть кассовую смену?',
+      confirmMessage:
+          'Все заказы должны быть выданы или отменены. Закрыть кассовую смену и '
+          'сделать пересчёт ящика?',
+      strictOrders: true,
+    );
+    if (!allowed || !mounted) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => _CloseCashShiftDialog(
@@ -430,6 +442,15 @@ class _CloseCashShiftDialogState extends State<_CloseCashShiftDialog> {
       }
     } on ApiException catch (e) {
       if (!mounted) return;
+      if (e.statusCode == 409 && e.rawBody is Map) {
+        final map = Map<String, dynamic>.from(e.rawBody as Map);
+        if (map['openOrders'] is List) {
+          final pre = ShiftClosePreflight.fromJson(map);
+          await showOpenOrdersBlockingDialog(context, pre);
+          setState(() => _busy = false);
+          return;
+        }
+      }
       setState(() {
         _error = e.message;
         _busy = false;

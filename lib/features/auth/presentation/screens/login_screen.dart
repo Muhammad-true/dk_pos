@@ -88,6 +88,8 @@ class _LoginScreenState extends State<LoginScreen> {
         return 'Экспедитор';
       case 'waiter':
         return 'Официант';
+      case 'staff':
+        return 'Персонал';
       default:
         return role;
     }

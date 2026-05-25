@@ -1359,6 +1359,19 @@ class AppLocalizationsRu extends AppLocalizations {
   String get roleWaiter => 'Официант';
 
   @override
+  String get roleStaff => 'Персонал';
+
+  @override
+  String get staffScreenTitle => 'Учёт смены';
+
+  @override
+  String get staffShiftOpenHint => 'Смена открыта автоматически при входе.';
+
+  @override
+  String get staffShiftCloseHint =>
+      'При выходе смена закроется — заказы и касса не проверяются.';
+
+  @override
   String get posWorkspaceSubtitleCashier =>
       'Кассовое рабочее место • быстрая сборка заказа';
 

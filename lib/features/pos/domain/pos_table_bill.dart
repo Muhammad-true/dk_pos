@@ -24,14 +24,38 @@ class PosTableBillLine extends Equatable {
     required this.name,
     required this.quantity,
     required this.lineTotal,
+    this.menuItemId,
+    this.unitPrice,
+    this.kitchenLineStatus,
+    this.kitchenStationId,
   });
 
   final String name;
   final int quantity;
   final double lineTotal;
+  /// С сервера open-table-bills — для подстановки в корзину.
+  final String? menuItemId;
+  final double? unitPrice;
+
+  /// С сервера: этап строки кухни (`pending` / `accepted` / `ready`).
+  final String? kitchenLineStatus;
+
+  /// С сервера: станция кухни; `null` — позиция без очереди кухни (напитки, витрина).
+  final int? kitchenStationId;
+
+  bool get isKitchenLine =>
+      kitchenStationId != null && kitchenStationId! > 0;
 
   @override
-  List<Object?> get props => [name, quantity, lineTotal];
+  List<Object?> get props => [
+        name,
+        quantity,
+        lineTotal,
+        menuItemId,
+        unitPrice,
+        kitchenLineStatus,
+        kitchenStationId,
+      ];
 }
 
 /// Счёт: стол / тип заказа, оплата сразу или отложена.
@@ -46,6 +70,7 @@ class PosTableBill extends Equatable {
     this.tableZone,
     this.isPaid = false,
     this.paymentMethod,
+    this.orderStatus = '',
   });
 
   final String id;
@@ -58,6 +83,12 @@ class PosTableBill extends Equatable {
   final DateTime createdAt;
   final bool isPaid;
   final String? paymentMethod;
+
+  /// Статус заказа с сервера (`new`, `cooking`, `ready`, `done`, …).
+  final String orderStatus;
+
+  bool get isHandedOutUnpaid =>
+      !isPaid && orderStatus.trim().toLowerCase() == 'done';
 
   String get tableSummary {
     if (tableNumber != null) {
@@ -97,5 +128,6 @@ class PosTableBill extends Equatable {
         createdAt,
         isPaid,
         paymentMethod,
+        orderStatus,
       ];
 }

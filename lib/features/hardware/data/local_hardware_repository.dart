@@ -22,6 +22,57 @@ class HardwareDrawerResult {
   final String mode;
 }
 
+class HardwarePrinterDevice {
+  const HardwarePrinterDevice({
+    required this.name,
+    this.status,
+  });
+
+  final String name;
+  final String? status;
+
+  factory HardwarePrinterDevice.fromJson(Map<String, dynamic> json) {
+    return HardwarePrinterDevice(
+      name: json['name']?.toString() ?? '',
+      status: json['status']?.toString(),
+    );
+  }
+}
+
+/// Ответ `GET /api/local/hardware/status` (режим печати и доступность принтера в Windows).
+class HardwareStatusSnapshot {
+  const HardwareStatusSnapshot({
+    required this.hardwareMode,
+    required this.receiptPrinterConfigured,
+    required this.receiptPrinterReachable,
+    required this.receiptPrinterStatusCode,
+    this.receiptPrinterName,
+    this.driverPrinterStatus,
+    this.probeError,
+  });
+
+  final String hardwareMode;
+  final bool receiptPrinterConfigured;
+  final bool receiptPrinterReachable;
+  final String receiptPrinterStatusCode;
+  final String? receiptPrinterName;
+  final dynamic driverPrinterStatus;
+  final String? probeError;
+
+  factory HardwareStatusSnapshot.fromJson(Map<String, dynamic> json) {
+    return HardwareStatusSnapshot(
+      hardwareMode: json['hardwareMode']?.toString() ?? '',
+      receiptPrinterConfigured: json['receiptPrinterConfigured'] == true,
+      receiptPrinterReachable: json['receiptPrinterReachable'] == true,
+      receiptPrinterStatusCode:
+          json['receiptPrinterStatusCode']?.toString() ?? '',
+      receiptPrinterName: json['receiptPrinterName']?.toString(),
+      driverPrinterStatus: json['driverPrinterStatus'],
+      probeError: json['probeError']?.toString(),
+    );
+  }
+}
+
 class LocalHardwareRepository {
   LocalHardwareRepository(this._http);
 
@@ -39,18 +90,34 @@ class LocalHardwareRepository {
     required String orderId,
     required double totalAmount,
     required String paymentMethod,
+    String? receiptTitle,
+    String? customerName,
+    String? customerPhone,
+    String? deliveryAddress,
+    String? deliveryNote,
     String? branchId,
     String? terminalId,
   }) async {
+    final body = <String, dynamic>{
+      'orderId': orderId,
+      'branchId': branchId ?? _defaultBranchId,
+      'terminalId': terminalId ?? _defaultTerminalId,
+      'paymentMethod': paymentMethod,
+      'totalAmount': totalAmount,
+    };
+    void putIfNotEmpty(String key, String? value) {
+      final v = value?.trim();
+      if (v != null && v.isNotEmpty) body[key] = v;
+    }
+    putIfNotEmpty('receiptTitle', receiptTitle);
+    putIfNotEmpty('customerName', customerName);
+    putIfNotEmpty('customerPhone', customerPhone);
+    putIfNotEmpty('deliveryAddress', deliveryAddress);
+    putIfNotEmpty('deliveryNote', deliveryNote);
+
     final res = await _http.post(
       'api/local/hardware/receipts/print',
-      body: {
-        'orderId': orderId,
-        'branchId': branchId ?? _defaultBranchId,
-        'terminalId': terminalId ?? _defaultTerminalId,
-        'paymentMethod': paymentMethod,
-        'totalAmount': totalAmount,
-      },
+      body: body,
     );
 
     if (res.statusCode != 200) {
@@ -60,11 +127,11 @@ class LocalHardwareRepository {
         fallbackMessage: 'Не удалось распечатать чек',
       );
     }
-    final body = res.body;
-    if (body is! Map) {
+    final responseBody = res.body;
+    if (responseBody is! Map) {
       throw ApiException(res.statusCode, 'Некорректный ответ сервера печати');
     }
-    final receipt = body['receipt'];
+    final receipt = responseBody['receipt'];
     if (receipt is! Map) {
       throw ApiException(res.statusCode, 'Сервер не вернул данные чека');
     }
@@ -105,5 +172,46 @@ class LocalHardwareRepository {
     }
     final mode = drawer['mode']?.toString() ?? 'unknown';
     return HardwareDrawerResult(mode: mode);
+  }
+
+  Future<HardwareStatusSnapshot> fetchHardwareStatus() async {
+    final res = await _http.get(
+      'api/local/hardware/status',
+      query: {'branchId': _defaultBranchId},
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Не удалось получить статус оборудования',
+      );
+    }
+    final body = res.body;
+    if (body is! Map) {
+      throw ApiException(res.statusCode, 'Некорректный ответ статуса оборудования');
+    }
+    return HardwareStatusSnapshot.fromJson(Map<String, dynamic>.from(body));
+  }
+
+  Future<List<HardwarePrinterDevice>> fetchAvailablePrinters() async {
+    final res = await _http.get('api/local/hardware/printers');
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Не удалось получить список принтеров',
+      );
+    }
+    final body = res.body;
+    if (body is! Map) {
+      throw ApiException(res.statusCode, 'Некорректный ответ списка принтеров');
+    }
+    final raw = body['printers'];
+    if (raw is! List) return const <HardwarePrinterDevice>[];
+    return raw
+        .whereType<Map>()
+        .map((e) => HardwarePrinterDevice.fromJson(Map<String, dynamic>.from(e)))
+        .where((p) => p.name.trim().isNotEmpty)
+        .toList();
   }
 }

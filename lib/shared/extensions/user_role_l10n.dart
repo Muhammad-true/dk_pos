@@ -15,6 +15,8 @@ extension UserRoleL10n on UserModel {
         return l10n.roleExpeditor;
       case 'waiter':
         return _waiterLabelByLocale(l10n);
+      case 'staff':
+        return l10n.roleStaff;
       default:
         return role;
     }

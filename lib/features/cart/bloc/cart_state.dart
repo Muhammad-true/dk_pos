@@ -1,18 +1,31 @@
 import 'package:equatable/equatable.dart';
 
+import 'package:dk_pos/core/utils/cart_line_key.dart';
+import 'package:dk_pos/features/cart/domain/cart_payment_adjustment.dart';
 import 'package:dk_pos/shared/shared.dart';
 
 class CartLine extends Equatable {
-  const CartLine({required this.item, required this.quantity});
+  const CartLine({
+    required this.item,
+    required this.quantity,
+    this.modifiers = const [],
+  });
 
   final PosMenuItem item;
   final int quantity;
+  final List<PosCartModifier> modifiers;
 
-  String get lineKey => '${item.id}::${item.price.toStringAsFixed(2)}';
+  String get lineKey => computeCartLineKey(
+        menuItemId: item.id,
+        modifiers: modifiers,
+        unitPrice: item.price,
+        catalogBasePrice: item.baseCatalogPrice,
+      );
+
   double get lineTotal => item.price * quantity;
 
   @override
-  List<Object?> get props => [lineKey, quantity];
+  List<Object?> get props => [lineKey, quantity, item.price, item.name, modifiers];
 }
 
 /// Метаданные открытого чека (вкладка на кассе).
@@ -45,6 +58,7 @@ class CartState extends Equatable {
     this.activeCheckId = '',
     this.lines = const {},
     this.activeOrderTypeIndex = -1,
+    this.paymentAdjustment,
   });
 
   final List<CartCheckInfo> checks;
@@ -56,6 +70,8 @@ class CartState extends Equatable {
   /// -1 — не выбран, 0 — с собой, 1 — на месте, 2 — доставка.
   final int activeOrderTypeIndex;
 
+  final CartPaymentAdjustment? paymentAdjustment;
+
   List<CartLine> get sortedLines {
     final list = lines.values.toList();
     list.sort((a, b) => a.item.name.compareTo(b.item.name));
@@ -66,10 +82,13 @@ class CartState extends Equatable {
 
   double get total => lines.values.fold(0.0, (s, l) => s + l.lineTotal);
 
+  double get payableTotal => paymentAdjustment?.payableAmount ?? total;
+
   bool get isEmpty => lines.isEmpty;
 
   bool get hasMultipleChecks => checks.length > 1;
 
   @override
-  List<Object?> get props => [checks, activeCheckId, lines, activeOrderTypeIndex];
+  List<Object?> get props =>
+      [checks, activeCheckId, lines, activeOrderTypeIndex, paymentAdjustment];
 }

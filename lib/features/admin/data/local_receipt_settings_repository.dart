@@ -34,6 +34,9 @@ class LocalReceiptSettings {
     required this.gdiLeftOffset,
     required this.receiptCharsPerLine,
     required this.trimItemPriceZeros,
+    required this.receiptPrinterName,
+    required this.cashDrawerPrinterName,
+    required this.receiptWindowsPrintMode,
   });
 
   final String brandName;
@@ -66,6 +69,9 @@ class LocalReceiptSettings {
   final int gdiLeftOffset;
   final int receiptCharsPerLine;
   final bool trimItemPriceZeros;
+  final String? receiptPrinterName;
+  final String? cashDrawerPrinterName;
+  final String? receiptWindowsPrintMode;
 
   factory LocalReceiptSettings.fromJson(Map settings) {
     return LocalReceiptSettings(
@@ -126,6 +132,9 @@ class LocalReceiptSettings {
           ? true
           : settings['trimItemPriceZeros'] == true ||
                 settings['trimItemPriceZeros'].toString() == '1',
+      receiptPrinterName: settings['receiptPrinterName']?.toString(),
+      cashDrawerPrinterName: settings['cashDrawerPrinterName']?.toString(),
+      receiptWindowsPrintMode: settings['receiptWindowsPrintMode']?.toString(),
     );
   }
 }
@@ -182,6 +191,9 @@ class LocalReceiptSettingsRepository {
     required int gdiLeftOffset,
     required int receiptCharsPerLine,
     required bool trimItemPriceZeros,
+    String? receiptPrinterName,
+    String? cashDrawerPrinterName,
+    String? receiptWindowsPrintMode,
     String? branchId,
   }) async {
     final res = await _http.patch(
@@ -218,6 +230,9 @@ class LocalReceiptSettingsRepository {
         'gdiLeftOffset': gdiLeftOffset,
         'receiptCharsPerLine': receiptCharsPerLine,
         'trimItemPriceZeros': trimItemPriceZeros,
+        'receiptPrinterName': receiptPrinterName,
+        'cashDrawerPrinterName': cashDrawerPrinterName,
+        'receiptWindowsPrintMode': receiptWindowsPrintMode,
       },
     );
     if (res.statusCode != 200) {

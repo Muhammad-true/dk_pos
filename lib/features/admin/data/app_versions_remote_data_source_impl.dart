@@ -29,6 +29,42 @@ class AppVersionsRemoteDataSourceImpl implements AppVersionsRemoteDataSource {
   }
 
   @override
+  Future<Map<String, dynamic>> syncVersionsFromGlobal() async {
+    final res = await _http.post('api/versions/sync-from-global', body: {});
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(res.statusCode, res.body);
+    }
+    final data = res.body;
+    if (data is! Map<String, dynamic>) {
+      throw ApiException(res.statusCode, 'Некорректный ответ сервера');
+    }
+    return data;
+  }
+
+  @override
+  Future<Map<String, dynamic>> silentInstall(
+    String appKey, {
+    String? downloadUrl,
+  }) async {
+    final body = <String, dynamic>{};
+    if (downloadUrl != null && downloadUrl.trim().isNotEmpty) {
+      body['downloadUrl'] = downloadUrl.trim();
+    }
+    final res = await _http.post(
+      'api/versions/$appKey/silent-install',
+      body: body,
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(res.statusCode, res.body);
+    }
+    final data = res.body;
+    if (data is! Map<String, dynamic>) {
+      throw ApiException(res.statusCode, 'Некорректный ответ silent-install');
+    }
+    return data;
+  }
+
+  @override
   Future<AppVersionRow> updateVersion(
     String appKey, {
     String? displayName,

@@ -1,17 +1,21 @@
+import 'package:dk_pos/core/utils/cart_line_key.dart';
 import 'package:dk_pos/shared/shared.dart';
 
 import '../bloc/cart_state.dart';
+import '../domain/cart_payment_adjustment.dart';
 
 class _CheckData {
   _CheckData({required this.ordinal})
       : lines = <String, CartLine>{},
         orderTypeIndex = -1,
-        tableLabel = null;
+        tableLabel = null,
+        paymentAdjustment = null;
 
   final int ordinal;
   Map<String, CartLine> lines;
   int orderTypeIndex;
   String? tableLabel;
+  CartPaymentAdjustment? paymentAdjustment;
 }
 
 /// Локальная корзина: несколько открытых чеков (вкладок), один активный.
@@ -34,6 +38,15 @@ class CartRepository {
       Map<String, CartLine>.from(_checks[_activeId]?.lines ?? {});
 
   int get activeOrderTypeIndex => _checks[_activeId]?.orderTypeIndex ?? -1;
+
+  CartPaymentAdjustment? get activePaymentAdjustment =>
+      _checks[_activeId]?.paymentAdjustment;
+
+  void setPaymentAdjustmentForActive(CartPaymentAdjustment? value) {
+    final d = _checks[_activeId];
+    if (d == null) return;
+    d.paymentAdjustment = value;
+  }
 
   List<CartCheckInfo> get checkSummaries {
     final list = <CartCheckInfo>[];
@@ -87,25 +100,49 @@ class CartRepository {
     d.orderTypeIndex = index.clamp(-1, 2);
   }
 
-  String _lineKey(PosMenuItem item) => '${item.id}::${item.price.toStringAsFixed(2)}';
-
-  void add(PosMenuItem item, {double? unitPrice}) {
+  void add(
+    PosMenuItem item, {
+    double? unitPrice,
+    List<PosCartModifier> modifiers = const [],
+  }) {
     final d = _checks[_activeId];
     if (d == null) return;
-    final effectiveItem = unitPrice != null
-        ? item.copyWith(
-            price: unitPrice,
-            priceText: unitPrice.toStringAsFixed(
-              unitPrice == unitPrice.roundToDouble() ? 0 : 2,
-            ),
-          )
-        : item;
-    final key = _lineKey(effectiveItem);
+
+    final modExtra =
+        modifiers.fold<double>(0, (s, m) => s + m.priceDelta);
+    final up = unitPrice ?? (item.baseCatalogPrice + modExtra);
+    final modLabel = modifiers.map((m) => m.name).where((n) => n.isNotEmpty).join(', ');
+    final displayName =
+        modLabel.isNotEmpty ? '${item.name} ($modLabel)' : item.name;
+
+    final effectiveItem = item.copyWith(
+      price: up,
+      priceText: up == up.roundToDouble()
+          ? up.toStringAsFixed(0)
+          : up.toStringAsFixed(2),
+      name: displayName,
+    );
+
+    final key = computeCartLineKey(
+      menuItemId: item.id,
+      modifiers: modifiers,
+      unitPrice: up,
+      catalogBasePrice: item.baseCatalogPrice,
+    );
+
     final existing = d.lines[key];
     if (existing != null) {
-      d.lines[key] = CartLine(item: effectiveItem, quantity: existing.quantity + 1);
+      d.lines[key] = CartLine(
+        item: effectiveItem,
+        quantity: existing.quantity + 1,
+        modifiers: modifiers,
+      );
     } else {
-      d.lines[key] = CartLine(item: effectiveItem, quantity: 1);
+      d.lines[key] = CartLine(
+        item: effectiveItem,
+        quantity: 1,
+        modifiers: modifiers,
+      );
     }
   }
 
@@ -117,7 +154,11 @@ class CartRepository {
     if (line.quantity <= 1) {
       d.lines.remove(lineKey);
     } else {
-      d.lines[lineKey] = CartLine(item: line.item, quantity: line.quantity - 1);
+      d.lines[lineKey] = CartLine(
+        item: line.item,
+        quantity: line.quantity - 1,
+        modifiers: line.modifiers,
+      );
     }
   }
 
@@ -125,8 +166,16 @@ class CartRepository {
     final d = _checks[_activeId];
     if (d == null) return;
     d.lines.clear();
-    // После очистки/оформления требуем явный новый выбор типа заказа.
     d.orderTypeIndex = -1;
+    d.paymentAdjustment = null;
+  }
+
+  void replaceActiveLines(Map<String, CartLine> lines) {
+    final d = _checks[_activeId];
+    if (d == null) return;
+    d.lines
+      ..clear()
+      ..addAll(lines);
   }
 
   void resetAll() {

@@ -8,6 +8,15 @@ class AppVersionsRepository {
 
   Future<List<AppVersionRow>> fetchVersions() => _remote.fetchVersions();
 
+  Future<Map<String, dynamic>> syncVersionsFromGlobal() =>
+      _remote.syncVersionsFromGlobal();
+
+  Future<Map<String, dynamic>> silentInstall(
+    String appKey, {
+    String? downloadUrl,
+  }) =>
+      _remote.silentInstall(appKey, downloadUrl: downloadUrl);
+
   Future<AppVersionRow> updateVersion(
     String appKey, {
     String? displayName,

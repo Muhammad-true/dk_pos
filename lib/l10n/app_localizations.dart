@@ -2620,6 +2620,30 @@ abstract class AppLocalizations {
   /// **'Официант'**
   String get roleWaiter;
 
+  /// No description provided for @roleStaff.
+  ///
+  /// In ru, this message translates to:
+  /// **'Персонал'**
+  String get roleStaff;
+
+  /// No description provided for @staffScreenTitle.
+  ///
+  /// In ru, this message translates to:
+  /// **'Учёт смены'**
+  String get staffScreenTitle;
+
+  /// No description provided for @staffShiftOpenHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Смена открыта автоматически при входе.'**
+  String get staffShiftOpenHint;
+
+  /// No description provided for @staffShiftCloseHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'При выходе смена закроется — заказы и касса не проверяются.'**
+  String get staffShiftCloseHint;
+
   /// No description provided for @posWorkspaceSubtitleCashier.
   ///
   /// In ru, this message translates to:

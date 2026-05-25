@@ -1352,6 +1352,20 @@ class AppLocalizationsTg extends AppLocalizations {
   String get roleWaiter => 'Офисиант';
 
   @override
+  String get roleStaff => 'Корманд';
+
+  @override
+  String get staffScreenTitle => 'Ҳисоби смена';
+
+  @override
+  String get staffShiftOpenHint =>
+      'Смена ҳангоми воридшавӣ худкор кушода мешавад.';
+
+  @override
+  String get staffShiftCloseHint =>
+      'Ҳангоми баромадан смена пӯшида мешавад — фармоишҳо ва касса санҷида намешаванд.';
+
+  @override
   String get posWorkspaceSubtitleCashier =>
       'Ҷои кори касса • ҷамъоварии зуди фармоиш';
 

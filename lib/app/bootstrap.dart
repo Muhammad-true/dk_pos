@@ -58,6 +58,7 @@ import 'package:dk_pos/features/admin/data/local_audio_settings_repository.dart'
 import 'package:dk_pos/features/admin/data/local_order_handout_settings_repository.dart';
 import 'package:dk_pos/features/admin/data/local_receipt_settings_repository.dart';
 import 'package:dk_pos/features/cash/data/local_cash_repository.dart';
+import 'package:dk_pos/features/shifts/data/shift_close_preflight.dart';
 import 'package:dk_pos/features/hardware/data/local_hardware_repository.dart';
 import 'package:dk_pos/features/menu/data/menu_remote_data_source_impl.dart';
 import 'package:dk_pos/features/menu/data/menu_repository.dart';
@@ -447,6 +448,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       final localReceiptSettingsRepo = LocalReceiptSettingsRepository(http);
       final localHardwareRepo = LocalHardwareRepository(http);
       final localCashRepo = LocalCashRepository(http);
+      final shiftClosePreflightRepo = ShiftClosePreflightRepository(http);
       final localOrdersRepo = LocalOrdersRepository(http);
       final localPaymentsRepo = LocalPaymentsRepository(http);
       final localPaymentMethodsRepo = LocalPaymentMethodsRepository(http);
@@ -507,6 +509,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           localReceiptSettingsRepo: localReceiptSettingsRepo,
           localHardwareRepo: localHardwareRepo,
           localCashRepo: localCashRepo,
+          shiftClosePreflightRepo: shiftClosePreflightRepo,
           localOrdersRepo: localOrdersRepo,
           localPaymentsRepo: localPaymentsRepo,
           localPaymentMethodsRepo: localPaymentMethodsRepo,
@@ -1164,6 +1167,9 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         RepositoryProvider<LocalCashRepository>.value(
           value: payload.localCashRepo,
         ),
+        RepositoryProvider<ShiftClosePreflightRepository>.value(
+          value: payload.shiftClosePreflightRepo,
+        ),
         RepositoryProvider<LocalOrdersRepository>.value(
           value: payload.localOrdersRepo,
         ),
@@ -1222,6 +1228,7 @@ class _BootPayload {
     required this.localReceiptSettingsRepo,
     required this.localHardwareRepo,
     required this.localCashRepo,
+    required this.shiftClosePreflightRepo,
     required this.localOrdersRepo,
     required this.localPaymentsRepo,
     required this.localPaymentMethodsRepo,
@@ -1258,6 +1265,7 @@ class _BootPayload {
   final LocalReceiptSettingsRepository localReceiptSettingsRepo;
   final LocalHardwareRepository localHardwareRepo;
   final LocalCashRepository localCashRepo;
+  final ShiftClosePreflightRepository shiftClosePreflightRepo;
   final LocalOrdersRepository localOrdersRepo;
   final LocalPaymentsRepository localPaymentsRepo;
   final LocalPaymentMethodsRepository localPaymentMethodsRepo;

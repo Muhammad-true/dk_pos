@@ -150,14 +150,28 @@ List<PosCategory> mergePosRootCategoryOrder(
   return [...out, ...rest];
 }
 
+/// Убирает повтор одного и того же id в списке (после сбоя синка с global).
+List<PosMenuItem> dedupePosMenuItemsById(List<PosMenuItem> items) {
+  final out = <PosMenuItem>[];
+  final seen = <String>{};
+  for (final it in items) {
+    final id = it.id.trim();
+    if (id.isEmpty || seen.contains(id)) continue;
+    seen.add(id);
+    out.add(it);
+  }
+  return out;
+}
+
 List<PosMenuItem> mergePosItemOrder(
   List<PosMenuItem> api,
   List<String>? savedOrder,
 ) {
+  final uniqueApi = dedupePosMenuItemsById(api);
   if (savedOrder == null || savedOrder.isEmpty) {
-    return List<PosMenuItem>.from(api);
+    return uniqueApi;
   }
-  final byId = {for (final i in api) i.id: i};
+  final byId = {for (final i in uniqueApi) i.id: i};
   final out = <PosMenuItem>[];
   final seen = <String>{};
   for (final id in savedOrder) {
@@ -167,6 +181,6 @@ List<PosMenuItem> mergePosItemOrder(
       seen.add(id);
     }
   }
-  final rest = api.where((i) => !seen.contains(i.id)).toList();
-  return [...out, ...rest];
+  final rest = uniqueApi.where((i) => !seen.contains(i.id)).toList();
+  return dedupePosMenuItemsById([...out, ...rest]);
 }

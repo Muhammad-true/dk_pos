@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:dk_pos/core/constants/phone_defaults.dart';
+import 'package:dk_pos/core/input/tj_phone_dial_locked_formatter.dart';
 import 'package:dk_pos/features/loyalty/data/local_loyalty_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter/services.dart';
 
 class AdminLoyaltyPanel extends StatefulWidget {
   const AdminLoyaltyPanel({super.key});
@@ -29,7 +31,7 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
   @override
   void initState() {
     super.initState();
-    _newPhoneCtrl.text = kDefaultPhoneDialPrefix;
+    _newPhoneCtrl.text = TjPhoneDialLockedFormatter.ensureStored(_newPhoneCtrl.text);
     _reload();
   }
 
@@ -100,7 +102,7 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
   }
 
   Future<void> _createCustomer() async {
-    final phone = _newPhoneCtrl.text.trim();
+    final phone = TjPhoneDialLockedFormatter.ensureStored(_newPhoneCtrl.text);
     if (phone.isEmpty) {
       setState(() => _error = 'Телефон обязателен');
       return;
@@ -117,7 +119,7 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
           );
       if (!mounted) return;
       _newNameCtrl.clear();
-      _newPhoneCtrl.text = kDefaultPhoneDialPrefix;
+      _newPhoneCtrl.text = TjPhoneDialLockedFormatter.ensureStored(_newPhoneCtrl.text);
       _newCardCtrl.clear();
       await _reload();
       if (!mounted) return;
@@ -378,6 +380,8 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
                   width: 180,
                   child: TextField(
                     controller: _newPhoneCtrl,
+                    keyboardType: TextInputType.phone,
+                    inputFormatters: const [TjPhoneDialLockedFormatter()],
                     decoration: InputDecoration(
                       labelText: 'Телефон *',
                       hintText: '$kDefaultPhoneDialPrefix…',

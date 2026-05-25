@@ -8,17 +8,22 @@ import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/constants/phone_defaults.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/core/formatting/money_format.dart';
+import 'package:dk_pos/core/input/tj_phone_dial_locked_formatter.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
 import 'package:dk_pos/features/cart/bloc/cart_event.dart';
 import 'package:dk_pos/features/cart/bloc/cart_state.dart';
+import 'package:dk_pos/features/cart/domain/cart_payment_adjustment.dart';
 import 'package:dk_pos/features/hardware/data/local_hardware_repository.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
 import 'package:dk_pos/features/payments/data/local_payments_repository.dart';
 import 'package:dk_pos/features/payments/data/local_payment_methods_repository.dart';
 import 'package:dk_pos/features/loyalty/data/local_loyalty_repository.dart';
 import 'package:dk_pos/features/pos/bloc/pos_hall_orders_cubit.dart';
+import 'package:dk_pos/features/pos/data/open_table_bill_from_server.dart';
 import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
+import 'package:dk_pos/features/pos/presentation/widgets/pos_online_order_edit_flow.dart';
+import 'package:flutter/services.dart';
 
 /// Тип заказа в корзине POS (совпадает с выбором в панели корзины).
 enum PosCheckoutOrderType { takeAway, dineIn, delivery }
@@ -40,64 +45,127 @@ String _orderTypeLabelForSync(
   return '$base • Официант';
 }
 
+/// Индекс типа заказа в корзине (0 — с собой, 1 — на месте, 2 — доставка) по подписи открытого счёта.
+int posOrderTypeIndexForOpenBill(PosTableBill bill) {
+  final l = bill.orderTypeLabel.toLowerCase().trim();
+  if (l.contains('доставк') || l.contains('delivery')) return 2;
+  if (l.contains('самовывоз') ||
+      l.contains('pickup') ||
+      l.contains('takeaway') ||
+      l.contains('to_go') ||
+      l.contains('парковк') ||
+      l.contains('parking')) {
+    return 0;
+  }
+  if (l.contains('на месте') ||
+      l.contains('dinein') ||
+      l.contains('dine_in') ||
+      l.contains('dine-in') ||
+      l.contains('onsite') ||
+      l.contains('on_site')) {
+    return 1;
+  }
+  return 0;
+}
+
+Future<void> refreshOpenTableBillsIntoHall(BuildContext context) async {
+  try {
+    final repo = context.read<LocalOrdersRepository>();
+    final dtos = await repo.fetchOpenTableBills(
+      branchId: AppConfig.storeBranchId,
+    );
+    if (!context.mounted) return;
+    final bills = dtos.map(posTableBillFromServerDto).toList();
+    context.read<PosHallOrdersCubit>().mergeHydrateFromServer(bills);
+  } catch (_) {
+    // сеть — счёт на сервере уже обновлён, список подтянется по таймеру
+  }
+}
+
 /// Оформление: стол (для «На месте»), оплата сейчас или позже, затем счёт и очистка корзины.
+///
+/// [appendToOpenBill]: только новые позиции в [cart]; счёт и стол берутся из счёта, оплата только позже
+/// (полную сумму принимают из «Счета на оплату» после обновления с сервера).
 Future<void> runPosCheckoutFlow(
   BuildContext context, {
   required PosCheckoutOrderType orderType,
   required CartState cart,
   bool waiterMode = false,
+  PosTableBill? appendToOpenBill,
 }) async {
   if (cart.isEmpty || !context.mounted) return;
   final user = context.read<AuthBloc>().state.user;
   final isWaiter = user?.isWaiter == true;
-  final effectiveWaiterMode = waiterMode || isWaiter;
-  final effectiveOrderType = orderType;
-  final effectiveOrderTypeLabel = _orderTypeLabelForSync(
-    effectiveOrderType,
-    waiterMode: effectiveWaiterMode,
-  );
+  final append = appendToOpenBill;
+
+  late final bool effectiveWaiterMode;
+  late final PosCheckoutOrderType effectiveOrderType;
+  late final String effectiveOrderTypeLabel;
 
   int? tableNumber;
   PosTableZone? tableZone;
 
-  if (effectiveOrderType == PosCheckoutOrderType.dineIn) {
-    if (effectiveWaiterMode) {
-      final outcome = await showPosTablePickDialog(
-        context,
-        allowSkipTable: false,
-      );
-      if (!context.mounted) return;
-      if (outcome is! PosTablePickChosen) {
-        if (outcome == null && context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Для заказа «на месте» выберите стол в диалоге '
-                '(или нажмите «Оформить заказ» ещё раз).',
+  if (append != null) {
+    effectiveOrderTypeLabel = append.orderTypeLabel;
+    final idx = posOrderTypeIndexForOpenBill(append);
+    effectiveOrderType = switch (idx) {
+      2 => PosCheckoutOrderType.delivery,
+      1 => PosCheckoutOrderType.dineIn,
+      _ => PosCheckoutOrderType.takeAway,
+    };
+    effectiveWaiterMode =
+        waiterMode ||
+        isWaiter ||
+        append.orderTypeLabel.toLowerCase().contains('официант');
+    tableNumber = append.tableNumber;
+    tableZone = append.tableZone;
+  } else {
+    effectiveWaiterMode = waiterMode || isWaiter;
+    effectiveOrderType = orderType;
+    effectiveOrderTypeLabel = _orderTypeLabelForSync(
+      effectiveOrderType,
+      waiterMode: effectiveWaiterMode,
+    );
+
+    if (effectiveOrderType == PosCheckoutOrderType.dineIn) {
+      if (effectiveWaiterMode) {
+        final outcome = await showPosTablePickDialog(
+          context,
+          allowSkipTable: false,
+        );
+        if (!context.mounted) return;
+        if (outcome is! PosTablePickChosen) {
+          if (outcome == null && context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Для заказа «на месте» выберите стол в диалоге '
+                  '(или нажмите «Оформить заказ» ещё раз).',
+                ),
               ),
-            ),
-          );
+            );
+          }
+          return;
         }
-        return;
-      }
-      tableNumber = outcome.number;
-      tableZone = outcome.zone;
-    } else {
-      final outcome = await showPosTablePickDialog(
-        context,
-        allowSkipTable: true,
-      );
-      if (!context.mounted) return;
-      if (outcome == null) return;
-      if (outcome is PosTablePickChosen) {
         tableNumber = outcome.number;
         tableZone = outcome.zone;
+      } else {
+        final outcome = await showPosTablePickDialog(
+          context,
+          allowSkipTable: true,
+        );
+        if (!context.mounted) return;
+        if (outcome == null) return;
+        if (outcome is PosTablePickChosen) {
+          tableNumber = outcome.number;
+          tableZone = outcome.zone;
+        }
       }
     }
   }
 
   bool payNow = false;
-  if (!effectiveWaiterMode) {
+  if (append == null && !effectiveWaiterMode) {
     final timing = await _pickPayTiming(context);
     if (!context.mounted) return;
     if (timing == null) return;
@@ -105,8 +173,10 @@ Future<void> runPosCheckoutFlow(
   }
 
   LocalPaymentMethod? paymentMethod;
-  _PaymentDiscountDraft? paymentDiscount;
-  var payableTotal = cart.total;
+  final paymentDiscount = _discountDraftFromCartAdjustment(
+    context.read<CartBloc>().state.paymentAdjustment,
+  );
+  var payableTotal = paymentDiscount?.payableAmount ?? cart.total;
   if (payNow) {
     try {
       paymentMethod = await _pickPaymentMethod(context);
@@ -119,73 +189,113 @@ Future<void> runPosCheckoutFlow(
     }
     if (!context.mounted) return;
     if (paymentMethod == null) return;
-    paymentDiscount = await _pickPaymentDiscounts(context, total: cart.total);
-    if (!context.mounted || paymentDiscount == null) return;
-    payableTotal = paymentDiscount.payableAmount;
   }
   _CashPaymentDraft? cashDraft;
-  if (payNow && paymentMethod != null && paymentMethod.isCash) {
-    cashDraft = await _pickCashReceived(context, total: payableTotal);
-    if (!context.mounted || cashDraft == null) return;
+  _MixedPaymentDraft? mixedDraft;
+  bool? skipReceipt;
+  if (payNow && paymentMethod != null) {
+    if (paymentMethod.code == 'mixed') {
+      mixedDraft = await _pickMixedPayment(context, total: payableTotal);
+      if (!context.mounted || mixedDraft == null) return;
+    } else if (paymentMethod.isCash) {
+      cashDraft = await _pickCashReceived(context, total: payableTotal);
+      if (!context.mounted || cashDraft == null) return;
+    }
+    await Future<void>.delayed(Duration.zero);
+    if (!context.mounted) return;
+    skipReceipt = await _pickReceiptChoice(context);
+    if (!context.mounted || skipReceipt == null) return;
   }
 
-  final lines = cart.sortedLines
-      .map(
-        (l) => PosTableBillLine(
-          name: l.item.name,
-          quantity: l.quantity,
-          lineTotal: l.lineTotal,
-        ),
-      )
-      .toList(growable: false);
-
   PosTableBill? openBillBefore;
-  if (tableNumber != null && tableZone != null) {
+  if (append == null && tableNumber != null && tableZone != null) {
     openBillBefore = context.read<PosHallOrdersCubit>().findOpenBillForTable(
       number: tableNumber,
       zone: tableZone,
     );
   }
 
-  final bill = PosTableBill(
-    id: 'tb-${DateTime.now().millisecondsSinceEpoch}',
-    lines: lines,
-    total: cart.total,
-    orderTypeLabel: effectiveOrderTypeLabel,
-    tableNumber: tableNumber,
-    tableZone: tableZone,
-    createdAt: DateTime.now(),
-    isPaid: false,
-    paymentMethod: null,
-  );
-
   final hall = context.read<PosHallOrdersCubit>();
   final cartBloc = context.read<CartBloc>();
-  final registered = hall.registerOrMergeBill(bill);
+
+  late final String registeredId;
+  if (append != null) {
+    registeredId = append.id;
+  } else {
+    final lines = cart.sortedLines
+        .map(
+          (l) => PosTableBillLine(
+            name: l.item.name,
+            quantity: l.quantity,
+            lineTotal: l.lineTotal,
+          ),
+        )
+        .toList(growable: false);
+    final bill = PosTableBill(
+      id: 'tb-${DateTime.now().millisecondsSinceEpoch}',
+      lines: lines,
+      total: cart.total,
+      orderTypeLabel: effectiveOrderTypeLabel,
+      tableNumber: tableNumber,
+      tableZone: tableZone,
+      createdAt: DateTime.now(),
+      isPaid: false,
+      paymentMethod: null,
+    );
+    final registered = hall.registerOrMergeBill(bill);
+    registeredId = registered.id;
+  }
+
+  final appendBaselineQtyByLineKey = append != null
+      ? Map<String, int>.from(hall.state.openBillAppendBaselineQtyByLineKey)
+      : null;
+
   final orderSync = await _syncLocalOrder(
     context,
-    orderId: registered.id,
+    orderId: registeredId,
     cart: cart,
     orderTypeLabel: effectiveOrderTypeLabel,
     tableZone: tableZone,
     tableNumber: tableNumber,
+    appendBaselineQtyByLineKey: appendBaselineQtyByLineKey,
   );
   if (!context.mounted) return;
+
+  if (append != null && !orderSync.synced) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(orderSync.message ?? 'Не удалось сохранить заказ')),
+    );
+    return;
+  }
+
   String? paymentHint;
-  String? orderHint = orderSync.message;
+  final orderHint = orderSync.message ?? '';
   var paymentAccepted = false;
   _PaymentAttemptResult? paymentResult;
   if (payNow) {
-    final progressOverlay = _showBlockingPaymentOverlay(context);
+    final progressOverlay = _showBlockingPaymentOverlay(
+      context,
+      skipReceipt: skipReceipt ?? false,
+    );
     try {
-      paymentResult = await _runLocalPayment(
-        context,
-        orderId: registered.id,
-        total: payableTotal,
-        paymentMethod: paymentMethod!,
-        cashDraft: cashDraft,
-        discountDraft: paymentDiscount,
-      );
+      paymentResult = mixedDraft != null
+          ? await _runMixedLocalPayment(
+              context,
+              orderId: registeredId,
+              total: payableTotal,
+              mixed: mixedDraft,
+              discountDraft: paymentDiscount,
+              skipReceipt: skipReceipt ?? false,
+            )
+          : await _runLocalPayment(
+              context,
+              orderId: registeredId,
+              total: payableTotal,
+              paymentMethod: paymentMethod!,
+              cashDraft: cashDraft,
+              discountDraft: paymentDiscount,
+              skipReceipt: skipReceipt ?? false,
+            );
     } finally {
       progressOverlay?.close();
     }
@@ -193,13 +303,48 @@ Future<void> runPosCheckoutFlow(
     paymentHint = paymentResult.message;
     if (paymentAccepted) {
       if (!context.mounted) return;
-      hall.markPaid(registered.id, paymentMethod: paymentMethod.title);
+      hall.markPaid(
+        registeredId,
+        paymentMethod: mixedDraft?.summaryTitle ?? paymentMethod!.title,
+      );
     }
   }
+  final consentEdit = append != null && hall.state.openBillAppendCustomerConsent;
+  final consentMeta = hall.state.openBillAppendConsentMeta;
+  final appendTotal = cart.total;
+
   cartBloc.add(const CartCleared());
+  if (append != null) {
+    hall.clearOpenBillAppend();
+    await refreshOpenTableBillsIntoHall(context);
+  }
 
   if (!context.mounted) return;
-  final merged = openBillBefore != null;
+  final merged = append != null || openBillBefore != null;
+
+  if (append != null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          [
+            'Счёт «${append.tableSummary}» обновлён на сервере. '
+                'Оплату проведите в «Счета на оплату».',
+            if (orderHint.isNotEmpty) orderHint,
+          ].where((s) => s.isNotEmpty).join(' • '),
+        ),
+      ),
+    );
+    if (consentEdit && consentMeta != null) {
+      await offerPrintConsentUpdatedReceipt(
+        context,
+        orderId: registeredId,
+        total: appendTotal,
+        meta: consentMeta,
+      );
+    }
+    return;
+  }
+
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
       content: Text(
@@ -213,8 +358,9 @@ Future<void> runPosCheckoutFlow(
               : (merged
                     ? 'Позиции добавлены к открытому счёту${_tablePlaceSnippet(effectiveOrderType, tableZone, tableNumber)}'
                     : 'Счёт открыт${_tablePlaceSnippet(effectiveOrderType, tableZone, tableNumber)} — оплату можно провести позже'),
-          if (orderHint != null && orderHint.isNotEmpty) orderHint,
+          if (orderHint.isNotEmpty) orderHint,
           if (paymentHint != null && paymentHint.isNotEmpty) paymentHint,
+          if (mixedDraft != null) mixedDraft.summaryTitle,
           if (cashDraft != null)
             'Получено ${formatSomoni(cashDraft.received)}, сдача ${formatSomoni(cashDraft.change)}',
           if (paymentDiscount != null && paymentDiscount.totalDiscount > 0)
@@ -768,11 +914,23 @@ Future<bool?> _pickPayTiming(BuildContext context) {
   );
 }
 
+const _mixedPaymentPicker = LocalPaymentMethod(
+  id: null,
+  code: 'mixed',
+  title: 'Смешанная',
+  type: 'mixed',
+  isActive: true,
+  sortOrder: -1,
+  details: {},
+  isSystem: true,
+);
+
 Future<LocalPaymentMethod?> _pickPaymentMethod(BuildContext context) async {
   final methods = await context
       .read<LocalPaymentMethodsRepository>()
       .fetchMethods();
   final visible = methods.where((m) => m.isActive).toList(growable: false);
+  final tiles = [_mixedPaymentPicker, ...visible];
   return showDialog<LocalPaymentMethod>(
     context: context,
     useRootNavigator: true,
@@ -795,11 +953,13 @@ Future<LocalPaymentMethod?> _pickPaymentMethod(BuildContext context) async {
             mainAxisSpacing: 12,
             crossAxisSpacing: 12,
             childAspectRatio: 1.6,
-            children: visible
+            children: tiles
                 .map(
                   (method) => _PaymentPickTile(
                     label: method.title,
-                    icon: method.isCash
+                    icon: method.code == 'mixed'
+                        ? Icons.call_split_rounded
+                        : method.isCash
                         ? Icons.payments_rounded
                         : Icons.account_balance_rounded,
                     onTap: () => Navigator.of(ctx).pop(method),
@@ -826,6 +986,219 @@ class _CashPaymentDraft {
   final double change;
 }
 
+class _MixedPaymentDraft {
+  const _MixedPaymentDraft({
+    required this.cashAmount,
+    required this.bankMethod,
+    required this.bankAmount,
+    this.cashReceived,
+    this.cashChange,
+  });
+
+  final double cashAmount;
+  final LocalPaymentMethod bankMethod;
+  final double bankAmount;
+  final double? cashReceived;
+  final double? cashChange;
+
+  String get summaryTitle {
+    final cashPart = formatSomoni(cashAmount);
+    final bankPart = formatSomoni(bankAmount);
+    return 'Наличные $cashPart + ${bankMethod.title} $bankPart';
+  }
+}
+
+final Map<String, _PaymentDiscountDraft> _orderPaymentAdjustmentsById = {};
+
+/// Скидка для оплаты счёта из «Счета на оплату» (кнопка % рядом с «Оплатить»).
+Future<void> configureOrderPaymentDiscount(
+  BuildContext context, {
+  required String orderId,
+  required double orderTotal,
+}) async {
+  final draft = await _pickPaymentDiscounts(context, total: orderTotal);
+  if (!context.mounted || draft == null) return;
+  _orderPaymentAdjustmentsById[orderId] = draft;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(
+        draft.totalDiscount > 0
+            ? 'Скидка ${formatSomoni(draft.totalDiscount)} — к оплате ${formatSomoni(draft.payableAmount)}'
+            : 'Скидки сброшены',
+      ),
+    ),
+  );
+}
+
+/// Скидка для активного чека (кнопка % в корзине).
+Future<void> configureCartPaymentDiscount(
+  BuildContext context, {
+  required double cartTotal,
+}) async {
+  final draft = await _pickPaymentDiscounts(context, total: cartTotal);
+  if (!context.mounted || draft == null) return;
+  context.read<CartBloc>().add(
+    CartPaymentAdjustmentChanged(
+      CartPaymentAdjustment(
+        baseTotal: draft.baseTotal,
+        promoCode: draft.promoCode,
+        promoDiscountAmount: draft.promoDiscountAmount,
+        loyaltyDiscountAmount: draft.loyaltyDiscountAmount,
+        loyaltyCardNo: draft.loyaltyCardNo,
+        customerId: draft.customerId,
+      ),
+    ),
+  );
+  if (!context.mounted) return;
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(
+        draft.totalDiscount > 0
+            ? 'Скидка ${formatSomoni(draft.totalDiscount)} — к оплате ${formatSomoni(draft.payableAmount)}'
+            : 'Скидки применены',
+      ),
+    ),
+  );
+}
+
+_PaymentDiscountDraft? _discountDraftFromCartAdjustment(
+  CartPaymentAdjustment? adjustment,
+) {
+  if (adjustment == null) return null;
+  return _PaymentDiscountDraft(
+    baseTotal: adjustment.baseTotal,
+    promoCode: adjustment.promoCode,
+    promoDiscountAmount: adjustment.promoDiscountAmount,
+    loyaltyDiscountAmount: adjustment.loyaltyDiscountAmount,
+    loyaltyCardNo: adjustment.loyaltyCardNo,
+    explicitCustomerId: adjustment.customerId,
+  );
+}
+
+/// `true` — без чека, `false` — с чеком, `null` — отмена.
+Future<bool?> _pickReceiptChoice(BuildContext context) {
+  return showDialog<bool>(
+    context: context,
+    useRootNavigator: true,
+    barrierDismissible: false,
+    builder: (ctx) {
+      final theme = Theme.of(ctx);
+      final scheme = theme.colorScheme;
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (!didPop) Navigator.of(ctx).pop();
+        },
+        child: Dialog(
+        backgroundColor: scheme.surfaceContainerLow,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+          child: SizedBox(
+            width: _dialogWidth(ctx, 420),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Печать чека',
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      visualDensity: VisualDensity.compact,
+                      tooltip: 'Отмена',
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                Text(
+                  'Как провести оплату?',
+                  style: theme.textTheme.bodyLarge?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.of(ctx).pop(false),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFF2E7D32),
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size.fromHeight(56),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 12,
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.print_rounded, size: 22),
+                            const SizedBox(height: 4),
+                            Text(
+                              'С чеком',
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () => Navigator.of(ctx).pop(true),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFD32F2F),
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size.fromHeight(56),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 12,
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.print_disabled_outlined, size: 22),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Без чека',
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        ),
+      );
+    },
+  );
+}
+
 class _PaymentDiscountDraft {
   const _PaymentDiscountDraft({
     required this.baseTotal,
@@ -834,6 +1207,8 @@ class _PaymentDiscountDraft {
     required this.loyaltyDiscountAmount,
     required this.loyaltyCardNo,
     this.customer,
+    this.explicitCustomerId,
+    this.skipReceipt = false,
   });
 
   final double baseTotal;
@@ -842,8 +1217,10 @@ class _PaymentDiscountDraft {
   final double loyaltyDiscountAmount;
   final String loyaltyCardNo;
   final LoyaltyCustomer? customer;
+  final int? explicitCustomerId;
+  final bool skipReceipt;
 
-  int? get customerId => customer?.id;
+  int? get customerId => explicitCustomerId ?? customer?.id;
 
   double get totalDiscount => promoDiscountAmount + loyaltyDiscountAmount;
   double get payableAmount => baseTotal - totalDiscount;
@@ -906,6 +1283,24 @@ class _PaymentDiscountDialogState extends State<_PaymentDiscountDialog> {
     super.dispose();
   }
 
+  _PaymentDiscountDraft _buildDraft({
+    required double promoDiscount,
+    required double loyaltyDiscount,
+    bool skipReceipt = false,
+  }) {
+    return _PaymentDiscountDraft(
+      baseTotal: widget.total,
+      promoCode: _promoCodeCtrl.text.trim(),
+      promoDiscountAmount: promoDiscount,
+      loyaltyDiscountAmount: loyaltyDiscount,
+      loyaltyCardNo: _loyaltyCardCtrl.text.trim().isNotEmpty
+          ? _loyaltyCardCtrl.text.trim()
+          : (_selectedCustomer?.cardCode ?? ''),
+      customer: _selectedCustomer,
+      skipReceipt: skipReceipt,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -928,20 +1323,54 @@ class _PaymentDiscountDialogState extends State<_PaymentDiscountDialog> {
 
     return AlertDialog(
       backgroundColor: scheme.surfaceContainerLow,
-      title: Text(
-        'Скидки',
-        style: theme.textTheme.titleLarge?.copyWith(
-          fontWeight: FontWeight.w800,
-        ),
+      titlePadding: const EdgeInsets.fromLTRB(20, 16, 8, 0),
+      title: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Скидки и промокод',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            iconSize: 22,
+            tooltip: 'Без скидки',
+            onPressed: () {
+              _promoCodeCtrl.clear();
+              _promoDiscountCtrl.clear();
+              _loyaltyCardCtrl.clear();
+              _loyaltyDiscountCtrl.clear();
+              _selectedCustomer = null;
+              setState(() {});
+            },
+            icon: const Icon(Icons.money_off_csred_outlined),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            iconSize: 22,
+            tooltip: 'Отмена',
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.close_rounded),
+          ),
+        ],
       ),
-      content: SizedBox(
-        width: _dialogWidth(context, 430),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Сумма до скидки: ${formatSomoni(widget.total)}',
+      content: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.7,
+        ),
+        child: SingleChildScrollView(
+          primary: false,
+          child: SizedBox(
+            width: _dialogWidth(context, 430),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Сумма до скидки: ${formatSomoni(widget.total)}',
               style: theme.textTheme.titleMedium?.copyWith(
                 fontWeight: FontWeight.w700,
               ),
@@ -1092,51 +1521,32 @@ class _PaymentDiscountDialogState extends State<_PaymentDiscountDialog> {
                 ),
               ),
             ],
-            if (selectedCustomer == null && loyaltyDiscountRaw > 0) ...[
-              const SizedBox(height: 6),
-              Text(
-                'Для накопительной скидки нужно выбрать клиента',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: const Color(0xFFD32F2F),
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-          ],
+                if (selectedCustomer == null && loyaltyDiscountRaw > 0) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Для накопительной скидки нужно выбрать клиента',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: const Color(0xFFD32F2F),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Отмена'),
-        ),
-        TextButton(
-          onPressed: () {
-            _promoCodeCtrl.clear();
-            _promoDiscountCtrl.clear();
-            _loyaltyCardCtrl.clear();
-            _loyaltyDiscountCtrl.clear();
-            _selectedCustomer = null;
-            setState(() {});
-          },
-          child: const Text('Без скидки'),
-        ),
         FilledButton(
           onPressed: canSubmit
               ? () => Navigator.of(context).pop(
-                  _PaymentDiscountDraft(
-                    baseTotal: widget.total,
-                    promoCode: _promoCodeCtrl.text.trim(),
-                    promoDiscountAmount: promoDiscount,
-                    loyaltyDiscountAmount: loyaltyDiscount,
-                    loyaltyCardNo: _loyaltyCardCtrl.text.trim().isNotEmpty
-                        ? _loyaltyCardCtrl.text.trim()
-                        : (_selectedCustomer?.cardCode ?? ''),
-                    customer: _selectedCustomer,
-                  ),
-                )
+                    _buildDraft(
+                      promoDiscount: promoDiscount,
+                      loyaltyDiscount: loyaltyDiscount,
+                    ),
+                  )
               : null,
-          child: const Text('Применить'),
+          child: const Text('Сохранить'),
         ),
       ],
     );
@@ -1360,7 +1770,7 @@ class _LoyaltyCustomerCreateDialogState
   @override
   void initState() {
     super.initState();
-    _phoneCtrl.text = kDefaultPhoneDialPrefix;
+    _phoneCtrl.text = TjPhoneDialLockedFormatter.ensureStored(_phoneCtrl.text);
   }
 
   @override
@@ -1373,7 +1783,7 @@ class _LoyaltyCustomerCreateDialogState
   }
 
   Future<void> _save() async {
-    final phone = _phoneCtrl.text.trim();
+    final phone = TjPhoneDialLockedFormatter.ensureStored(_phoneCtrl.text);
     if (phone.isEmpty) {
       setState(() => _error = 'Телефон обязателен');
       return;
@@ -1420,6 +1830,8 @@ class _LoyaltyCustomerCreateDialogState
             const SizedBox(height: 8),
             TextField(
               controller: _phoneCtrl,
+              keyboardType: TextInputType.phone,
+              inputFormatters: const [TjPhoneDialLockedFormatter()],
               decoration: InputDecoration(
                 labelText: 'Телефон *',
                 hintText: '$kDefaultPhoneDialPrefix…',
@@ -1470,6 +1882,120 @@ class _LoyaltyCustomerCreateDialogState
   }
 }
 
+/// Цифровая клавиатура как на экране «Наличные».
+class _PosMoneyKeypad extends StatelessWidget {
+  const _PosMoneyKeypad({
+    required this.onDigit,
+    required this.onDot,
+    required this.onBackspace,
+    this.onExact,
+    this.onClear,
+    this.exactLabel = 'Ровно',
+  });
+
+  final void Function(String digit) onDigit;
+  final VoidCallback onDot;
+  final VoidCallback onBackspace;
+  final VoidCallback? onExact;
+  final VoidCallback? onClear;
+  final String exactLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final digitStyle = theme.textTheme.titleLarge?.copyWith(
+      fontWeight: FontWeight.w800,
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GridView.count(
+          crossAxisCount: 3,
+          shrinkWrap: true,
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
+          childAspectRatio: 1.8,
+          children: [
+            for (final d in ['1', '2', '3', '4', '5', '6', '7', '8', '9'])
+              FilledButton.tonal(
+                onPressed: () => onDigit(d),
+                child: Text(d, style: digitStyle),
+              ),
+            FilledButton.tonal(
+              onPressed: onDot,
+              child: Text('.', style: digitStyle),
+            ),
+            FilledButton.tonal(
+              onPressed: () => onDigit('0'),
+              child: Text('0', style: digitStyle),
+            ),
+            FilledButton.tonal(
+              onPressed: onBackspace,
+              child: const Icon(Icons.backspace_outlined),
+            ),
+          ],
+        ),
+        if (onExact != null || onClear != null) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              if (onExact != null)
+                Expanded(
+                  child: FilledButton.tonal(
+                    onPressed: onExact,
+                    child: Text(exactLabel),
+                  ),
+                ),
+              if (onExact != null && onClear != null) const SizedBox(width: 8),
+              if (onClear != null)
+                Expanded(
+                  child: TextButton(
+                    onPressed: onClear,
+                    child: const Text('Очистить'),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _MoneyRawInputController {
+  String raw = '';
+
+  double get value => _parseMoneyInput(raw) ?? 0.0;
+
+  void appendDigit(String digit) {
+    if (!RegExp(r'^[0-9]$').hasMatch(digit)) return;
+    if (raw == '0') {
+      raw = digit;
+    } else {
+      raw += digit;
+    }
+  }
+
+  void appendDot() {
+    if (raw.contains('.')) return;
+    raw = raw.isEmpty ? '0.' : '$raw.';
+  }
+
+  void backspace() {
+    if (raw.isEmpty) return;
+    raw = raw.substring(0, raw.length - 1);
+  }
+
+  void clear() => raw = '';
+
+  void setValue(double amount) {
+    raw = amount.toStringAsFixed(2);
+  }
+
+  String get display => raw.isEmpty ? '0' : raw;
+}
+
 Future<_CashPaymentDraft?> _pickCashReceived(
   BuildContext context, {
   required double total,
@@ -1480,48 +2006,12 @@ Future<_CashPaymentDraft?> _pickCashReceived(
     builder: (ctx) {
       final theme = Theme.of(ctx);
       final scheme = theme.colorScheme;
-      String rawInput = '';
+      final input = _MoneyRawInputController();
       return StatefulBuilder(
         builder: (context, setState) {
-          final received = _parseMoneyInput(rawInput) ?? 0.0;
+          final received = input.value;
           final change = received - total;
           final canAccept = received >= total && received > 0;
-
-          void appendDigit(String digit) {
-            if (!RegExp(r'^[0-9]$').hasMatch(digit)) return;
-            if (rawInput == '0') {
-              rawInput = digit;
-            } else {
-              rawInput += digit;
-            }
-            setState(() {});
-          }
-
-          void appendDot() {
-            if (rawInput.contains('.')) return;
-            if (rawInput.isEmpty) {
-              rawInput = '0.';
-            } else {
-              rawInput = '$rawInput.';
-            }
-            setState(() {});
-          }
-
-          void backspace() {
-            if (rawInput.isEmpty) return;
-            rawInput = rawInput.substring(0, rawInput.length - 1);
-            setState(() {});
-          }
-
-          void clearAll() {
-            rawInput = '';
-            setState(() {});
-          }
-
-          void setExact() {
-            rawInput = total.toStringAsFixed(2);
-            setState(() {});
-          }
 
           return AlertDialog(
             backgroundColor: scheme.surfaceContainerLow,
@@ -1551,7 +2041,7 @@ Future<_CashPaymentDraft?> _pickCashReceived(
                       border: OutlineInputBorder(),
                     ),
                     child: Text(
-                      rawInput.isEmpty ? '0' : rawInput,
+                      input.display,
                       textAlign: TextAlign.right,
                       style: theme.textTheme.headlineSmall?.copyWith(
                         fontWeight: FontWeight.w800,
@@ -1559,74 +2049,12 @@ Future<_CashPaymentDraft?> _pickCashReceived(
                     ),
                   ),
                   const SizedBox(height: 10),
-                  GridView.count(
-                    crossAxisCount: 3,
-                    shrinkWrap: true,
-                    mainAxisSpacing: 8,
-                    crossAxisSpacing: 8,
-                    childAspectRatio: 1.8,
-                    children: [
-                      for (final d in [
-                        '1',
-                        '2',
-                        '3',
-                        '4',
-                        '5',
-                        '6',
-                        '7',
-                        '8',
-                        '9',
-                      ])
-                        FilledButton.tonal(
-                          onPressed: () => appendDigit(d),
-                          child: Text(
-                            d,
-                            style: theme.textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ),
-                      FilledButton.tonal(
-                        onPressed: appendDot,
-                        child: Text(
-                          '.',
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                      FilledButton.tonal(
-                        onPressed: () => appendDigit('0'),
-                        child: Text(
-                          '0',
-                          style: theme.textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                      FilledButton.tonal(
-                        onPressed: backspace,
-                        child: const Icon(Icons.backspace_outlined),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.tonal(
-                          onPressed: setExact,
-                          child: const Text('Ровно'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextButton(
-                          onPressed: clearAll,
-                          child: const Text('Очистить'),
-                        ),
-                      ),
-                    ],
+                  _PosMoneyKeypad(
+                    onDigit: (d) => setState(() => input.appendDigit(d)),
+                    onDot: () => setState(() => input.appendDot()),
+                    onBackspace: () => setState(() => input.backspace()),
+                    onExact: () => setState(() => input.setValue(total)),
+                    onClear: () => setState(() => input.clear()),
                   ),
                   const SizedBox(height: 12),
                   Text(
@@ -1667,6 +2095,270 @@ Future<_CashPaymentDraft?> _pickCashReceived(
   );
 }
 
+Future<_MixedPaymentDraft?> _pickMixedPayment(
+  BuildContext context, {
+  required double total,
+}) async {
+  final methods = await context
+      .read<LocalPaymentMethodsRepository>()
+      .fetchMethods();
+  final banks = methods.where((m) => m.isActive && m.isBank).toList(growable: false);
+  if (!context.mounted) return null;
+  if (banks.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Нет активных банков. Добавьте способы оплаты в настройках.'),
+      ),
+    );
+    return null;
+  }
+
+  return showDialog<_MixedPaymentDraft>(
+    context: context,
+    useRootNavigator: true,
+    builder: (ctx) {
+      final theme = Theme.of(ctx);
+      final scheme = theme.colorScheme;
+      var step = 0;
+      final cashInput = _MoneyRawInputController();
+      final receivedInput = _MoneyRawInputController();
+      LocalPaymentMethod? selectedBank;
+      double savedCashAmount = 0;
+
+      return StatefulBuilder(
+        builder: (context, setState) {
+          final cashAmount = cashInput.value;
+          final received = receivedInput.raw.isEmpty ? cashAmount : receivedInput.value;
+          final bankAmount = (total - savedCashAmount).clamp(0.0, total).toDouble();
+          final change = received - savedCashAmount;
+
+          final canNextFromCash = cashAmount > 0 && cashAmount < total - 0.009;
+          final canNextFromReceived =
+              received >= savedCashAmount - 0.009 && received > 0;
+          final canConfirm = selectedBank != null && bankAmount > 0.009;
+
+          String stepTitle() => switch (step) {
+            0 => 'Смешанная — наличными',
+            1 => 'Смешанная — получено',
+            _ => 'Смешанная — банк',
+          };
+
+          Widget stepBody() {
+            if (step == 0) {
+              final previewBank = (total - cashAmount).clamp(0.0, total).toDouble();
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Сумма к оплате: ${formatSomoni(total)}',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      color: const Color(0xFF1565C0),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Наличными по счёту',
+                      border: OutlineInputBorder(),
+                    ),
+                    child: Text(
+                      cashInput.display,
+                      textAlign: TextAlign.right,
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _PosMoneyKeypad(
+                    onDigit: (d) => setState(() => cashInput.appendDigit(d)),
+                    onDot: () => setState(() => cashInput.appendDot()),
+                    onBackspace: () => setState(() => cashInput.backspace()),
+                    onClear: () => setState(() => cashInput.clear()),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    cashAmount > 0 && cashAmount < total
+                        ? 'На банк: ${formatSomoni(previewBank)}'
+                        : 'Введите сумму меньше итога — остаток уйдёт на банк',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: cashAmount > 0 && cashAmount < total
+                          ? const Color(0xFF2E7D32)
+                          : scheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              );
+            }
+            if (step == 1) {
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Наличными по счёту: ${formatSomoni(savedCashAmount)}',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    'На банк: ${formatSomoni(bankAmount)}',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      color: const Color(0xFF1565C0),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Получено от клиента',
+                      border: OutlineInputBorder(),
+                    ),
+                    child: Text(
+                      receivedInput.raw.isEmpty
+                          ? savedCashAmount.toStringAsFixed(2)
+                          : receivedInput.display,
+                      textAlign: TextAlign.right,
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _PosMoneyKeypad(
+                    onDigit: (d) => setState(() => receivedInput.appendDigit(d)),
+                    onDot: () => setState(() => receivedInput.appendDot()),
+                    onBackspace: () => setState(() => receivedInput.backspace()),
+                    onExact: () => setState(() => receivedInput.setValue(savedCashAmount)),
+                    onClear: () => setState(() => receivedInput.clear()),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    change < 0
+                        ? 'Не хватает: ${formatSomoni(change.abs())}'
+                        : 'Сдача: ${formatSomoni(change < 0 ? 0 : change)}',
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      color: change < 0
+                          ? const Color(0xFFD32F2F)
+                          : const Color(0xFF2E7D32),
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              );
+            }
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Итого: ${formatSomoni(total)}',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    color: const Color(0xFF1565C0),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Наличные ${formatSomoni(savedCashAmount)} • Банк ${formatSomoni(bankAmount)}',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Куда перевести остаток',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                GridView.count(
+                  crossAxisCount: 2,
+                  shrinkWrap: true,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: 1.6,
+                  children: banks
+                      .map(
+                        (bank) => _PaymentPickTile(
+                          label: bank.title,
+                          icon: Icons.account_balance_rounded,
+                          onTap: () => setState(() => selectedBank = bank),
+                          selected: selectedBank?.id == bank.id,
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
+              ],
+            );
+          }
+
+          return AlertDialog(
+            backgroundColor: scheme.surfaceContainerLow,
+            title: Text(
+              stepTitle(),
+              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            content: SizedBox(
+              width: _dialogWidth(context, 420),
+              child: stepBody(),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  if (step == 0) {
+                    Navigator.of(ctx).pop();
+                  } else {
+                    setState(() => step -= 1);
+                  }
+                },
+                child: Text(step == 0 ? 'Отмена' : 'Назад'),
+              ),
+              if (step < 2)
+                FilledButton(
+                  onPressed: (step == 0 && canNextFromCash) ||
+                          (step == 1 && canNextFromReceived)
+                      ? () {
+                          setState(() {
+                            if (step == 0) {
+                              savedCashAmount = cashAmount;
+                              receivedInput.clear();
+                              step = 1;
+                            } else {
+                              step = 2;
+                            }
+                          });
+                        }
+                      : null,
+                  child: const Text('Далее'),
+                )
+              else
+                FilledButton(
+                  onPressed: canConfirm
+                      ? () => Navigator.of(ctx).pop(
+                          _MixedPaymentDraft(
+                            cashAmount: savedCashAmount,
+                            bankMethod: selectedBank!,
+                            bankAmount: bankAmount,
+                            cashReceived: received,
+                            cashChange: change < 0 ? 0 : change,
+                          ),
+                        )
+                      : null,
+                  child: const Text('Подтвердить'),
+                ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
+
 double _dialogWidth(BuildContext context, double preferred) {
   return math.min(preferred, MediaQuery.sizeOf(context).width * 0.94);
 }
@@ -1676,11 +2368,13 @@ class _PaymentPickTile extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.onTap,
+    this.selected = false,
   });
 
   final String label;
   final IconData icon;
   final VoidCallback onTap;
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -1692,9 +2386,12 @@ class _PaymentPickTile extends StatelessWidget {
       onTap: onTap,
       child: Ink(
         decoration: BoxDecoration(
-          color: scheme.surfaceContainer,
+          color: selected ? scheme.primaryContainer : scheme.surfaceContainer,
           borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: scheme.outlineVariant),
+          border: Border.all(
+            color: selected ? scheme.primary : scheme.outlineVariant,
+            width: selected ? 2 : 1,
+          ),
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
@@ -1720,58 +2417,106 @@ class _PaymentPickTile extends StatelessWidget {
   }
 }
 
-/// Оплата открытого счёта со списка столов.
-Future<void> payOpenBill(
+/// Итог проведения оплаты на кассе (печать чека выполняется локальным сервером вместе с оплатой).
+final class PayPosOrderOutcome {
+  const PayPosOrderOutcome({required this.paid, this.paymentMethodTitle});
+
+  final bool paid;
+  final String? paymentMethodTitle;
+}
+
+/// Оплата заказа по `orderId`: те же диалоги, что у открытого счёта (способ, скидки, наличные).
+///
+/// Используется для заказов на экране кассира и для счетов по столам ([payOpenBill]).
+Future<PayPosOrderOutcome> payPosOrderAtCashier(
   BuildContext context, {
-  required PosTableBill bill,
+  required String orderId,
+  required double orderTotal,
+  required String paidSummarySubject,
 }) async {
-  if (bill.isPaid || !context.mounted) return;
+  if (!context.mounted) {
+    return const PayPosOrderOutcome(paid: false);
+  }
   final canProcessPayments =
       context.read<AuthBloc>().state.user?.canProcessPosPayments == true;
   if (!canProcessPayments) {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Оплату может принимать только касса')),
     );
-    return;
+    return const PayPosOrderOutcome(paid: false);
   }
+  final paymentDiscount = _orderPaymentAdjustmentsById[orderId];
+  final payableTotal = paymentDiscount?.payableAmount ?? orderTotal;
   LocalPaymentMethod? method;
   try {
     method = await _pickPaymentMethod(context);
   } catch (e) {
-    if (!context.mounted) return;
+    if (!context.mounted) {
+      return const PayPosOrderOutcome(paid: false);
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Не удалось загрузить способы оплаты: $e')),
     );
-    return;
+    return const PayPosOrderOutcome(paid: false);
   }
-  if (!context.mounted || method == null) return;
-  final paymentDiscount = await _pickPaymentDiscounts(
-    context,
-    total: bill.total,
-  );
-  if (!context.mounted || paymentDiscount == null) return;
-  final payableTotal = paymentDiscount.payableAmount;
+  if (!context.mounted || method == null) {
+    return const PayPosOrderOutcome(paid: false);
+  }
   _CashPaymentDraft? cashDraft;
-  if (method.isCash) {
+  _MixedPaymentDraft? mixedDraft;
+  if (method.code == 'mixed') {
+    mixedDraft = await _pickMixedPayment(context, total: payableTotal);
+    if (!context.mounted || mixedDraft == null) {
+      return const PayPosOrderOutcome(paid: false);
+    }
+  } else if (method.isCash) {
     cashDraft = await _pickCashReceived(context, total: payableTotal);
-    if (!context.mounted || cashDraft == null) return;
+    if (!context.mounted || cashDraft == null) {
+      return const PayPosOrderOutcome(paid: false);
+    }
   }
-  final progressOverlay = _showBlockingPaymentOverlay(context);
+  await Future<void>.delayed(Duration.zero);
+  if (!context.mounted) {
+    return const PayPosOrderOutcome(paid: false);
+  }
+  final skipReceipt = await _pickReceiptChoice(context);
+  if (!context.mounted || skipReceipt == null) {
+    return const PayPosOrderOutcome(paid: false);
+  }
+  final progressOverlay = _showBlockingPaymentOverlay(
+    context,
+    skipReceipt: skipReceipt,
+  );
   late final _PaymentAttemptResult paymentResult;
   try {
-    paymentResult = await _runLocalPayment(
-      context,
-      orderId: bill.id,
-      total: payableTotal,
-      paymentMethod: method,
-      cashDraft: cashDraft,
-      discountDraft: paymentDiscount,
-    );
+    paymentResult = mixedDraft != null
+        ? await _runMixedLocalPayment(
+            context,
+            orderId: orderId,
+            total: payableTotal,
+            mixed: mixedDraft,
+            discountDraft: paymentDiscount,
+            skipReceipt: skipReceipt,
+          )
+        : await _runLocalPayment(
+            context,
+            orderId: orderId,
+            total: payableTotal,
+            paymentMethod: method,
+            cashDraft: cashDraft,
+            discountDraft: paymentDiscount,
+            skipReceipt: skipReceipt,
+          );
   } finally {
     progressOverlay?.close();
   }
+  if (paymentResult.accepted) {
+    _orderPaymentAdjustmentsById.remove(orderId);
+  }
   if (!paymentResult.accepted) {
-    if (!context.mounted) return;
+    if (!context.mounted) {
+      return const PayPosOrderOutcome(paid: false);
+    }
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -1779,23 +2524,25 @@ Future<void> payOpenBill(
         ),
       ),
     );
-    return;
+    return const PayPosOrderOutcome(paid: false);
   }
-  if (!context.mounted) return;
-  context.read<PosHallOrdersCubit>().markPaid(
-    bill.id,
-    paymentMethod: method.title,
-  );
-  if (!context.mounted) return;
+  if (!context.mounted) {
+    return PayPosOrderOutcome(
+      paid: true,
+      paymentMethodTitle: mixedDraft?.summaryTitle ?? method.title,
+    );
+  }
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
       content: Text(
         [
-          'Оплачено: ${bill.tableSummary} • ${formatSomoni(bill.total)} • ${method.title}',
+          'Оплачено: $paidSummarySubject • ${formatSomoni(orderTotal)} • ${mixedDraft?.summaryTitle ?? method.title}',
+          if (skipReceipt) 'Без печати чека',
+          if (mixedDraft != null) mixedDraft.summaryTitle,
           if (cashDraft != null)
             'Получено ${formatSomoni(cashDraft.received)}, сдача ${formatSomoni(cashDraft.change)}',
-          if (paymentDiscount.totalDiscount > 0)
-            'Скидка ${formatSomoni(paymentDiscount.totalDiscount)} (${formatSomoni(bill.total)} -> ${formatSomoni(payableTotal)})',
+          if (paymentDiscount != null && paymentDiscount.totalDiscount > 0)
+            'Скидка ${formatSomoni(paymentDiscount.totalDiscount)} (${formatSomoni(orderTotal)} -> ${formatSomoni(payableTotal)})',
           if (paymentResult.message != null &&
               paymentResult.message!.isNotEmpty)
             paymentResult.message!,
@@ -1812,6 +2559,90 @@ Future<void> payOpenBill(
       errorMessage: paymentResult.hardwareErrorMessage,
     );
   }
+  return PayPosOrderOutcome(
+    paid: true,
+    paymentMethodTitle: mixedDraft?.summaryTitle ?? method.title,
+  );
+}
+
+/// Оплата открытого счёта со списка столов.
+Future<void> payOpenBill(
+  BuildContext context, {
+  required PosTableBill bill,
+}) async {
+  if (bill.isPaid || !context.mounted) return;
+  final outcome = await payPosOrderAtCashier(
+    context,
+    orderId: bill.id,
+    orderTotal: bill.total,
+    paidSummarySubject: bill.tableSummary,
+  );
+  if (!outcome.paid || !context.mounted) return;
+  context.read<PosHallOrdersCubit>().markPaid(
+    bill.id,
+    paymentMethod: outcome.paymentMethodTitle,
+  );
+}
+
+Future<_PaymentAttemptResult> _runMixedLocalPayment(
+  BuildContext context, {
+  required String orderId,
+  required double total,
+  required _MixedPaymentDraft mixed,
+  _PaymentDiscountDraft? discountDraft,
+  bool skipReceipt = false,
+}) async {
+  final repo = context.read<LocalPaymentsRepository>();
+  final idempotencyKey = '${orderId}_${DateTime.now().millisecondsSinceEpoch}';
+  final splits = <Map<String, dynamic>>[
+    {
+      'paymentMethod': 'cash',
+      'amount': mixed.cashAmount,
+      if (mixed.cashReceived != null) 'cashReceived': mixed.cashReceived,
+      if (mixed.cashChange != null) 'cashChange': mixed.cashChange,
+    },
+    {
+      'paymentMethod': mixed.bankMethod.code,
+      'amount': mixed.bankAmount,
+      if (mixed.bankMethod.id != null) 'paymentMethodId': mixed.bankMethod.id,
+    },
+  ];
+  try {
+    final result = await repo.acceptPayment(
+      orderId: orderId,
+      amount: total,
+      paymentMethod: 'mixed',
+      idempotencyKey: idempotencyKey,
+      paymentSplits: splits,
+      promoCode: discountDraft?.promoCode,
+      promoDiscountAmount: discountDraft?.promoDiscountAmount,
+      loyaltyDiscountAmount: discountDraft?.loyaltyDiscountAmount,
+      loyaltyCardNo: discountDraft?.loyaltyCardNo,
+      customerId: discountDraft?.customerId,
+      skipReceipt: skipReceipt,
+    );
+    final hardwareHint = result.hardware?.buildHint();
+    final baseMessage = result.idempotent
+        ? 'Смешанная оплата уже была подтверждена ранее'
+        : 'Смешанная оплата подтверждена';
+    return _PaymentAttemptResult(
+      accepted: true,
+      message: (hardwareHint != null && hardwareHint.isNotEmpty)
+          ? '$baseMessage • $hardwareHint'
+          : baseMessage,
+      retryPrintAvailable: !skipReceipt &&
+          result.hardware?.attempted == true &&
+          (result.hardware?.error?.trim().isNotEmpty == true),
+      hardwareErrorMessage: result.hardware?.error,
+      retryOrderId: orderId,
+      retryTotal: total,
+      retryPaymentMethod: 'mixed',
+    );
+  } on ApiException catch (e) {
+    return _PaymentAttemptResult(accepted: false, message: e.message);
+  } catch (e) {
+    return _PaymentAttemptResult(accepted: false, message: e.toString());
+  }
 }
 
 Future<_PaymentAttemptResult> _runLocalPayment(
@@ -1821,9 +2652,10 @@ Future<_PaymentAttemptResult> _runLocalPayment(
   required LocalPaymentMethod paymentMethod,
   _CashPaymentDraft? cashDraft,
   _PaymentDiscountDraft? discountDraft,
+  bool skipReceipt = false,
 }) async {
   final repo = context.read<LocalPaymentsRepository>();
-  final method = paymentMethod.isCash ? 'cash' : 'bank';
+  final method = paymentMethod.isCash ? 'cash' : paymentMethod.code;
   final idempotencyKey = '${orderId}_${DateTime.now().millisecondsSinceEpoch}';
   try {
     final result = await repo.acceptPayment(
@@ -1839,6 +2671,7 @@ Future<_PaymentAttemptResult> _runLocalPayment(
       loyaltyDiscountAmount: discountDraft?.loyaltyDiscountAmount,
       loyaltyCardNo: discountDraft?.loyaltyCardNo,
       customerId: discountDraft?.customerId,
+      skipReceipt: skipReceipt,
     );
     final hardwareHint = result.hardware?.buildHint();
     final baseMessage = result.idempotent
@@ -1849,7 +2682,7 @@ Future<_PaymentAttemptResult> _runLocalPayment(
       message: (hardwareHint != null && hardwareHint.isNotEmpty)
           ? '$baseMessage • $hardwareHint'
           : baseMessage,
-      retryPrintAvailable:
+      retryPrintAvailable: !skipReceipt &&
           result.hardware?.attempted == true &&
           (result.hardware?.error?.trim().isNotEmpty == true),
       hardwareErrorMessage: result.hardware?.error,
@@ -1865,8 +2698,9 @@ Future<_PaymentAttemptResult> _runLocalPayment(
 }
 
 _BlockingPaymentOverlayHandle? _showBlockingPaymentOverlay(
-  BuildContext context,
-) {
+  BuildContext context, {
+  bool skipReceipt = false,
+}) {
   final overlay = Overlay.maybeOf(context, rootOverlay: true);
   if (overlay == null) return null;
   final entry = OverlayEntry(
@@ -1894,7 +2728,9 @@ _BlockingPaymentOverlayHandle? _showBlockingPaymentOverlay(
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      'Подтверждаем оплату и печатаем чек...',
+                      skipReceipt
+                          ? 'Подтверждаем оплату...'
+                          : 'Подтверждаем оплату и печатаем чек...',
                       style: Theme.of(ctx).textTheme.titleSmall,
                     ),
                   ],
@@ -1939,7 +2775,7 @@ void _showHardwareRetrySnackBar(
         label: 'Повторить печать',
         onPressed: () {
           unawaited(
-            _retryReceiptPrint(
+            retryPosReceiptPrint(
               context,
               orderId: orderId,
               total: total,
@@ -1952,7 +2788,8 @@ void _showHardwareRetrySnackBar(
   );
 }
 
-Future<void> _retryReceiptPrint(
+/// Повторная печать фискального чека по уже оплаченному заказу (локальный сервер печати).
+Future<void> retryPosReceiptPrint(
   BuildContext context, {
   required String orderId,
   required double total,
@@ -1993,17 +2830,94 @@ Future<_OrderSyncResult> _syncLocalOrder(
   required String orderTypeLabel,
   required PosTableZone? tableZone,
   required int? tableNumber,
+  Map<String, int>? appendBaselineQtyByLineKey,
 }) async {
   final repo = context.read<LocalOrdersRepository>();
-  final lines = cart.sortedLines
-      .map(
-        (l) => LocalOrderLineInput(
-          menuItemId: l.item.id,
-          quantity: l.quantity,
-          unitPrice: l.item.price,
-        ),
-      )
-      .toList(growable: false);
+
+  final List<LocalOrderLineInput> lines;
+  final baseline = appendBaselineQtyByLineKey;
+  if (baseline != null && baseline.isNotEmpty) {
+    final cartQtyByKey = <String, int>{
+      for (final l in cart.sortedLines) l.lineKey: l.quantity,
+    };
+    var didPatch = false;
+    for (final e in baseline.entries) {
+      final lineKey = e.key;
+      final baseQty = e.value;
+      final cartQty = cartQtyByKey[lineKey] ?? 0;
+      if (cartQty < baseQty) {
+        String? menuItemId;
+        for (final l in cart.sortedLines) {
+          if (l.lineKey == lineKey) {
+            menuItemId = l.item.id;
+            break;
+          }
+        }
+        menuItemId ??= lineKey.split('::').first;
+        final mid = menuItemId;
+        if (mid == null || mid.isEmpty) continue;
+        try {
+          await repo.patchOrderLineQuantity(
+            orderId: orderId,
+            menuItemId: mid,
+            quantity: cartQty,
+          );
+          didPatch = true;
+        } on ApiException catch (e) {
+          return _OrderSyncResult(
+            synced: false,
+            message: e.message,
+          );
+        } catch (e) {
+          return _OrderSyncResult(
+            synced: false,
+            message: e.toString(),
+          );
+        }
+      }
+    }
+    lines = [];
+    for (final line in cart.sortedLines) {
+      final baseQty = baseline[line.lineKey] ?? 0;
+      final delta = line.quantity - baseQty;
+      if (delta > 0) {
+        lines.add(
+          LocalOrderLineInput(
+            menuItemId: line.item.id,
+            quantity: delta,
+            unitPrice: line.item.price,
+            lineKey: line.lineKey,
+            modifiers: line.modifiers.map((m) => m.toJson()).toList(),
+          ),
+        );
+      } else if (delta < 0) {
+        return _OrderSyncResult(
+          synced: false,
+          message:
+              'Несогласованное состояние корзины: повторите после обновления.',
+        );
+      }
+    }
+    if (lines.isEmpty && !didPatch) {
+      return _OrderSyncResult(
+        synced: false,
+        message:
+            'Нет изменений для сохранения: добавьте позиции или уменьшите количество по счёту.',
+      );
+    }
+  } else {
+    lines = cart.sortedLines
+        .map(
+          (l) => LocalOrderLineInput(
+            menuItemId: l.item.id,
+            quantity: l.quantity,
+            unitPrice: l.item.price,
+            lineKey: l.lineKey,
+            modifiers: l.modifiers.map((m) => m.toJson()).toList(),
+          ),
+        )
+        .toList(growable: false);
+  }
 
   final tableLabel = tableNumber != null
       ? (tableZone != null
@@ -2012,18 +2926,31 @@ Future<_OrderSyncResult> _syncLocalOrder(
       : null;
 
   try {
-    final result = await repo.createOrUpdateOrder(
-      orderId: orderId,
-      lines: lines,
-      totalAmount: cart.total,
-      orderType: orderTypeLabel,
-      tableLabel: tableLabel,
-    );
-    return _OrderSyncResult(
-      synced: true,
-      message: result.created
-          ? 'Локальный заказ создан: ${result.number}'
-          : 'Локальный заказ обновлен: ${result.number}',
+    if (lines.isNotEmpty) {
+      final result = await repo.createOrUpdateOrder(
+        orderId: orderId,
+        lines: lines,
+        totalAmount: cart.total,
+        orderType: orderTypeLabel,
+        tableLabel: tableLabel,
+      );
+      return _OrderSyncResult(
+        synced: true,
+        message: result.created
+            ? 'Локальный заказ создан: ${result.number}'
+            : 'Локальный заказ обновлен: ${result.number}',
+      );
+    }
+    if (appendBaselineQtyByLineKey != null &&
+        appendBaselineQtyByLineKey.isNotEmpty) {
+      return const _OrderSyncResult(
+        synced: true,
+        message: 'Счёт обновлён на сервере',
+      );
+    }
+    return const _OrderSyncResult(
+      synced: false,
+      message: 'Нет позиций для синхронизации',
     );
   } on ApiException catch (e) {
     return _OrderSyncResult(

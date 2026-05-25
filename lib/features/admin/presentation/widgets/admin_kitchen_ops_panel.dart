@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/features/admin/data/admin_reports_repository.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_server_env_section.dart';
 
 enum _KitchenAuditSort { best, slow }
 
@@ -20,9 +21,11 @@ class _AdminKitchenOpsPanelState extends State<AdminKitchenOpsPanel> {
   late DateTime _to;
   late Future<AdminKitchenOpsReport> _future;
   late Future<AdminSyncStatus> _syncFuture;
+  late Future<List<AdminSiteOrderImportFailureRow>> _failuresFuture;
   bool _onlyKitchenRole = true;
   _KitchenAuditSort _kitchenSort = _KitchenAuditSort.best;
   bool _syncBusy = false;
+  bool _showResolvedFailures = false;
 
   @override
   void initState() {
@@ -32,6 +35,7 @@ class _AdminKitchenOpsPanelState extends State<AdminKitchenOpsPanel> {
     _to = DateTime(now.year, now.month, now.day);
     _future = _load();
     _syncFuture = _loadSyncStatus();
+    _failuresFuture = _loadSiteOrderFailures();
   }
 
   String _fmtDate(DateTime d) {
@@ -115,14 +119,23 @@ class _AdminKitchenOpsPanelState extends State<AdminKitchenOpsPanel> {
         );
   }
 
+  Future<List<AdminSiteOrderImportFailureRow>> _loadSiteOrderFailures() {
+    return context.read<AdminReportsRepository>().fetchSiteOrderFailures(
+          limit: 120,
+          includeResolved: _showResolvedFailures,
+        );
+  }
+
   Future<void> _reload() async {
     final f = _load();
     final sf = _loadSyncStatus();
+    final ff = _loadSiteOrderFailures();
     setState(() {
       _future = f;
       _syncFuture = sf;
+      _failuresFuture = ff;
     });
-    await Future.wait([f, sf]);
+    await Future.wait([f, sf, ff]);
   }
 
   Future<void> _reloadSyncOnly() async {
@@ -131,6 +144,14 @@ class _AdminKitchenOpsPanelState extends State<AdminKitchenOpsPanel> {
       _syncFuture = sf;
     });
     await sf;
+  }
+
+  Future<void> _reloadFailuresOnly() async {
+    final ff = _loadSiteOrderFailures();
+    setState(() {
+      _failuresFuture = ff;
+    });
+    await ff;
   }
 
   Future<void> _runSyncAction(Future<AdminSyncActionResult> Function() action) async {
@@ -153,6 +174,7 @@ class _AdminKitchenOpsPanelState extends State<AdminKitchenOpsPanel> {
         setState(() => _syncBusy = false);
       }
       await _reloadSyncOnly();
+      await _reloadFailuresOnly();
     }
   }
 
@@ -339,6 +361,10 @@ class _AdminKitchenOpsPanelState extends State<AdminKitchenOpsPanel> {
                               Text(
                                 'Pull worker: ${_yesNo(sync.pullWorker.enabled)} | interval: ${sync.pullWorker.intervalMs} ms | endpoint: ${_yesNo(sync.pullWorker.endpointConfigured)}',
                               ),
+                              if (sync.siteOrdersWorker != null)
+                                Text(
+                                  'Site-orders worker: ${_yesNo(sync.siteOrdersWorker!.enabled)} | interval: ${sync.siteOrdersWorker!.intervalMs} ms | endpoint: ${_yesNo(sync.siteOrdersWorker!.endpointConfigured)}',
+                                ),
                               const SizedBox(height: 4),
                               Text('Push last success: ${sync.pushState?.lastSuccessAt ?? '—'}'),
                               Text('Pull last success: ${sync.pullState?.lastSuccessAt ?? '—'}'),
@@ -391,7 +417,121 @@ class _AdminKitchenOpsPanelState extends State<AdminKitchenOpsPanel> {
                               icon: const Icon(Icons.refresh_rounded),
                               label: const Text('Обновить статус'),
                             ),
+                            OutlinedButton.icon(
+                              onPressed: _syncBusy
+                                  ? null
+                                  : () => _runSyncAction(
+                                        () => context
+                                            .read<AdminReportsRepository>()
+                                            .retrySiteOrderFailures(),
+                                      ),
+                              icon: const Icon(Icons.restart_alt_rounded),
+                              label: const Text('Retry site-orders'),
+                            ),
                           ],
+                        ),
+                        const SizedBox(height: 10),
+                        const AdminServerEnvSection(),
+                        const SizedBox(height: 10),
+                        FutureBuilder<List<AdminSiteOrderImportFailureRow>>(
+                          future: _failuresFuture,
+                          builder: (context, failuresSnapshot) {
+                            if (failuresSnapshot.connectionState != ConnectionState.done) {
+                              return const Text('Загрузка проблемных сайт-заказов...');
+                            }
+                            if (failuresSnapshot.hasError) {
+                              return Text('site-order-failures: ${failuresSnapshot.error}');
+                            }
+                            final failures = failuresSnapshot.data ?? const [];
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      'Проблемные сайт-заказы: ${failures.length}',
+                                      style: text.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                                    ),
+                                    const Spacer(),
+                                    FilterChip(
+                                      selected: _showResolvedFailures,
+                                      onSelected: (v) async {
+                                        setState(() => _showResolvedFailures = v);
+                                        await _reloadFailuresOnly();
+                                      },
+                                      label: const Text('Показывать resolved'),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    IconButton(
+                                      tooltip: 'Обновить список',
+                                      onPressed: _syncBusy ? null : _reloadFailuresOnly,
+                                      icon: const Icon(Icons.refresh_rounded),
+                                    ),
+                                  ],
+                                ),
+                                if (failures.isEmpty)
+                                  Text(
+                                    'Инцидентов нет. Если импорт/маппинг сломается, здесь появится причина и ID заказа.',
+                                    style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                                  ),
+                                for (final row in failures.take(12))
+                                  Container(
+                                    margin: const EdgeInsets.only(top: 8),
+                                    decoration: BoxDecoration(
+                                      color: row.resolvedAt == null
+                                          ? scheme.errorContainer.withValues(alpha: 0.28)
+                                          : scheme.surfaceContainerHighest.withValues(alpha: 0.18),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(
+                                        color: row.resolvedAt == null
+                                            ? scheme.error.withValues(alpha: 0.35)
+                                            : scheme.outlineVariant.withValues(alpha: 0.35),
+                                      ),
+                                    ),
+                                    child: ListTile(
+                                      dense: true,
+                                      title: Text(
+                                        'Global order #${row.globalSiteOrderId} • ${row.reason}',
+                                        style: const TextStyle(fontWeight: FontWeight.w700),
+                                      ),
+                                      subtitle: Text(
+                                        '${row.detail ?? 'Без деталей'}\n'
+                                        'attempts=${row.attemptCount}, last=${row.lastSeenAt ?? '—'}, resolved=${row.resolvedAt ?? 'нет'}',
+                                      ),
+                                      trailing: Wrap(
+                                        spacing: 6,
+                                        children: [
+                                          OutlinedButton(
+                                            onPressed: _syncBusy
+                                                ? null
+                                                : () => _runSyncAction(
+                                                      () => context
+                                                          .read<AdminReportsRepository>()
+                                                          .retrySiteOrderFailures(
+                                                            globalSiteOrderId: row.globalSiteOrderId,
+                                                          ),
+                                                    ),
+                                            child: const Text('Retry'),
+                                          ),
+                                          OutlinedButton(
+                                            onPressed: _syncBusy || row.resolvedAt != null
+                                                ? null
+                                                : () => _runSyncAction(
+                                                      () => context
+                                                          .read<AdminReportsRepository>()
+                                                          .resolveSiteOrderFailure(
+                                                            globalSiteOrderId: row.globalSiteOrderId,
+                                                          ),
+                                                    ),
+                                            child: const Text('Resolve'),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            );
+                          },
                         ),
                       ],
                     ),

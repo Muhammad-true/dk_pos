@@ -8,8 +8,10 @@ import 'package:reorderable_grid_view/reorderable_grid_view.dart';
 import 'package:dk_digitial_menu/widgets/robust_network_image.dart';
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/layout/window_layout.dart';
+import 'package:dk_pos/app/pos_catalog_grid/pos_catalog_grid_cubit.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/menu/bloc/menu_bloc.dart';
+import 'package:dk_pos/features/pos/bloc/pos_hall_orders_cubit.dart';
 import 'package:dk_pos/features/menu/bloc/menu_event.dart';
 import 'package:dk_pos/features/menu/bloc/menu_state.dart';
 import 'package:dk_pos/features/pos/data/pos_catalog_local_order_store.dart';
@@ -17,6 +19,7 @@ import 'package:dk_pos/l10n/context_l10n.dart';
 import 'package:dk_pos/shared/shared.dart';
 
 import 'pos_menu_item_card.dart';
+import 'pos_modifier_sheet.dart';
 
 /// Иерархия категорий: назад, крошки, дочерние узлы, товары текущего уровня.
 ///
@@ -29,11 +32,15 @@ class PosCatalogBody extends StatefulWidget {
     required this.menu,
     required this.catalogPaneWidth,
     required this.onAddItem,
+    this.orderAppendMode = false,
   });
 
   final MenuState menu;
   final double catalogPaneWidth;
   final Future<void> Function(PosMenuItem item) onAddItem;
+
+  /// Режим «добавить к открытому счёту» — выше карточки, уже сетка.
+  final bool orderAppendMode;
 
   @override
   State<PosCatalogBody> createState() => _PosCatalogBodyState();
@@ -144,11 +151,17 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
     final sideCats = _orderedRootCategories(menu);
     final cats = menu.currentChildCategories;
     final itemsOrdered = _orderedItems(menu);
-    final crossCount = layout.posCatalogGridColumns(
+    final gridSettings = context.watch<PosCatalogGridCubit>().state;
+    final crossCount = gridSettings.columnsFor(
       catalogPaneWidth: widget.catalogPaneWidth,
       sideCategoryNav: wideCat,
     );
-    final aspect = layout.posCatalogGridAspectRatio(widget.catalogPaneWidth);
+    final aspect = gridSettings.aspectRatioFor(
+      catalogPaneWidth: widget.catalogPaneWidth,
+      orderAppendMode: widget.orderAppendMode,
+    );
+    final appendDraft =
+        widget.orderAppendMode ? context.watch<PosHallOrdersCubit>().state.openBillAppendDraft : null;
 
     final navHeader = wideCat
         ? Padding(
@@ -240,26 +253,7 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
 
     Widget rightPane() {
       if (itemsOrdered.isNotEmpty) {
-        if (!wideCat) return productGrid();
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: const [
-                  _PosQuickFilterChip(icon: Icons.local_fire_department_rounded, label: 'Хиты'),
-                  _PosQuickFilterChip(icon: Icons.timer_outlined, label: 'Быстро'),
-                  _PosQuickFilterChip(icon: Icons.star_outline_rounded, label: 'Комбо'),
-                  _PosQuickFilterChip(icon: Icons.restaurant_menu_rounded, label: 'Добавки'),
-                ],
-              ),
-            ),
-            Expanded(child: productGrid()),
-          ],
-        );
+        return productGrid();
       }
       if (menu.pathIds.isNotEmpty) {
         return Center(
@@ -511,33 +505,68 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
       child: catNavContent(),
     );
 
+    Widget appendBanner() {
+      if (appendDraft == null) return const SizedBox.shrink();
+      return Material(
+        color: scheme.primaryContainer.withValues(alpha: 0.45),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              Icon(Icons.add_shopping_cart_rounded, color: scheme.primary, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Добавление к счёту: ${appendDraft.tableSummary}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     if (wideCat) {
-      return Row(
+      return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            width: WindowLayout.posCategoryRailWidth,
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerLowest,
-              border: Border(
-                right: BorderSide(color: scheme.outlineVariant),
-              ),
-            ),
-            child: Column(
+          appendBanner(),
+          Expanded(
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                navHeader,
-                Expanded(child: catNav),
+                Container(
+                  width: WindowLayout.posCategoryRailWidth,
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerLowest,
+                    border: Border(
+                      right: BorderSide(color: scheme.outlineVariant),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      navHeader,
+                      Expanded(child: catNav),
+                    ],
+                  ),
+                ),
+                Expanded(child: rightPane()),
               ],
             ),
           ),
-          Expanded(child: rightPane()),
         ],
       );
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        appendBanner(),
         navHeader,
         catNav,
         Expanded(child: rightPane()),
@@ -606,7 +635,6 @@ class _CategoryAvatar extends StatelessWidget {
                   url: imageUrl,
                   fit: BoxFit.cover,
                   cacheWidth: px,
-                  cacheHeight: px,
                   errorWidget: _CategoryAvatarFallback(
                     icon: icon,
                     compact: compact,
@@ -719,168 +747,31 @@ List<Color> _categoryCardColors(int index) {
   return palette[index % palette.length];
 }
 
-class _PosQuickFilterChip extends StatelessWidget {
-  const _PosQuickFilterChip({
-    required this.icon,
-    required this.label,
-  });
-
-  final IconData icon;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 18, color: scheme.primary),
-          const SizedBox(width: 8),
-          Text(
-            label,
-            style: theme.textTheme.labelLarge?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ModifierOption extends StatelessWidget {
-  const _ModifierOption({
-    required this.label,
-    this.selected = false,
-    this.icon,
-  });
-
-  final String label;
-  final bool selected;
-  final IconData? icon;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: selected ? scheme.primary.withValues(alpha: 0.16) : scheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(
-          color: selected ? scheme.primary.withValues(alpha: 0.6) : scheme.outlineVariant,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (icon != null) ...[
-            Icon(icon, size: 16, color: selected ? scheme.primary : scheme.onSurfaceVariant),
-            const SizedBox(width: 6),
-          ],
-          Text(
-            label,
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: selected ? scheme.primary : scheme.onSurface,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 Future<void> _showItemConfigDialog(BuildContext context, PosMenuItem item) {
+  if (item.hasModifiers) {
+    return showPosModifierSheet(context, item: item);
+  }
   final theme = Theme.of(context);
-  final scheme = theme.colorScheme;
-
+  final desc = item.description?.trim();
+  final comp = item.composition?.trim();
   return showDialog<void>(
     context: context,
-    builder: (context) {
-      return AlertDialog(
-        backgroundColor: scheme.surfaceContainerLow,
-        title: Text(
-          item.name,
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w800,
-          ),
+    builder: (context) => AlertDialog(
+      title: Text(item.name),
+      content: Text(
+        [
+          if (desc != null && desc.isNotEmpty) desc,
+          if (comp != null && comp.isNotEmpty) 'Состав: $comp',
+          if ((desc == null || desc.isEmpty) && (comp == null || comp.isEmpty))
+            'Для этого блюда нет дополнительных настроек.',
+        ].join('\n\n'),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Закрыть'),
         ),
-        content: SizedBox(
-          width: math.min(420, MediaQuery.sizeOf(context).width * 0.94),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Настройка позиции',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Прожарка',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _ModifierOption(label: 'Medium', selected: true),
-                    _ModifierOption(label: 'Well Done'),
-                    _ModifierOption(label: 'Rare'),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  'Добавки',
-                  style: theme.textTheme.labelLarge?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _ModifierOption(label: 'Бекон', icon: Icons.add),
-                    _ModifierOption(label: 'Халапеньо', icon: Icons.add),
-                    _ModifierOption(label: 'Сыр', icon: Icons.add),
-                    _ModifierOption(label: 'Без лука', icon: Icons.close),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Отмена'),
-          ),
-          FilledButton.icon(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.add_shopping_cart_rounded),
-            label: const Text('Добавить'),
-          ),
-        ],
-      );
-    },
+      ],
+    ),
   );
 }

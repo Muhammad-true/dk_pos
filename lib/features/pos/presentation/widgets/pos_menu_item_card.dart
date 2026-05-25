@@ -42,7 +42,7 @@ class PosMenuItemCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Expanded(
-                flex: 6,
+                flex: 8,
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
@@ -64,40 +64,43 @@ class PosMenuItemCard extends StatelessWidget {
                               color: scheme.secondary,
                             ),
                           )
-                        : Padding(
-                            padding: const EdgeInsets.fromLTRB(6, 8, 6, 0),
-                            child: LayoutBuilder(
+                        : LayoutBuilder(
                               builder: (context, constraints) {
                                 final dpr = MediaQuery.devicePixelRatioOf(context);
-                                final cw =
+                                final pxW =
                                     (constraints.maxWidth * dpr).round().clamp(1, 4096);
-                                final ch =
+                                final pxH =
                                     (constraints.maxHeight * dpr).round().clamp(1, 4096);
-                                return RobustNetworkImage(
-                                  url: url,
-                                  fit: BoxFit.contain,
-                                  cacheWidth: cw,
-                                  cacheHeight: ch,
-                                  errorWidget: DecoratedBox(
-                                    decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                        colors: [
-                                          scheme.surfaceContainerHighest,
-                                          scheme.surfaceContainerHigh,
-                                        ],
+                                // Одна сторона — пропорции как на сайте (object-fit: contain).
+                                final decodeSide = pxW > pxH ? pxW : pxH;
+                                return ColoredBox(
+                                  color: scheme.surfaceContainerHighest,
+                                  child: RobustNetworkImage(
+                                    url: url,
+                                    fit: BoxFit.contain,
+                                    alignment: Alignment.center,
+                                    cacheWidth: decodeSide,
+                                    filterQuality: FilterQuality.high,
+                                    errorWidget: DecoratedBox(
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          begin: Alignment.topLeft,
+                                          end: Alignment.bottomRight,
+                                          colors: [
+                                            scheme.surfaceContainerHighest,
+                                            scheme.surfaceContainerHigh,
+                                          ],
+                                        ),
                                       ),
-                                    ),
-                                    child: Icon(
-                                      Icons.broken_image_outlined,
-                                      color: scheme.secondary,
+                                      child: Icon(
+                                        Icons.broken_image_outlined,
+                                        color: scheme.secondary,
+                                      ),
                                     ),
                                   ),
                                 );
                               },
                             ),
-                          ),
                     Positioned(
                       right: 8,
                       top: 8,
@@ -120,7 +123,7 @@ class PosMenuItemCard extends StatelessWidget {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(10, 8, 10, 6),
+                padding: const EdgeInsets.fromLTRB(10, 6, 10, 4),
                 child: Text(
                   item.name,
                   maxLines: 2,
@@ -131,17 +134,11 @@ class PosMenuItemCard extends StatelessWidget {
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: onConfigure,
-                        icon: const Icon(Icons.tune_rounded, size: 16),
-                        label: const Text('Добавка'),
-                      ),
-                    ),
-                  ],
+                padding: const EdgeInsets.fromLTRB(10, 0, 10, 8),
+                child: OutlinedButton.icon(
+                  onPressed: onConfigure,
+                  icon: const Icon(Icons.tune_rounded, size: 16),
+                  label: const Text('Добавка'),
                 ),
               ),
             ],

@@ -24,7 +24,14 @@ class AdminUsersPanel extends StatelessWidget {
 
   final double maxBodyWidth;
 
-  static const _roles = ['admin', 'warehouse', 'cashier', 'expeditor', 'waiter'];
+  static const _roles = [
+    'admin',
+    'warehouse',
+    'cashier',
+    'expeditor',
+    'waiter',
+    'staff',
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -432,6 +439,8 @@ class AdminUsersPanel extends StatelessWidget {
         if (code.startsWith('en')) return 'Waiter';
         if (code.startsWith('tg')) return 'Офисиант';
         return 'Официант';
+      case 'staff':
+        return l10n.roleStaff;
       default:
         return role;
     }

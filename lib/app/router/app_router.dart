@@ -8,6 +8,7 @@ import 'package:dk_pos/features/expeditor/presentation/screens/expeditor_screen.
 import 'package:dk_pos/features/kitchen_board/presentation/screens/kitchen_screen.dart';
 import 'package:dk_pos/features/kitchen_board/presentation/screens/queue_board_screen.dart';
 import 'package:dk_pos/features/pos/presentation/screens/pos_screen.dart';
+import 'package:dk_pos/features/staff/presentation/screens/staff_screen.dart';
 
 part 'app_router.gr.dart';
 
@@ -19,6 +20,7 @@ PageRouteInfo<void> _homeRouteForAuth(AuthState state) {
   if (user.isAdmin) return const AdminRoute();
   if (user.role == 'warehouse') return const KitchenRoute();
   if (user.role == 'expeditor') return const ExpeditorRoute();
+  if (user.role == 'staff') return const StaffRoute();
   return const PosRoute();
 }
 
@@ -29,6 +31,7 @@ class AppRouter extends RootStackRouter {
         _kitchenGuard = _WarehouseOnlyGuard(authBloc),
         _posGuard = _PosAccessGuard(authBloc),
         _expeditorGuard = _ExpeditorAccessGuard(authBloc),
+        _staffGuard = _StaffOnlyGuard(authBloc),
         _authAnyGuard = _AuthenticatedGuard(authBloc),
         _loginGuard = _LoginGateGuard(authBloc),
         super();
@@ -37,6 +40,7 @@ class AppRouter extends RootStackRouter {
   final _WarehouseOnlyGuard _kitchenGuard;
   final _PosAccessGuard _posGuard;
   final _ExpeditorAccessGuard _expeditorGuard;
+  final _StaffOnlyGuard _staffGuard;
   final _AuthenticatedGuard _authAnyGuard;
   final _LoginGateGuard _loginGuard;
 
@@ -65,6 +69,11 @@ class AppRouter extends RootStackRouter {
           guards: [_expeditorGuard],
         ),
         AutoRoute(page: PosRoute.page, path: '/pos', guards: [_posGuard]),
+        AutoRoute(
+          page: StaffRoute.page,
+          path: '/staff',
+          guards: [_staffGuard],
+        ),
       ];
 }
 
@@ -159,12 +168,39 @@ class _PosAccessGuard extends AutoRouteGuard {
       resolver.next(false);
       return;
     }
+    if (user.role == 'staff') {
+      router.replace(const StaffRoute());
+      resolver.next(false);
+      return;
+    }
     if (user.isAdmin) {
       router.replace(const AdminRoute());
       resolver.next(false);
       return;
     }
     resolver.next(true);
+  }
+}
+
+class _StaffOnlyGuard extends AutoRouteGuard {
+  _StaffOnlyGuard(this._authBloc);
+
+  final AuthBloc _authBloc;
+
+  @override
+  void onNavigation(NavigationResolver resolver, StackRouter router) {
+    final state = _authBloc.state;
+    if (!state.isAuthenticated) {
+      router.replace(const LoginRoute());
+      resolver.next(false);
+      return;
+    }
+    if (state.user?.role == 'staff') {
+      resolver.next(true);
+      return;
+    }
+    router.replace(_homeRouteForAuth(state));
+    resolver.next(false);
   }
 }
 

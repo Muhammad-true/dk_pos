@@ -14,6 +14,7 @@ import 'package:dk_pos/features/auth/bloc/auth_state.dart';
 import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
 import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
 import 'package:dk_pos/features/cart/bloc/cart_event.dart';
+import 'package:dk_pos/features/update/update_download_launcher.dart';
 import 'package:dk_pos/theme/theme.dart';
 
 /// Корень UI: тема, локализация, роутер, синхронизация с [AuthBloc].
@@ -168,15 +169,31 @@ class _StartupUpdateNoticeState extends State<_StartupUpdateNotice> {
                 onPressed: () => Navigator.of(ctx).pop(),
                 child: const Text('Позже'),
               ),
-              FilledButton(
-                onPressed: () async {
-                  await Clipboard.setData(
-                    ClipboardData(text: info.downloadUrl ?? ''),
-                  );
-                  if (ctx.mounted) Navigator.of(ctx).pop();
-                },
-                child: const Text('Скопировать ссылку'),
-              ),
+              if ((info.downloadUrl ?? '').trim().isNotEmpty) ...[
+                TextButton(
+                  onPressed: () async {
+                    await Clipboard.setData(
+                      ClipboardData(text: info.downloadUrl ?? ''),
+                    );
+                    if (ctx.mounted) Navigator.of(ctx).pop();
+                  },
+                  child: const Text('Скопировать ссылку'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    final ok = await openUpdateDownloadUrl(info.downloadUrl!);
+                    if (!ctx.mounted) return;
+                    if (!ok) {
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        const SnackBar(
+                          content: Text('Не удалось открыть ссылку'),
+                        ),
+                      );
+                    }
+                  },
+                  child: const Text('Скачать / установить'),
+                ),
+              ],
             ],
           ),
         );
@@ -217,6 +234,8 @@ class _RouterAuthSyncState extends State<_RouterAuthSync> {
         targetRoute = const KitchenRoute();
       } else if (user != null && user.role == 'expeditor') {
         targetRoute = const ExpeditorRoute();
+      } else if (user != null && user.role == 'staff') {
+        targetRoute = const StaffRoute();
       } else {
         targetRoute = const PosRoute();
       }

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
 import 'package:audioplayers/audioplayers.dart';
@@ -7,13 +8,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/app/pos_theme/pos_theme_toggle_button.dart';
 import 'package:dk_pos/app/router/app_router.dart';
 import 'package:dk_pos/features/admin/data/local_audio_settings_repository.dart';
+import 'package:dk_pos/features/kitchen_board/audio/kitchen_order_alert.dart';
+import 'package:dk_pos/features/kitchen_board/presentation/kitchen_ui_preferences.dart';
+import 'package:dk_pos/features/kitchen_board/presentation/widgets/kitchen_ui_settings_sheet.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/auth/bloc/auth_event.dart';
+import 'package:dk_pos/features/shifts/presentation/shift_close_guard.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
 import 'package:dk_pos/features/orders/data/local_orders_realtime.dart';
 import 'package:dk_pos/features/orders/presentation/pos_queue_layout.dart';
@@ -58,6 +64,8 @@ class _KitchenScreenState extends State<KitchenScreen> {
   bool _saving = false;
   String? _error;
   Timer? _timer;
+  Timer? _reloadDebounce;
+  bool _realtimeConnected = false;
   bool _queueInitialized = false;
   Set<String> _knownPreparingOrderIds = <String>{};
   bool _kitchenTtsEnabled = true;
@@ -73,14 +81,14 @@ class _KitchenScreenState extends State<KitchenScreen> {
   bool _statsLoading = true;
   String? _statsError;
   List<LocalKitchenActorProfile> _kitchenActors = const [];
-  bool _largeTouchMode = false;
+  KitchenUiScale _uiScale = KitchenUiScale.standard;
   bool get _disableKitchenAudioStackOnWindows =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
   @override
   void initState() {
     super.initState();
-    _largeTouchMode = true;
+    unawaited(_loadKitchenUiPreferences());
     if (!_disableKitchenAudioStackOnWindows) {
       _tts = FlutterTts();
       _audioPlayer = AudioPlayer();
@@ -88,12 +96,23 @@ class _KitchenScreenState extends State<KitchenScreen> {
     }
     _reload();
     _connectRealtime();
-    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _reload(silent: true));
+    var pollTick = 0;
+    _timer = Timer.periodic(const Duration(seconds: 4), (_) {
+      pollTick += 1;
+      if (!_realtimeConnected) {
+        _scheduleReload(silent: true);
+        return;
+      }
+      if (pollTick % 6 == 0) {
+        _scheduleReload(silent: true);
+      }
+    });
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _reloadDebounce?.cancel();
     _realtimeSub?.cancel();
     _realtimeSub = null;
     // Защищаем dispose от фоновых ошибок плагинов/сокета,
@@ -108,6 +127,21 @@ class _KitchenScreenState extends State<KitchenScreen> {
 
   String get _branchId => AppConfig.storeBranchId;
 
+  Future<void> _loadKitchenUiPreferences() async {
+    final scale = await KitchenUiPreferences.load();
+    if (!mounted) return;
+    setState(() => _uiScale = scale);
+  }
+
+  Future<void> _openKitchenUiSettings() async {
+    final updated = await showKitchenUiSettingsSheet(
+      context,
+      initial: _uiScale,
+    );
+    if (updated == null || !mounted) return;
+    setState(() => _uiScale = updated);
+  }
+
   Future<void> _loadAudioSettings() async {
     try {
       final settings = await context
@@ -118,6 +152,13 @@ class _KitchenScreenState extends State<KitchenScreen> {
       _kitchenTtsLocale = settings.kitchenTtsLocale;
       _kitchenTtsVoiceName = settings.kitchenTtsVoiceName;
       _kitchenSoundPath = settings.kitchenSoundPath;
+      if (Platform.isAndroid) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(
+          'bg_kitchen_sound_path',
+          _kitchenSoundPath ?? '',
+        );
+      }
     } catch (_) {
       _kitchenTtsEnabled = true;
       _kitchenTtsRate = 0.48;
@@ -206,19 +247,24 @@ class _KitchenScreenState extends State<KitchenScreen> {
       _realtimeSub = _realtime.events.listen((event) async {
         if (!mounted) return;
         final type = event.type;
+        if (type == 'hello') {
+          if (mounted) setState(() => _realtimeConnected = true);
+          return;
+        }
         if (type == 'socket.done') {
+          if (mounted) setState(() => _realtimeConnected = false);
           await Future<void>.delayed(const Duration(seconds: 2));
           if (!mounted) return;
           await _connectRealtime();
           return;
         }
-        if (type == 'order.created' ||
-            type == 'order.updated' ||
-            type == 'order.status_changed') {
-          await _reload(silent: true);
+        if (type == 'pong') return;
+        if (_isKitchenQueuePushEvent(type)) {
+          _scheduleReload(silent: true);
         }
       }, onError: (Object _, StackTrace __) async {
         if (!mounted) return;
+        if (mounted) setState(() => _realtimeConnected = false);
         await Future<void>.delayed(const Duration(seconds: 2));
         if (!mounted) return;
         await _connectRealtime();
@@ -229,6 +275,23 @@ class _KitchenScreenState extends State<KitchenScreen> {
         await _connectRealtime();
       }
     }
+  }
+
+  bool _isKitchenQueuePushEvent(String type) {
+    return type == 'order.created' ||
+        type == 'order.updated' ||
+        type == 'order.status_changed' ||
+        type == 'payment.accepted' ||
+        type == 'kitchen.queue_changed';
+  }
+
+  void _scheduleReload({bool silent = true}) {
+    _reloadDebounce?.cancel();
+    _reloadDebounce = Timer(const Duration(milliseconds: 180), () {
+      if (mounted) {
+        unawaited(_reload(silent: silent));
+      }
+    });
   }
 
   Future<void> _reload({bool silent = false}) async {
@@ -303,21 +366,24 @@ class _KitchenScreenState extends State<KitchenScreen> {
     _knownPreparingOrderIds = currentIds;
     if (newOrders.isEmpty) return;
 
+    try {
+      await _loadAudioSettings();
+    } catch (_) {}
+
     for (final order in newOrders) {
-      final text = _kitchenSpeakText(order);
-      if (text.isEmpty) continue;
       try {
         final player = _audioPlayer;
-        final tts = _tts;
-        if ((_kitchenSoundPath ?? '').trim().isNotEmpty) {
-          final url = AppConfig.mediaUrl(_kitchenSoundPath);
-          if (url.isNotEmpty && player != null) {
-            await player.stop();
-            await player.play(UrlSource(url));
-            await Future<void>.delayed(const Duration(milliseconds: 500));
-          }
+        if (player != null) {
+          await KitchenOrderAlert.play(
+            player,
+            customUploadPath: _kitchenSoundPath,
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 450));
         }
-        if (!_kitchenTtsEnabled || tts == null) continue;
+        if (!_kitchenTtsEnabled) continue;
+        final tts = _tts;
+        final text = _kitchenSpeakText(order);
+        if (tts == null || text.isEmpty) continue;
         await tts.stop();
         await tts.speak(text);
       } catch (_) {
@@ -435,25 +501,9 @@ class _KitchenScreenState extends State<KitchenScreen> {
 
   Future<void> _requestLogoutWithConfirm() async {
     if (!mounted) return;
-    final shouldLogout = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Выход из аккаунта'),
-        content: const Text('Перейти к экрану входа?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Отмена'),
-          ),
-          FilledButton.icon(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            icon: const Icon(Icons.logout_rounded),
-            label: const Text('Выйти'),
-          ),
-        ],
-      ),
-    );
-    if (shouldLogout != true || !mounted) return;
+    final role = context.read<AuthBloc>().state.user?.role ?? '';
+    final ok = await confirmLogoutWithShiftChecks(context, role: role);
+    if (!ok || !mounted) return;
     setState(() => _saving = true);
     context.read<AuthBloc>().add(const AuthLogoutRequested());
   }
@@ -483,6 +533,20 @@ class _KitchenScreenState extends State<KitchenScreen> {
                 style: theme.textTheme.bodyLarge?.copyWith(color: theme.colorScheme.onSurfaceVariant),
               ),
               const SizedBox(height: 12),
+              ListTile(
+                leading: const Icon(Icons.format_size_rounded),
+                title: const Text('Размер кнопок и текста'),
+                subtitle: Text(
+                  'Кнопки ${(_uiScale.buttonScale * 100).round()}% · '
+                  'текст ${(_uiScale.buttonTextScale * 100).round()}% · '
+                  'блюда ${(_uiScale.itemTextScale * 100).round()}%',
+                ),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  unawaited(_openKitchenUiSettings());
+                },
+              ),
+              const SizedBox(height: 8),
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -530,20 +594,22 @@ class _KitchenScreenState extends State<KitchenScreen> {
           children: [
             Text(stationName),
             Text(
-              stationType,
-              style: Theme.of(context).textTheme.bodySmall,
+              _realtimeConnected
+                  ? '$stationType · онлайн'
+                  : '$stationType · обновление по сети…',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: _realtimeConnected
+                        ? theme.colorScheme.primary
+                        : theme.colorScheme.onSurfaceVariant,
+                  ),
             ),
           ],
         ),
         actions: [
           IconButton(
-            tooltip: _largeTouchMode ? 'Обычный режим' : 'Крупные кнопки',
-            onPressed: () => setState(() => _largeTouchMode = !_largeTouchMode),
-            icon: Icon(
-              _largeTouchMode
-                  ? Icons.touch_app_rounded
-                  : Icons.touch_app_outlined,
-            ),
+            tooltip: 'Размер кнопок и текста',
+            onPressed: _openKitchenUiSettings,
+            icon: const Icon(Icons.format_size_rounded),
           ),
           const PosThemeToggleIconButton(),
           IconButton(
@@ -612,7 +678,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
                             acceptColorOf: _actorAcceptColor,
                             readyColorOf: _actorReadyColor,
                             onColorOf: _buttonOnColor,
-                            largeTouchMode: _largeTouchMode,
+                            uiScale: _uiScale,
                             onAction: ({required item, required actor, required action}) =>
                                 _kitchenAction(
                                   order: order,
@@ -648,6 +714,31 @@ class _KitchenScreenState extends State<KitchenScreen> {
       ),
     );
   }
+}
+
+String _kitchenStationGroupLabel(LocalKitchenQueueItem item) {
+  final name = (item.kitchenStationName ?? '').trim();
+  if (name.isNotEmpty) return name;
+  final id = item.kitchenStationId;
+  if (id != null) return 'Станция $id';
+  return 'Без кухни';
+}
+
+List<MapEntry<String, List<LocalKitchenQueueItem>>> _groupKitchenItemsByStation(
+  List<LocalKitchenQueueItem> items,
+) {
+  final map = <String, List<LocalKitchenQueueItem>>{};
+  for (final item in items) {
+    final key = _kitchenStationGroupLabel(item);
+    map.putIfAbsent(key, () => []).add(item);
+  }
+  final keys = map.keys.toList()
+    ..sort((a, b) {
+      if (a == 'Без кухни') return 1;
+      if (b == 'Без кухни') return -1;
+      return a.compareTo(b);
+    });
+  return [for (final k in keys) MapEntry(k, map[k]!)];
 }
 
 class _KitchenSectionRow extends StatelessWidget {
@@ -804,7 +895,7 @@ class _KitchenActiveCard extends StatelessWidget {
     required this.acceptColorOf,
     required this.readyColorOf,
     required this.onColorOf,
-    required this.largeTouchMode,
+    required this.uiScale,
     required this.onAction,
   });
 
@@ -816,7 +907,7 @@ class _KitchenActiveCard extends StatelessWidget {
   final Color Function(LocalKitchenActorProfile actor) acceptColorOf;
   final Color Function(LocalKitchenActorProfile actor) readyColorOf;
   final Color Function(Color background) onColorOf;
-  final bool largeTouchMode;
+  final KitchenUiScale uiScale;
   final Future<void> Function({
     required LocalKitchenQueueItem item,
     required LocalKitchenActorProfile actor,
@@ -828,11 +919,15 @@ class _KitchenActiveCard extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final compact = PosQueueLayout.shortestSide(context) < 600;
-    final actionButtonVerticalPadding = PosQueueLayout.buttonVerticalPadding(context) + (largeTouchMode ? 8 : 4);
-    final actionFontSize = largeTouchMode ? (compact ? 16.0 : 17.0) : (compact ? 14.0 : 15.0);
-    final actionMinHeight = largeTouchMode ? (compact ? 58.0 : 64.0) : (compact ? 46.0 : 52.0);
+    final baseMinHeight = compact ? 46.0 : 52.0;
+    final baseFontSize = compact ? 14.0 : 15.0;
+    final actionMinHeight = baseMinHeight * uiScale.buttonScale;
+    final actionFontSize = baseFontSize * uiScale.buttonTextScale;
+    final actionIconSize = 16.0 * uiScale.buttonTextScale;
+    final actionButtonVerticalPadding =
+        (PosQueueLayout.buttonVerticalPadding(context) + 4) * uiScale.buttonScale;
 
-    final itemLines = order.items.map((e) {
+    Widget buildKitchenItemLine(LocalKitchenQueueItem e) {
       final st = e.kitchenLineStatus.toLowerCase();
       final icon = st == 'ready'
           ? Icons.check_circle_rounded
@@ -865,7 +960,7 @@ class _KitchenActiveCard extends StatelessWidget {
               : () {
                   unawaited(onAction(item: e, actor: actor, action: 'accept'));
                 },
-          icon: const Icon(Icons.pan_tool_alt_rounded, size: 16),
+          icon: Icon(Icons.pan_tool_alt_rounded, size: actionIconSize),
           style: FilledButton.styleFrom(
             backgroundColor: color,
             foregroundColor: on,
@@ -899,7 +994,7 @@ class _KitchenActiveCard extends StatelessWidget {
               : () {
                   unawaited(onAction(item: e, actor: actor, action: 'ready'));
                 },
-          icon: const Icon(Icons.check_circle_rounded, size: 16),
+          icon: Icon(Icons.check_circle_rounded, size: actionIconSize),
           style: FilledButton.styleFrom(
             backgroundColor: color,
             foregroundColor: on,
@@ -956,7 +1051,7 @@ class _KitchenActiveCard extends StatelessWidget {
                     style: theme.textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w700,
                       height: 1.25,
-                      fontSize: PosQueueLayout.itemLine(context) + (largeTouchMode ? 2 : 0),
+                      fontSize: PosQueueLayout.itemLine(context) * uiScale.itemTextScale,
                     ),
                   ),
                 ),
@@ -1006,7 +1101,39 @@ class _KitchenActiveCard extends StatelessWidget {
           ],
         ),
       );
-    }).toList();
+    }
+
+    final itemLines = <Widget>[];
+    final stationGroups = _groupKitchenItemsByStation(order.items);
+    final showStationHeaders = stationGroups.length > 1;
+    for (var gi = 0; gi < stationGroups.length; gi++) {
+      final group = stationGroups[gi];
+      if (showStationHeaders) {
+        itemLines.add(
+          Padding(
+            padding: EdgeInsets.only(top: gi > 0 ? 14 : 0, bottom: 8),
+            child: Row(
+              children: [
+                Icon(Icons.local_dining_rounded, size: 20, color: tone),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    group.key,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: tone,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+      for (final e in group.value) {
+        itemLines.add(buildKitchenItemLine(e));
+      }
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -1048,7 +1175,7 @@ class _KitchenActiveCard extends StatelessWidget {
                         color: tone,
                         letterSpacing: -0.5,
                         height: 1.05,
-                        fontSize: PosQueueLayout.orderTitleKitchen(context),
+                        fontSize: PosQueueLayout.orderTitleKitchen(context) * uiScale.itemTextScale,
                       ),
                     ),
                     SizedBox(height: PosQueueLayout.shortestSide(context) < 600 ? 6 : 8),
@@ -1170,6 +1297,33 @@ class _KitchenWaitingPanel extends StatelessWidget {
                     ),
                   ],
                 ),
+                if (order.items.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  ..._groupKitchenItemsByStation(order.items).expand((group) {
+                    return [
+                      Text(
+                        group.key,
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: tone,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      ...group.value.map(
+                        (e) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            e.assemblyTitleWithStation(),
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ];
+                  }),
+                ],
               ],
             ),
           ),

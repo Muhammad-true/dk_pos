@@ -105,3 +105,19 @@ class QueueBoardRoute extends PageRouteInfo<void> {
     },
   );
 }
+
+/// generated route for
+/// [StaffScreen]
+class StaffRoute extends PageRouteInfo<void> {
+  const StaffRoute({List<PageRouteInfo>? children})
+    : super(StaffRoute.name, initialChildren: children);
+
+  static const String name = 'StaffRoute';
+
+  static PageInfo page = PageInfo(
+    name,
+    builder: (data) {
+      return const StaffScreen();
+    },
+  );
+}

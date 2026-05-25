@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+import 'package:dk_pos/app/pos_catalog_grid/pos_catalog_grid_settings.dart'
+    show PosCatalogCardSize, PosCatalogGridSettings;
+
 /// Брейкпоинты и расчёты под телефон / планшет / десктоп (ориентир M3).
 ///
 /// Не хранит состояние — только ширина окна; дёшево вызывать из [LayoutBuilder].
@@ -32,7 +35,7 @@ class WindowLayout {
   /// Корзина закреплена справа (десктоп).
   static const double posCartDockBreakpoint = 960;
 
-  static const double posCartPanelWidth = 336;
+  static const double posCartPanelWidth = 347;
 
   static const double posCategoryRailWidth = 200;
 
@@ -57,24 +60,50 @@ class WindowLayout {
   bool posSideCategoryNavForCatalogPane(double catalogPaneWidth) =>
       catalogPaneWidth >= posCategorySidebarBreakpoint;
 
-  int posCatalogGridColumns({
+  int posCatalogGridColumnsAuto({
     required double catalogPaneWidth,
     required bool sideCategoryNav,
+    double minCellWidth = 132,
   }) {
     final side = sideCategoryNav ? posCategoryRailWidth : 0.0;
     const pad = 24.0;
     final gridW = catalogPaneWidth - side - pad;
     if (gridW < 200) return 2;
-    const minCell = 132.0;
     const gutter = 12.0;
-    final n = ((gridW + gutter) / (minCell + gutter)).floor();
-    return n.clamp(2, 7);
+    final n = ((gridW + gutter) / (minCellWidth + gutter)).floor();
+    return n.clamp(2, 8);
   }
 
-  double posCatalogGridAspectRatio(double catalogPaneWidth) {
-    if (catalogPaneWidth < compactMax) return 0.70;
-    if (catalogPaneWidth < mediumMax) return 0.76;
-    return 0.82;
+  int posCatalogGridColumns({
+    required double catalogPaneWidth,
+    required bool sideCategoryNav,
+    PosCatalogGridSettings? grid,
+  }) {
+    final g = grid ?? PosCatalogGridSettings.defaults;
+    return g.columnsFor(
+      catalogPaneWidth: catalogPaneWidth,
+      sideCategoryNav: sideCategoryNav,
+    );
+  }
+
+  double posCatalogGridAspectRatio(
+    double catalogPaneWidth, {
+    bool orderAppendMode = false,
+    PosCatalogCardSize cardSize = PosCatalogCardSize.normal,
+  }) {
+    if (orderAppendMode) {
+      final base = cardSize.aspectRatio;
+      if (catalogPaneWidth < 520) return base - 0.06;
+      if (catalogPaneWidth < 720) return base - 0.02;
+      return base;
+    }
+    return cardSize.aspectRatio;
+  }
+
+  /// Ширина колонки каталога, когда корзина уже стоит справа в [Row].
+  double posCatalogPaneWidthBesideCart(double viewportWidth, double cartPanelWidth) {
+    final w = viewportWidth - cartPanelWidth - 2;
+    return w > 280 ? w : 280;
   }
 
   double adminBodyMaxWidth(double viewportWidth) =>

@@ -135,6 +135,12 @@ class LocalPaymentHistoryItem {
   }
 }
 
+bool? _receiptPrintedFromJson(dynamic v) {
+  if (v == true) return true;
+  if (v == false) return false;
+  return null;
+}
+
 class LocalPaymentHistoryEntry {
   const LocalPaymentHistoryEntry({
     required this.paymentUuid,
@@ -147,6 +153,7 @@ class LocalPaymentHistoryEntry {
     this.orderType,
     this.tableLabel,
     this.cashierUsername,
+    this.receiptPrinted,
   });
 
   final String paymentUuid;
@@ -159,6 +166,9 @@ class LocalPaymentHistoryEntry {
   final String? orderType;
   final String? tableLabel;
   final String? cashierUsername;
+
+  /// `null` — старые оплаты без записи в meta_json.
+  final bool? receiptPrinted;
 
   factory LocalPaymentHistoryEntry.fromJson(Map<String, dynamic> json) {
     final rawItems = json['items'];
@@ -178,6 +188,7 @@ class LocalPaymentHistoryEntry {
       orderType: json['orderType']?.toString(),
       tableLabel: json['tableLabel']?.toString(),
       cashierUsername: json['cashierUsername']?.toString(),
+      receiptPrinted: _receiptPrintedFromJson(json['receiptPrinted']),
       items: rawItems is List
           ? rawItems
                 .whereType<Map>()
@@ -206,6 +217,7 @@ class LocalRefundHistoryEntry {
     this.orderType,
     this.tableLabel,
     this.cashierUsername,
+    this.receiptPrinted,
   });
 
   final String refundUuid;
@@ -220,6 +232,7 @@ class LocalRefundHistoryEntry {
   final String? orderType;
   final String? tableLabel;
   final String? cashierUsername;
+  final bool? receiptPrinted;
 
   factory LocalRefundHistoryEntry.fromJson(Map<String, dynamic> json) {
     final rawItems = json['items'];
@@ -241,6 +254,7 @@ class LocalRefundHistoryEntry {
       orderType: json['orderType']?.toString(),
       tableLabel: json['tableLabel']?.toString(),
       cashierUsername: json['cashierUsername']?.toString(),
+      receiptPrinted: _receiptPrintedFromJson(json['receiptPrinted']),
       items: rawItems is List
           ? rawItems
                 .whereType<Map>()
@@ -259,10 +273,14 @@ class LocalPaymentsTodayHistory {
   const LocalPaymentsTodayHistory({
     required this.payments,
     required this.refunds,
+    required this.hasMorePayments,
+    required this.hasMoreRefunds,
   });
 
   final List<LocalPaymentHistoryEntry> payments;
   final List<LocalRefundHistoryEntry> refunds;
+  final bool hasMorePayments;
+  final bool hasMoreRefunds;
 }
 
 class LocalPaymentsRepository {
@@ -286,6 +304,7 @@ class LocalPaymentsRepository {
     required String idempotencyKey,
     double? cashReceived,
     double? cashChange,
+    List<Map<String, dynamic>>? paymentSplits,
     String? promoCode,
     double? promoDiscountAmount,
     double? loyaltyDiscountAmount,
@@ -293,14 +312,19 @@ class LocalPaymentsRepository {
     int? customerId,
     String? branchId,
     String? terminalId,
+    bool skipReceipt = false,
   }) async {
     final res = await _http.post(
       'api/local/payments',
       body: {
         'orderId': orderId,
         'amount': amount,
-        'paymentMethod': paymentMethod,
-        if (paymentMethodId != null) 'paymentMethodId': paymentMethodId,
+        if (paymentSplits == null || paymentSplits.isEmpty) ...{
+          'paymentMethod': paymentMethod,
+          if (paymentMethodId != null) 'paymentMethodId': paymentMethodId,
+        },
+        if (paymentSplits != null && paymentSplits.isNotEmpty)
+          'paymentSplits': paymentSplits,
         'idempotencyKey': idempotencyKey,
         if (cashReceived != null) 'cashReceived': cashReceived,
         if (cashChange != null) 'cashChange': cashChange,
@@ -315,6 +339,7 @@ class LocalPaymentsRepository {
         if (customerId != null) 'customerId': customerId,
         'branchId': branchId ?? _defaultBranchId,
         'terminalId': terminalId ?? _defaultTerminalId,
+        if (skipReceipt) 'skipReceipt': true,
       },
     );
     if (res.statusCode != 200 && res.statusCode != 201) {
@@ -356,9 +381,13 @@ class LocalPaymentsRepository {
   Future<LocalPaymentsTodayHistory> fetchTodayHistoryBundle({
     String? branchId,
     int limit = 150,
+    int paymentOffset = 0,
+    int refundOffset = 0,
     String? lang,
   }) async {
     final safeLimit = limit.clamp(20, 300);
+    final safePayOff = paymentOffset.clamp(0, 5000);
+    final safeRefOff = refundOffset.clamp(0, 5000);
     final langRaw = (lang ?? 'ru').trim().toLowerCase();
     final safeLang = (langRaw == 'tj' || langRaw == 'en') ? langRaw : 'ru';
     final res = await _http.get(
@@ -366,6 +395,8 @@ class LocalPaymentsRepository {
       query: {
         'branchId': branchId ?? _defaultBranchId,
         'limit': '$safeLimit',
+        'paymentOffset': '$safePayOff',
+        'refundOffset': '$safeRefOff',
         'lang': safeLang,
       },
     );
@@ -404,7 +435,14 @@ class LocalPaymentsRepository {
               )
               .where((e) => e.refundUuid.isNotEmpty)
               .toList(growable: false);
-    return LocalPaymentsTodayHistory(payments: payments, refunds: refunds);
+    final hasMorePayments = body['hasMorePayments'] == true;
+    final hasMoreRefunds = body['hasMoreRefunds'] == true;
+    return LocalPaymentsTodayHistory(
+      payments: payments,
+      refunds: refunds,
+      hasMorePayments: hasMorePayments,
+      hasMoreRefunds: hasMoreRefunds,
+    );
   }
 
   Future<List<LocalPaymentHistoryEntry>> fetchTodayHistory({

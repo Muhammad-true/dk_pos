@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
@@ -118,60 +116,73 @@ class PosCartPanel extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
-    return BlocBuilder<CartBloc, CartState>(
-      builder: (context, cart) {
-        final bottomSafe =
-            MediaQuery.viewPaddingOf(context).bottom + 10;
-        return Padding(
-          padding: EdgeInsets.only(bottom: bottomSafe),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-            _CartPanelHeader(
-              cart: cart,
-              onClose: onClose,
-              onPickTable: () => _pickTableForActiveCheck(context),
-            ),
+    return BlocBuilder<PosHallOrdersCubit, PosHallOrdersState>(
+      builder: (context, hall) {
+        return BlocBuilder<CartBloc, CartState>(
+          builder: (context, cart) {
+            final kitchenLocks = hall.openBillAppendKitchenQtyLockedByLineKey;
+            final disableClearCart = hall.openBillAppendDraft != null;
+            final bottomSafe =
+                MediaQuery.viewPaddingOf(context).bottom + 10;
+            return Padding(
+              padding: EdgeInsets.only(bottom: bottomSafe),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _CartPanelHeader(
+                    cart: cart,
+                    onClose: onClose,
+                    onPickTable: () => _pickTableForActiveCheck(context),
+                    disableClearCart: disableClearCart,
+                  ),
             if (cart.isEmpty)
               Expanded(
-                child: Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 76,
-                          height: 76,
-                          decoration: BoxDecoration(
-                            color: scheme.primary.withValues(alpha: 0.10),
-                            borderRadius: BorderRadius.circular(24),
-                          ),
-                          child: Icon(
-                            Icons.point_of_sale_rounded,
-                            size: 34,
-                            color: scheme.primary,
-                          ),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    return SingleChildScrollView(
+                      padding: const EdgeInsets.all(24),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(
+                          minHeight: constraints.maxHeight,
                         ),
-                        const SizedBox(height: 16),
-                        Text(
-                          l10n.cartEmpty,
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 76,
+                              height: 76,
+                              decoration: BoxDecoration(
+                                color: scheme.primary.withValues(alpha: 0.10),
+                                borderRadius: BorderRadius.circular(24),
+                              ),
+                              child: Icon(
+                                Icons.point_of_sale_rounded,
+                                size: 34,
+                                color: scheme.primary,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              l10n.cartEmpty,
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Добавьте позиции из каталога. Несколько чеков — переключайте вкладками «Чеки» в верхней панели.',
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Добавьте позиции из каталога. Несколько чеков — переключайте вкладками «Чеки» в верхней панели.',
-                          textAlign: TextAlign.center,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                      ),
+                    );
+                  },
                 ),
               )
             else
@@ -182,74 +193,128 @@ class PosCartPanel extends StatelessWidget {
                   itemCount: cart.sortedLines.length,
                   itemBuilder: (_, i) {
                     final line = cart.sortedLines[i];
+                    final lineTotal = line.item.price * line.quantity;
+                    final kitchenLocked =
+                        kitchenLocks[line.lineKey] == true;
                     return Card(
-                      margin: const EdgeInsets.only(bottom: 10),
+                      margin: const EdgeInsets.only(bottom: 7),
                       child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                        padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
-                            Container(
-                              width: 44,
-                              height: 44,
-                              decoration: BoxDecoration(
-                                color: scheme.primary.withValues(alpha: 0.10),
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              alignment: Alignment.center,
-                              child: Text(
-                                '${line.quantity}x',
-                                style: theme.textTheme.labelLarge?.copyWith(
-                                  color: scheme.primary,
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Expanded(
+                                  child: Text(
                                     line.item.name,
-                                    maxLines: 2,
+                                    maxLines: 3,
                                     overflow: TextOverflow.ellipsis,
                                     style: theme.textTheme.titleSmall?.copyWith(
                                       fontWeight: FontWeight.w700,
+                                      height: 1.2,
                                     ),
                                   ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '${formatSomoni(line.item.price)} × ${line.quantity} ${line.item.saleUnit}',
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: scheme.onSurfaceVariant,
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: scheme.primary.withValues(alpha: 0.12),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Text(
+                                    formatSomoni(lineTotal),
+                                    style: theme.textTheme.labelLarge?.copyWith(
+                                      color: scheme.primary,
+                                      fontWeight: FontWeight.w800,
                                     ),
                                   ),
-                                ],
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '${formatSomoni(line.item.price)} за ${line.item.saleUnit}',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
                               ),
                             ),
-                            const SizedBox(width: 8),
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.remove_circle_outline_rounded),
-                                  onPressed: () => context.read<CartBloc>().add(
-                                        CartItemDecremented(line.lineKey),
-                                      ),
+                            if (kitchenLocked) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                'На кухне уже «Готово» — убрать или изменить нельзя',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: scheme.tertiary,
+                                  fontWeight: FontWeight.w600,
                                 ),
-                                Text(
-                                  '${line.quantity}',
-                                  textAlign: TextAlign.center,
-                                  style: theme.textTheme.titleMedium?.copyWith(
-                                    fontWeight: FontWeight.w700,
+                              ),
+                            ],
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Container(
+                                  decoration: BoxDecoration(
+                                    border: Border.all(color: scheme.outlineVariant),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        tooltip: 'Уменьшить',
+                                        icon: const Icon(Icons.remove_rounded, size: 18),
+                                        constraints: const BoxConstraints(
+                                          minWidth: 34,
+                                          minHeight: 34,
+                                        ),
+                                        padding: const EdgeInsets.all(6),
+                                        visualDensity: VisualDensity.compact,
+                                        onPressed: kitchenLocked
+                                            ? null
+                                            : () => context.read<CartBloc>().add(
+                                                  CartItemDecremented(line.lineKey),
+                                                ),
+                                      ),
+                                      SizedBox(
+                                        width: 28,
+                                        child: Text(
+                                          '${line.quantity}',
+                                          textAlign: TextAlign.center,
+                                          style: theme.textTheme.titleMedium?.copyWith(
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Увеличить',
+                                        icon: const Icon(Icons.add_rounded, size: 18),
+                                        constraints: const BoxConstraints(
+                                          minWidth: 34,
+                                          minHeight: 34,
+                                        ),
+                                        padding: const EdgeInsets.all(6),
+                                        visualDensity: VisualDensity.compact,
+                                        onPressed: kitchenLocked
+                                            ? null
+                                            : () => context.read<CartBloc>().add(
+                                                  CartItemAdded(line.item),
+                                                ),
+                                      ),
+                                    ],
                                   ),
                                 ),
-                                IconButton(
-                                  icon: const Icon(Icons.add_circle_outline_rounded),
-                                  onPressed: () => context.read<CartBloc>().add(
-                                        CartItemAdded(line.item),
-                                      ),
+                                const Spacer(),
+                                Text(
+                                  '${line.quantity} шт.',
+                                  style: theme.textTheme.bodyMedium?.copyWith(
+                                    color: scheme.onSurfaceVariant,
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                               ],
                             ),
@@ -268,6 +333,8 @@ class PosCartPanel extends StatelessWidget {
             ],
           ),
         );
+          },
+        );
       },
     );
   }
@@ -278,11 +345,13 @@ class _CartPanelHeader extends StatelessWidget {
     required this.cart,
     this.onClose,
     required this.onPickTable,
+    this.disableClearCart = false,
   });
 
   final CartState cart;
   final VoidCallback? onClose;
   final VoidCallback onPickTable;
+  final bool disableClearCart;
 
   @override
   Widget build(BuildContext context) {
@@ -326,7 +395,7 @@ class _CartPanelHeader extends StatelessWidget {
                   onPressed: onClose,
                 ),
               TextButton(
-                onPressed: cart.isEmpty
+                onPressed: cart.isEmpty || disableClearCart
                     ? null
                     : () => context.read<CartBloc>().add(const CartCleared()),
                 child: Text(l10n.cartClear),
@@ -431,134 +500,294 @@ class _OrderTypeAndTotalPanel extends StatelessWidget {
     final l10n = context.appL10n;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final idx = cart.activeOrderTypeIndex;
     final user = context.watch<AuthBloc>().state.user;
     final waiterMode = user?.isWaiter == true;
-    final selectedType = _checkoutOrderTypeOrNull(idx);
 
-    return Container(
-      margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            'Тип заказа',
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: scheme.onSurfaceVariant,
-            ),
+    return BlocBuilder<PosHallOrdersCubit, PosHallOrdersState>(
+      builder: (context, hallState) {
+        final draft = hallState.openBillAppendDraft;
+        final idx = draft != null
+            ? posOrderTypeIndexForOpenBill(draft)
+            : cart.activeOrderTypeIndex;
+        final selectedType = _checkoutOrderTypeOrNull(idx);
+        final lockOrderType = draft != null;
+        final orderTypeLabel = switch (idx) {
+          1 => 'На месте',
+          2 => 'Доставка',
+          _ => 'Самовывоз',
+        };
+        final orderTypeIcon = switch (idx) {
+          1 => Icons.table_restaurant_rounded,
+          2 => Icons.delivery_dining_rounded,
+          _ => Icons.shopping_bag_outlined,
+        };
+
+        return Container(
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: scheme.surfaceContainer,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: scheme.outlineVariant),
           ),
-          const SizedBox(height: 8),
-          Row(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Expanded(
-                child: _ActionMockButton(
-                  label: 'С собой',
-                  icon: Icons.shopping_bag_outlined,
-                  compact: true,
-                  highlighted: idx == 0,
-                  onTap: () => context.read<CartBloc>().add(
-                        const CartOrderTypeIndexChanged(0),
-                      ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _ActionMockButton(
-                  label: 'На месте',
-                  icon: Icons.table_restaurant_rounded,
-                  compact: true,
-                  highlighted: idx == 1,
-                  onTap: () => context.read<CartBloc>().add(
-                        const CartOrderTypeIndexChanged(1),
-                      ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _ActionMockButton(
-                  label: 'Доставка',
-                  icon: Icons.delivery_dining_rounded,
-                  compact: true,
-                  highlighted: idx == 2,
-                  onTap: () => context.read<CartBloc>().add(
-                        const CartOrderTypeIndexChanged(2),
-                      ),
-                ),
-              ),
-            ],
-          ),
-          if (selectedType == null) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Сначала выберите тип заказа.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: scheme.error,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ] else if (waiterMode) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Официант: оплату и печать чека проводит касса. Для «На месте» при оформлении нужно выбрать стол.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-          ],
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Text(
-                l10n.cartTotal,
-                style: theme.textTheme.titleMedium,
-              ),
-              const Spacer(),
-              Text(
-                formatSomoni(cart.total),
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  color: scheme.primary,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () => _showOrderAdjustmentsDialog(context),
-                  icon: const Icon(Icons.percent_rounded),
-                  label: const Text('%'),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: cart.isEmpty || selectedType == null
-                      ? null
-                      : () => _runCheckoutFromCart(
-                            cart: cart,
-                            orderType: selectedType,
-                            waiterMode: waiterMode,
-                            sheetContext: context,
-                            onCloseSheet: onCloseSheet,
-                            checkoutHostContext: checkoutHostContext,
+              if (draft != null) ...[
+                Material(
+                  color: scheme.primaryContainer.withValues(alpha: 0.55),
+                  borderRadius: BorderRadius.circular(14),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.info_outline_rounded,
+                              size: 22,
+                              color: scheme.onPrimaryContainer,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'Текущий тип: $orderTypeLabel',
+                                style: theme.textTheme.labelLarge?.copyWith(
+                                  color: scheme.onPrimaryContainer,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          'Зал: ${draft.tableZone?.shortLabel ?? '—'} • '
+                          'Стол: ${draft.tableNumber?.toString() ?? '—'}',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: scheme.onPrimaryContainer,
+                            fontWeight: FontWeight.w600,
                           ),
-                  icon: const Icon(Icons.receipt_long_rounded),
-                  label: const Text('Оформить заказ'),
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 6,
+                              ),
+                              decoration: BoxDecoration(
+                                color: scheme.surface.withValues(alpha: 0.75),
+                                borderRadius: BorderRadius.circular(999),
+                                border: Border.all(
+                                  color: scheme.outlineVariant,
+                                ),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    orderTypeIcon,
+                                    size: 14,
+                                    color: scheme.onSurface,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    orderTypeLabel,
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: scheme.onSurface,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (onCloseSheet != null)
+                              OutlinedButton.icon(
+                                onPressed: onCloseSheet,
+                                icon: const Icon(Icons.shopping_bag_outlined, size: 18),
+                                label: const Text('Добавить товар'),
+                              ),
+                            TextButton(
+                              onPressed: () => context
+                                  .read<PosHallOrdersCubit>()
+                                  .clearOpenBillAppend(),
+                              child: const Text('Отменить'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
+                const SizedBox(height: 12),
+              ],
+              Text(
+                'Тип заказа',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: _ActionMockButton(
+                      label: 'С собой',
+                      icon: Icons.shopping_bag_outlined,
+                      compact: true,
+                      highlighted: idx == 0,
+                      onTap: lockOrderType
+                          ? null
+                          : () => context.read<CartBloc>().add(
+                                const CartOrderTypeIndexChanged(0),
+                              ),
+                    ),
+                  ),
+                  Expanded(
+                    child: _ActionMockButton(
+                      label: 'На месте',
+                      icon: Icons.table_restaurant_rounded,
+                      compact: true,
+                      highlighted: idx == 1,
+                      onTap: lockOrderType
+                          ? null
+                          : () => context.read<CartBloc>().add(
+                                const CartOrderTypeIndexChanged(1),
+                              ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _ActionMockButton(
+                      label: 'Доставка',
+                      icon: Icons.delivery_dining_rounded,
+                      compact: true,
+                      highlighted: idx == 2,
+                      onTap: lockOrderType
+                          ? null
+                          : () => context.read<CartBloc>().add(
+                                const CartOrderTypeIndexChanged(2),
+                              ),
+                    ),
+                  ),
+                ],
+              ),
+              if (selectedType == null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Сначала выберите тип заказа.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.error,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ] else if (waiterMode) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Официант: оплату и печать чека проводит касса. Для «На месте» при оформлении нужно выбрать стол.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Text(
+                    l10n.cartTotal,
+                    style: theme.textTheme.titleMedium,
+                  ),
+                  const Spacer(),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      if (cart.paymentAdjustment != null &&
+                          cart.paymentAdjustment!.hasDiscount) ...[
+                        Text(
+                          formatSomoni(cart.total),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            decoration: TextDecoration.lineThrough,
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                        Text(
+                          'Скидка −${formatSomoni(cart.paymentAdjustment!.totalDiscount)}',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: const Color(0xFFEF6C00),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                      Text(
+                        formatSomoni(cart.payableTotal),
+                        style: theme.textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: scheme.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: draft != null
+                          ? null
+                          : () => configureCartPaymentDiscount(
+                                context,
+                                cartTotal: cart.total,
+                              ),
+                      icon: const Icon(Icons.percent_rounded),
+                      label: Text(
+                        cart.paymentAdjustment != null &&
+                                cart.paymentAdjustment!.hasDiscount
+                            ? 'Скидка'
+                            : '%',
+                      ),
+                      style: cart.paymentAdjustment != null &&
+                              cart.paymentAdjustment!.hasDiscount
+                          ? OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFFEF6C00),
+                              side: const BorderSide(color: Color(0xFFEF6C00)),
+                            )
+                          : null,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: FilledButton.icon(
+                      onPressed: cart.isEmpty || selectedType == null
+                          ? null
+                          : () => _runCheckoutFromCart(
+                                cart: cart,
+                                orderType: selectedType,
+                                waiterMode: waiterMode,
+                                sheetContext: context,
+                                onCloseSheet: onCloseSheet,
+                                checkoutHostContext: checkoutHostContext,
+                              ),
+                      icon: const Icon(Icons.receipt_long_rounded),
+                      label: Text(draft != null ? 'Добавить к счёту (сохранить)' : 'Оформить заказ'),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }
@@ -587,11 +816,13 @@ Future<void> _runCheckoutFromCart({
     await Future<void>.delayed(const Duration(milliseconds: 80));
   }
   if (!host.mounted) return;
+  final append = host.read<PosHallOrdersCubit>().state.openBillAppendDraft;
   await runPosCheckoutFlow(
     host,
     orderType: orderType,
     cart: cart,
     waiterMode: waiterMode,
+    appendToOpenBill: append,
   );
 }
 
@@ -651,54 +882,6 @@ Future<void> _confirmRemoveCheck(BuildContext context, CartCheckInfo check) asyn
   }
   if (!context.mounted) return;
   context.read<CartBloc>().add(CartCheckRemoved(check.id));
-}
-
-Future<void> _showOrderAdjustmentsDialog(BuildContext context) {
-  final theme = Theme.of(context);
-  final scheme = theme.colorScheme;
-
-  return showDialog<void>(
-    context: context,
-    useRootNavigator: true,
-    builder: (context) {
-      return AlertDialog(
-        backgroundColor: scheme.surfaceContainerLow,
-        title: Text(
-          'Скидка и клиент',
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        content: SizedBox(
-          width: math.min(420, MediaQuery.sizeOf(context).width * 0.94),
-          child: Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _ActionMockButton(
-                label: 'Скидка',
-                icon: Icons.percent_rounded,
-              ),
-              _ActionMockButton(
-                label: 'Накопительная',
-                icon: Icons.card_membership_rounded,
-              ),
-              _ActionMockButton(
-                label: 'Промокод',
-                icon: Icons.local_offer_outlined,
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Закрыть'),
-          ),
-        ],
-      );
-    },
-  );
 }
 
 class _ActionMockButton extends StatelessWidget {
@@ -767,7 +950,7 @@ class _ActionMockButton extends StatelessWidget {
   }
 }
 
-/// Корзина снизу: почти на весь экран, чтобы было удобно оформлять заказ с телефона.
+/// Корзина снизу: на весь экран (full height), открывается из AppBar и кнопок POS.
 /// Диалоги оформления ([runPosCheckoutFlow]) используют корневой навигатор, чтобы
 /// не «терялись» под этим листом (в т.ч. выбор стола у официанта).
 void showPosCartSheet(BuildContext anchorContext) {
@@ -777,7 +960,10 @@ void showPosCartSheet(BuildContext anchorContext) {
     context: anchorContext,
     isScrollControlled: true,
     useRootNavigator: true,
-    showDragHandle: true,
+    backgroundColor: Theme.of(anchorContext).colorScheme.surface,
+    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.zero),
+    clipBehavior: Clip.none,
+    showDragHandle: false,
     builder: (sheetCtx) {
       return BlocProvider.value(
         value: hall,
@@ -785,20 +971,12 @@ void showPosCartSheet(BuildContext anchorContext) {
           padding: EdgeInsets.only(
             bottom: MediaQuery.viewInsetsOf(sheetCtx).bottom,
           ),
-          child: DraggableScrollableSheet(
-            expand: false,
-            initialChildSize: 0.94,
-            minChildSize: 0.38,
-            maxChildSize: 0.98,
-            snap: true,
-            snapSizes: const [0.94, 0.98],
-            builder: (_, scrollCtrl) {
-              return PosCartPanel(
-                scrollController: scrollCtrl,
-                onClose: () => Navigator.pop(sheetCtx),
-                checkoutHostContext: anchorContext,
-              );
-            },
+          child: SizedBox(
+            height: MediaQuery.sizeOf(sheetCtx).height,
+            child: PosCartPanel(
+              onClose: () => Navigator.pop(sheetCtx),
+              checkoutHostContext: anchorContext,
+            ),
           ),
         ),
       );

@@ -18,10 +18,12 @@ class LocalOrdersRealtimeEvent {
 class LocalOrdersRealtime {
   WebSocketChannel? _channel;
   StreamSubscription? _sub;
+  Timer? _pingTimer;
   final _controller = StreamController<LocalOrdersRealtimeEvent>.broadcast();
   bool _disposed = false;
 
   Stream<LocalOrdersRealtimeEvent> get events => _controller.stream;
+  bool get isConnected => _channel != null && !_disposed;
 
   Future<void> connect({
     required String branchId,
@@ -55,9 +57,22 @@ class LocalOrdersRealtime {
       },
       cancelOnError: false,
     );
+    _startPing();
+  }
+
+  void _startPing() {
+    _pingTimer?.cancel();
+    _pingTimer = Timer.periodic(const Duration(seconds: 20), (_) {
+      if (_disposed || _channel == null) return;
+      try {
+        _channel!.sink.add('{"type":"ping"}');
+      } catch (_) {}
+    });
   }
 
   Future<void> disconnect() async {
+    _pingTimer?.cancel();
+    _pingTimer = null;
     try {
       await _sub?.cancel();
     } catch (_) {}

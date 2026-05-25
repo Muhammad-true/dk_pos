@@ -1,6 +1,6 @@
 ﻿#define MyAppName "Doner Kebab POS"
 ; Версию не совмещаем с backend-installer (там отдельный релиз).
-#define MyAppVersion "1.0.32"
+#define MyAppVersion "1.0.34"
 #define MyAppPublisher "Doner Kebab"
 #define MyAppExeName "dk_pos.exe"
 #define BuildDir "build\\windows\\x64\\runner\\Release"

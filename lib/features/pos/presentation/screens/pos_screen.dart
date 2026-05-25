@@ -24,6 +24,7 @@ import 'package:dk_pos/features/auth/bloc/auth_event.dart';
 import 'package:dk_pos/features/auth/bloc/auth_state.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
 import 'package:dk_pos/features/cash/presentation/pos_cash_flow.dart';
+import 'package:dk_pos/features/shifts/presentation/shift_close_guard.dart';
 import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
 import 'package:dk_pos/features/cart/bloc/cart_event.dart';
 import 'package:dk_pos/features/cart/bloc/cart_state.dart';
@@ -716,7 +717,10 @@ class _PosViewState extends State<_PosView> {
     super.dispose();
   }
 
-  void _logout(BuildContext context) {
+  void _logout(BuildContext context) async {
+    final role = context.read<AuthBloc>().state.user?.role ?? '';
+    final ok = await confirmLogoutWithShiftChecks(context, role: role);
+    if (!ok || !context.mounted) return;
     unawaited(clearPosLocalCaches());
     context.read<CartBloc>().add(const CartResetAll());
     context.read<AuthBloc>().add(const AuthLogoutRequested());

@@ -1356,6 +1356,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get roleWaiter => 'Waiter';
 
   @override
+  String get roleStaff => 'Staff';
+
+  @override
+  String get staffScreenTitle => 'Shift check-in';
+
+  @override
+  String get staffShiftOpenHint =>
+      'Your shift opens automatically when you sign in.';
+
+  @override
+  String get staffShiftCloseHint =>
+      'Signing out closes your shift — orders and cash register are not checked.';
+
+  @override
   String get posWorkspaceSubtitleCashier =>
       'Cashier workspace • quick order assembly';
 

@@ -10,12 +10,14 @@ class CartBloc extends Bloc<CartEvent, CartState> {
     on<CartItemAdded>(_onAdd);
     on<CartItemDecremented>(_onDecrement);
     on<CartCleared>(_onClear);
+    on<CartActiveCheckReplaced>(_onReplaceActiveLines);
     on<CartResetAll>(_onResetAll);
     on<CartCheckCreated>(_onCheckCreated);
     on<CartCheckSelected>(_onCheckSelected);
     on<CartCheckRemoved>(_onCheckRemoved);
     on<CartCheckTableLabelSet>(_onTableLabel);
     on<CartOrderTypeIndexChanged>(_onOrderType);
+    on<CartPaymentAdjustmentChanged>(_onPaymentAdjustment);
   }
 
   final CartRepository _repo;
@@ -26,6 +28,7 @@ class CartBloc extends Bloc<CartEvent, CartState> {
       activeCheckId: repo.activeCheckId,
       lines: Map<String, CartLine>.from(repo.activeLines),
       activeOrderTypeIndex: repo.activeOrderTypeIndex,
+      paymentAdjustment: repo.activePaymentAdjustment,
     );
   }
 
@@ -34,7 +37,11 @@ class CartBloc extends Bloc<CartEvent, CartState> {
   }
 
   void _onAdd(CartItemAdded event, Emitter<CartState> emit) {
-    _repo.add(event.item, unitPrice: event.unitPrice);
+    _repo.add(
+      event.item,
+      unitPrice: event.unitPrice,
+      modifiers: event.modifiers,
+    );
     _emit(emit);
   }
 
@@ -45,6 +52,14 @@ class CartBloc extends Bloc<CartEvent, CartState> {
 
   void _onClear(CartCleared event, Emitter<CartState> emit) {
     _repo.clearActive();
+    _emit(emit);
+  }
+
+  void _onReplaceActiveLines(
+    CartActiveCheckReplaced event,
+    Emitter<CartState> emit,
+  ) {
+    _repo.replaceActiveLines(event.lines);
     _emit(emit);
   }
 
@@ -76,6 +91,14 @@ class CartBloc extends Bloc<CartEvent, CartState> {
 
   void _onOrderType(CartOrderTypeIndexChanged event, Emitter<CartState> emit) {
     _repo.setOrderTypeIndexForActive(event.index);
+    _emit(emit);
+  }
+
+  void _onPaymentAdjustment(
+    CartPaymentAdjustmentChanged event,
+    Emitter<CartState> emit,
+  ) {
+    _repo.setPaymentAdjustmentForActive(event.adjustment);
     _emit(emit);
   }
 }

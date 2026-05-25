@@ -184,6 +184,32 @@ class AppConfig {
 
   /// Ввод с экрана подключения: всегда приводит к URL с портом API (по умолчанию 3000).
   /// Иначе `http://192.168.x.x` без порта шёл на :80 и давал «удалённый компьютер отклонил подключение».
+  /// Режим красного бейджа «инциденты синхронизации» в админке (меню / «Смены и кухня»).
+  /// В `assets/.env`: `POS_ADMIN_SYNC_INCIDENT_MODE`
+  ///
+  /// - `full` (по умолчанию) — незакрытые ошибки импорта сайт-заказов + `outbox.failed` + 1,
+  ///   если у push или pull есть `lastError`.
+  /// - `site_only` — только незакрытые ошибки импорта сайт-заказов (без учёта push/pull и outbox).
+  /// - `strict` — как `full`, плюс в счёт добавляется число событий outbox в retry (`retrying` из API).
+  static PosAdminSyncIncidentMode get adminSyncIncidentMode {
+    try {
+      final v = dotenv.maybeGet('POS_ADMIN_SYNC_INCIDENT_MODE')?.trim().toLowerCase();
+      if (v == null || v.isEmpty) return PosAdminSyncIncidentMode.full;
+      if (v == 'site_only' || v == 'site' || v == 'website' || v == 'website_only') {
+        return PosAdminSyncIncidentMode.siteOnly;
+      }
+      if (v == 'strict' || v == 'sla' || v == 'strict_sla') {
+        return PosAdminSyncIncidentMode.strict;
+      }
+      if (v == 'full' || v == 'default') {
+        return PosAdminSyncIncidentMode.full;
+      }
+      return PosAdminSyncIncidentMode.full;
+    } catch (_) {
+      return PosAdminSyncIncidentMode.full;
+    }
+  }
+
   static String normalizeServerConnectionInput(String raw) {
     final t = raw.trim();
     if (t.isEmpty) return t;
@@ -206,4 +232,11 @@ class AppConfig {
     }
     return _normalize('http://$t:3000');
   }
+}
+
+/// См. [AppConfig.adminSyncIncidentMode].
+enum PosAdminSyncIncidentMode {
+  full,
+  siteOnly,
+  strict,
 }

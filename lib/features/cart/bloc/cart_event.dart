@@ -1,6 +1,8 @@
+import 'package:dk_pos/features/cart/domain/cart_payment_adjustment.dart';
+import 'package:dk_pos/shared/shared.dart';
 import 'package:equatable/equatable.dart';
 
-import 'package:dk_pos/shared/shared.dart';
+import 'cart_state.dart';
 
 sealed class CartEvent extends Equatable {
   const CartEvent();
@@ -10,13 +12,18 @@ sealed class CartEvent extends Equatable {
 }
 
 final class CartItemAdded extends CartEvent {
-  const CartItemAdded(this.item, {this.unitPrice});
+  const CartItemAdded(
+    this.item, {
+    this.unitPrice,
+    this.modifiers = const [],
+  });
 
   final PosMenuItem item;
   final double? unitPrice;
+  final List<PosCartModifier> modifiers;
 
   @override
-  List<Object?> get props => [item.id, unitPrice];
+  List<Object?> get props => [item.id, unitPrice, modifiers];
 }
 
 final class CartItemDecremented extends CartEvent {
@@ -31,6 +38,16 @@ final class CartItemDecremented extends CartEvent {
 /// Очистить позиции **текущего** чека (как «обнулить заказ» на вкладке).
 final class CartCleared extends CartEvent {
   const CartCleared();
+}
+
+/// Подменить корзину содержимым открытого счёта (дальше — только дельта на сервер).
+final class CartActiveCheckReplaced extends CartEvent {
+  const CartActiveCheckReplaced(this.lines);
+
+  final Map<String, CartLine> lines;
+
+  @override
+  List<Object?> get props => [lines];
 }
 
 /// Сбросить все чеки и оставить один пустой (выход кассира и т.п.).
@@ -77,4 +94,13 @@ final class CartOrderTypeIndexChanged extends CartEvent {
 
   @override
   List<Object?> get props => [index];
+}
+
+final class CartPaymentAdjustmentChanged extends CartEvent {
+  const CartPaymentAdjustmentChanged(this.adjustment);
+
+  final CartPaymentAdjustment? adjustment;
+
+  @override
+  List<Object?> get props => [adjustment];
 }

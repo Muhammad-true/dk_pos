@@ -38,6 +38,12 @@ android {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
+
+    // На ПК с ~8 ГБ ОЗУ lintVitalAnalyzeRelease падает с Metaspace OOM.
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
 }
 
 flutter {

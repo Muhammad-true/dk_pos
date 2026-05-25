@@ -91,6 +91,24 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
     });
   }
 
+  String _methodDisplayLabel(
+    AppLocalizations l10n,
+    AdminSalesMethodBreakdown row,
+  ) {
+    final title = row.methodTitle.trim();
+    if (title.isNotEmpty) return title;
+    return _methodLabel(l10n, row.method);
+  }
+
+  String _methodPaymentDisplayLabel(
+    AppLocalizations l10n,
+    AdminSalesPaymentRow row,
+  ) {
+    final title = row.methodTitle.trim();
+    if (title.isNotEmpty) return title;
+    return _methodLabel(l10n, row.method);
+  }
+
   String _methodLabel(AppLocalizations l10n, String method) {
     switch (method) {
       case 'cash':
@@ -101,6 +119,8 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
         return l10n.adminReportsMethodOnline;
       case 'ds':
         return l10n.adminReportsMethodDs;
+      case 'bank':
+        return l10n.adminReportsMethodOther;
       default:
         return method.isEmpty ? l10n.adminReportsMethodOther : method;
     }
@@ -118,6 +138,8 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
         return 'Кухня';
       case 'expeditor':
         return 'Сборщик';
+      case 'staff':
+        return 'Персонал';
       default:
         return role.isEmpty ? '—' : role;
     }
@@ -136,7 +158,7 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
     final sorted = [...report.byMethod]
       ..sort((a, b) => b.totalAmount.compareTo(a.totalAmount));
     final top = sorted.first;
-    return (_methodLabel(l10n, top.method), top.paymentCount, top.totalAmount);
+    return (_methodDisplayLabel(l10n, top), top.paymentCount, top.totalAmount);
   }
 
   (String day, int count, double total)? _topDay(AdminSalesReport report) {
@@ -350,7 +372,7 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
                   rows: _report!.byMethod
                       .map(
                         (r) => (
-                          _methodLabel(l10n, r.method),
+                          _methodDisplayLabel(l10n, r),
                           r.paymentCount,
                           r.totalAmount,
                         ),
@@ -468,7 +490,7 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
                                 ),
                               ),
                               DataCell(Text(p.orderNumber.isNotEmpty ? p.orderNumber : '—')),
-                              DataCell(Text(_methodLabel(l10n, p.method))),
+                              DataCell(Text(_methodPaymentDisplayLabel(l10n, p))),
                               DataCell(
                                 Align(
                                   alignment: Alignment.centerRight,

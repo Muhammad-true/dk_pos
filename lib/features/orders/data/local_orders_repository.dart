@@ -7,11 +7,15 @@ class LocalOrderLineInput {
     required this.menuItemId,
     required this.quantity,
     required this.unitPrice,
+    this.lineKey,
+    this.modifiers = const [],
   });
 
   final String menuItemId;
   final int quantity;
   final double unitPrice;
+  final String? lineKey;
+  final List<Map<String, dynamic>> modifiers;
 }
 
 class LocalOrderResult {
@@ -26,6 +30,25 @@ class LocalOrderResult {
   final String number;
   final double totalPrice;
   final bool created;
+}
+
+/// Ответ PATCH …/orders/:id/line (изменение количества / удаление позиции).
+class LocalPatchOrderLineResult {
+  const LocalPatchOrderLineResult({
+    required this.orderId,
+    required this.status,
+    required this.totalPrice,
+    this.number = '',
+    this.orderCancelledEmpty = false,
+  });
+
+  final String orderId;
+  final String status;
+  final double totalPrice;
+  final String number;
+
+  /// Все позиции убраны — заказ автоматически отменён на сервере.
+  final bool orderCancelledEmpty;
 }
 
 class LocalKitchenQueueItem {
@@ -164,6 +187,7 @@ class LocalKitchenQueueOrder {
     required this.status,
     required this.totalPrice,
     required this.items,
+    this.handOutSource,
   });
 
   final String id;
@@ -171,6 +195,9 @@ class LocalKitchenQueueOrder {
   final String status;
   final double totalPrice;
   final List<LocalKitchenQueueItem> items;
+
+  /// После `done`: `manual` | `auto` с бэкенда; `null` — старые заказы без поля.
+  final String? handOutSource;
 
   factory LocalKitchenQueueOrder.fromJson(Map<String, dynamic> json) {
     final rawItems = json['items'];
@@ -180,12 +207,15 @@ class LocalKitchenQueueOrder {
             .map(LocalKitchenQueueItem.fromJson)
             .toList()
         : const <LocalKitchenQueueItem>[];
+    final hoRaw = json['handOutSource'] ?? json['hand_out_source'];
+    final hoStr = hoRaw?.toString().trim() ?? '';
     return LocalKitchenQueueOrder(
       id: json['id']?.toString() ?? '',
       number: json['number']?.toString() ?? '',
       status: json['status']?.toString() ?? 'new',
       totalPrice: num.tryParse(json['totalPrice']?.toString() ?? '')?.toDouble() ?? 0,
       items: items,
+      handOutSource: hoStr.isEmpty ? null : hoStr.toLowerCase(),
     );
   }
 }
@@ -197,6 +227,9 @@ class LocalCashierBoardOrder {
     required this.requiresPayment,
     this.orderType,
     this.tableLabel,
+    this.orderSource,
+    this.needsCashierAck = false,
+    this.receiptPrinted,
   });
 
   final LocalKitchenQueueOrder order;
@@ -204,13 +237,33 @@ class LocalCashierBoardOrder {
   final String? orderType;
   final String? tableLabel;
 
+  /// `pos` | `website` — с бэкенда после синка сайта.
+  final String? orderSource;
+
+  /// Статус new без подтверждения кассиром (входящий без стола и т.п.).
+  final bool needsCashierAck;
+
+  /// Фискальный чек последней оплаты: `null` если не оплачен или нет данных в БД.
+  final bool? receiptPrinted;
+
   factory LocalCashierBoardOrder.fromJson(Map<String, dynamic> json) {
+    bool? receiptPrinted;
+    final rp = json['receiptPrinted'] ?? json['receipt_printed'];
+    if (rp == true) {
+      receiptPrinted = true;
+    } else if (rp == false) {
+      receiptPrinted = false;
+    }
     return LocalCashierBoardOrder(
       order: LocalKitchenQueueOrder.fromJson(json),
       requiresPayment:
           json['requiresPayment'] == true || json['requires_payment'] == true,
       orderType: json['orderType']?.toString() ?? json['order_type']?.toString(),
       tableLabel: json['tableLabel']?.toString() ?? json['table_label']?.toString(),
+      orderSource: json['orderSource']?.toString() ?? json['order_source']?.toString(),
+      needsCashierAck:
+          json['needsCashierAck'] == true || json['needs_cashier_ack'] == true,
+      receiptPrinted: receiptPrinted,
     );
   }
 }
@@ -266,6 +319,8 @@ class LocalOrdersRepository {
             'menuItemId': l.menuItemId,
             'quantity': l.quantity,
             'unitPrice': l.unitPrice,
+            if (l.lineKey != null && l.lineKey!.isNotEmpty) 'lineKey': l.lineKey,
+            if (l.modifiers.isNotEmpty) 'modifiers': l.modifiers,
           },
         )
         .toList(growable: false);
@@ -458,10 +513,17 @@ class LocalOrdersRepository {
   Future<void> handoffOrder({
     required String orderId,
     required String action,
+    String? handOutSource,
   }) async {
+    final body = <String, dynamic>{'action': action};
+    if (action == 'hand_out') {
+      body['handOutSource'] = (handOutSource ?? 'manual').trim().toLowerCase() == 'auto'
+          ? 'auto'
+          : 'manual';
+    }
     final res = await _http.patch(
       'api/local/orders/$orderId/handoff',
-      body: {'action': action},
+      body: body,
     );
     if (res.statusCode != 200) {
       throw ApiException.fromHttp(
@@ -514,7 +576,7 @@ class LocalOrdersRepository {
     }
   }
 
-  /// Неоплаченные счета с привязкой к столу (GET /open-table-bills).
+  /// Неоплаченные счета филиала (GET /open-table-bills): стол, «с собой» и т.д.
   Future<List<LocalCashierBoardOrder>> fetchCashierIncomingOrders({
     String? branchId,
   }) async {
@@ -613,6 +675,54 @@ class LocalOrdersRepository {
     );
   }
 
+  Future<LocalPatchOrderLineResult> patchOrderLineQuantity({
+    required String orderId,
+    required String menuItemId,
+    required int quantity,
+    String? branchId,
+  }) async {
+    final res = await _http.patch(
+      'api/local/orders/$orderId/line',
+      body: {
+        'menuItemId': menuItemId,
+        'quantity': quantity,
+        'branchId': branchId ?? _defaultBranchId,
+      },
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage:
+            'Нельзя отменить позицию: блюдо уже готово на кухне. Убрать или изменить количество можно только пока кухня ещё не нажала «Готово» (после принятия заказа кухней в работу это ещё допускается, после «Готово» — нет).',
+      );
+    }
+    final body = res.body;
+    if (body is! Map) {
+      return LocalPatchOrderLineResult(
+        orderId: orderId,
+        status: '',
+        totalPrice: 0,
+      );
+    }
+    final map = Map<String, dynamic>.from(body);
+    final orderRaw = map['order'];
+    final order = orderRaw is Map ? Map<String, dynamic>.from(orderRaw) : const {};
+    final tp = order['totalPrice'] ?? order['total_price'];
+    final total = tp is num ? tp.toDouble() : double.tryParse(tp?.toString() ?? '') ?? 0;
+    final cancelledFlag = map['orderCancelledEmpty'] == true ||
+        map['order_cancelled_empty'] == true;
+    final status = order['status']?.toString() ?? '';
+    final number = order['number']?.toString() ?? '';
+    return LocalPatchOrderLineResult(
+      orderId: order['id']?.toString() ?? orderId,
+      status: status,
+      totalPrice: total,
+      number: number,
+      orderCancelledEmpty: cancelledFlag,
+    );
+  }
+
   Future<List<LocalOpenTableBillDto>> fetchOpenTableBills({
     String? branchId,
   }) async {
@@ -624,7 +734,7 @@ class LocalOrdersRepository {
       throw ApiException.fromHttp(
         res.statusCode,
         res.body,
-        fallbackMessage: 'Не удалось загрузить счета на столах',
+        fallbackMessage: 'Не удалось загрузить счета на оплату',
       );
     }
     final body = res.body;
@@ -634,15 +744,33 @@ class LocalOrdersRepository {
     final raw = body['bills'];
     if (raw is! List) return const [];
 
+    int? parseNullableInt(dynamic v) {
+      if (v == null) return null;
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      return int.tryParse(v.toString());
+    }
+
     LocalOpenTableBillLineDto parseLine(Map<String, dynamic> m) {
       final q = m['quantity'];
       final qty = q is int ? q : int.tryParse(q?.toString() ?? '') ?? 0;
       final lt = m['lineTotal'] ?? m['line_total'];
       final total = lt is num ? lt.toDouble() : double.tryParse(lt?.toString() ?? '') ?? 0.0;
+      final upRaw = m['unitPrice'] ?? m['unit_price'];
+      final up = upRaw is num
+          ? upRaw.toDouble()
+          : double.tryParse(upRaw?.toString() ?? '');
+      final midRaw = m['menuItemId'] ?? m['menu_item_id'];
+      final mid = midRaw?.toString().trim();
       return LocalOpenTableBillLineDto(
         name: m['name']?.toString() ?? '',
         quantity: qty,
         lineTotal: total,
+        menuItemId: mid != null && mid.isNotEmpty ? mid : null,
+        unitPrice: up,
+        kitchenLineStatus:
+            m['kitchenLineStatus']?.toString() ?? m['kitchen_line_status']?.toString(),
+        kitchenStationId: parseNullableInt(m['kitchenStationId'] ?? m['kitchen_station_id']),
       );
     }
 
@@ -667,9 +795,11 @@ class LocalOrdersRepository {
         LocalOpenTableBillDto(
           id: m['id']?.toString() ?? '',
           number: m['number']?.toString() ?? '',
+          status: m['status']?.toString() ?? '',
           total: total,
           orderType: m['orderType']?.toString() ?? m['order_type']?.toString() ?? 'На месте',
           tableLabel: m['tableLabel']?.toString() ?? m['table_label']?.toString() ?? '',
+          orderSource: m['orderSource']?.toString() ?? m['order_source']?.toString(),
           createdAtIso: m['createdAt']?.toString() ?? m['created_at']?.toString(),
           lines: lines,
         ),
@@ -684,29 +814,42 @@ class LocalOpenTableBillLineDto {
     required this.name,
     required this.quantity,
     required this.lineTotal,
+    this.menuItemId,
+    this.unitPrice,
+    this.kitchenLineStatus,
+    this.kitchenStationId,
   });
 
   final String name;
   final int quantity;
   final double lineTotal;
+  final String? menuItemId;
+  final double? unitPrice;
+  final String? kitchenLineStatus;
+  final int? kitchenStationId;
 }
 
 class LocalOpenTableBillDto {
   const LocalOpenTableBillDto({
     required this.id,
     required this.number,
+    required this.status,
     required this.total,
     required this.orderType,
     required this.tableLabel,
     required this.lines,
+    this.orderSource,
     this.createdAtIso,
   });
 
   final String id;
   final String number;
+  final String status;
   final double total;
   final String orderType;
   final String tableLabel;
+  /// `pos` | `website` — с бэкенда open-table-bills.
+  final String? orderSource;
   final String? createdAtIso;
   final List<LocalOpenTableBillLineDto> lines;
 }
