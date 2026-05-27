@@ -128,7 +128,8 @@ class _PosCashManagementDialogState extends State<_PosCashManagementDialog> {
     }
   if (!_isAdmin &&
         !{'change_in'}.contains(opType) &&
-        opType != 'encashment') {
+        opType != 'encashment' &&
+        opType != 'off_register') {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -188,8 +189,8 @@ class _PosCashManagementDialogState extends State<_PosCashManagementDialog> {
                       ),
                     ] else
                       const Text(
-                        'Смена открыта. Доступны внесение, инкассация и закрытие смены. '
-                        'Подробный отчёт после закрытия — только у администратора.',
+                        'Смена открыта: внесение, инкассация, закрытие. '
+                        'После закрытия — отчёт: нал, безнал, выемки и итог.',
                       ),
                   ] else
                     const Text(
@@ -216,6 +217,10 @@ class _PosCashManagementDialogState extends State<_PosCashManagementDialog> {
                           child: const Text('Инкассация'),
                         ),
                         if (_isAdmin) ...[
+                          OutlinedButton(
+                            onPressed: () => _operationFlow('off_register'),
+                            child: const Text('Вне кассы'),
+                          ),
                           OutlinedButton(
                             onPressed: () => _operationFlow('supplier_cash'),
                             child: const Text('Поставщику'),
@@ -424,17 +429,18 @@ class _CloseCashShiftDialogState extends State<_CloseCashShiftDialog> {
       if (!mounted) return;
       Navigator.of(context).pop(true);
       if (!context.mounted) return;
-      if (widget.isAdmin && result.report != null) {
+      if (result.report != null) {
         await showDialog<void>(
           context: context,
+          barrierDismissible: false,
           builder: (ctx) => CashShiftReportDialog(report: result.report!),
         );
       } else {
         final msg = result.message ??
-            (widget.isAdmin && result.variance != null
+            (result.variance != null
                 ? (result.variance!.abs() < 0.01
                       ? 'Смена закрыта. Касса сошлась.'
-                      : 'Смена закрыта. Разница: ${formatSomoni(result.variance!)}')
+                      : 'Смена закрыта. Разница нал: ${formatSomoni(result.variance!)}')
                 : 'Смена закрыта.');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(msg)),
@@ -593,13 +599,20 @@ class _CashOperationDialogState extends State<_CashOperationDialog> {
   Widget build(BuildContext context) {
     final title = cashOpTypeLabels[widget.opType] ?? 'Операция';
     final isOut = widget.opType != 'change_in';
+    final isOffRegister = widget.opType == 'off_register';
     return AlertDialog(
       title: Text(title),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (isOut)
+          if (isOffRegister)
+            Text(
+              'Расход вне кассового ящика (не уменьшает нал в ящике). '
+              'Списание со склада — в разделе «Склад».',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          if (isOut && !isOffRegister)
             Text('Доступно: ${formatSomoni(widget.availableCash)}'),
           const SizedBox(height: 8),
           TextField(

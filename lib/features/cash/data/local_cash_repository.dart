@@ -187,6 +187,58 @@ class CashShiftListItem {
   }
 }
 
+class CashShiftPaymentMethodRow {
+  const CashShiftPaymentMethodRow({
+    required this.key,
+    required this.method,
+    required this.title,
+    required this.paymentsIn,
+    required this.refundsOut,
+    required this.net,
+    required this.isCash,
+  });
+
+  final String key;
+  final String method;
+  final String title;
+  final double paymentsIn;
+  final double refundsOut;
+  final double net;
+  final bool isCash;
+
+  factory CashShiftPaymentMethodRow.fromJson(Map<String, dynamic> json) {
+    return CashShiftPaymentMethodRow(
+      key: json['key']?.toString() ?? '',
+      method: json['method']?.toString() ?? '',
+      title: json['title']?.toString() ?? '',
+      paymentsIn: CashShiftSnapshot._asDouble(json['paymentsIn']),
+      refundsOut: CashShiftSnapshot._asDouble(json['refundsOut']),
+      net: CashShiftSnapshot._asDouble(json['net']),
+      isCash: json['isCash'] == true,
+    );
+  }
+}
+
+class CashShiftWithdrawalRow {
+  const CashShiftWithdrawalRow({
+    required this.opType,
+    required this.label,
+    required this.amount,
+  });
+
+  final String opType;
+  final String label;
+  final double amount;
+
+  factory CashShiftWithdrawalRow.fromJson(Map<String, dynamic> json) {
+    return CashShiftWithdrawalRow(
+      opType: json['opType']?.toString() ?? '',
+      label: json['label']?.toString() ?? '',
+      amount: CashShiftSnapshot._asDouble(json['amount']),
+    );
+  }
+}
+
 class CashShiftReportSummary {
   const CashShiftReportSummary({
     required this.cashSalesIn,
@@ -194,6 +246,11 @@ class CashShiftReportSummary {
     required this.operationsIn,
     required this.operationsOut,
     required this.openingBalance,
+    required this.nonCashNet,
+    required this.totalSalesNet,
+    required this.nonCashByMethod,
+    required this.withdrawalRows,
+    required this.offRegisterOut,
     this.closingExpected,
     this.closingActual,
     this.variance,
@@ -204,17 +261,52 @@ class CashShiftReportSummary {
   final double operationsIn;
   final double operationsOut;
   final double openingBalance;
+  final double nonCashNet;
+  final double totalSalesNet;
+  final List<CashShiftPaymentMethodRow> nonCashByMethod;
+  final List<CashShiftWithdrawalRow> withdrawalRows;
+  final double offRegisterOut;
   final double? closingExpected;
   final double? closingActual;
   final double? variance;
 
   factory CashShiftReportSummary.fromJson(Map<String, dynamic> json) {
+    List<CashShiftPaymentMethodRow> parseNonCashMethods(dynamic raw) {
+      if (raw is! List) return const [];
+      return raw
+          .whereType<Map>()
+          .map((e) => CashShiftPaymentMethodRow.fromJson(Map<String, dynamic>.from(e)))
+          .where((m) => !m.isCash && m.method != 'cash')
+          .toList();
+    }
+
+    List<CashShiftWithdrawalRow> parseWithdrawals(Map<String, dynamic> j) {
+      final ob = j['operationsBreakdown'];
+      if (ob is Map) {
+        final rows = ob['withdrawalRows'];
+        if (rows is List) {
+          return rows
+              .whereType<Map>()
+              .map((e) => CashShiftWithdrawalRow.fromJson(Map<String, dynamic>.from(e)))
+              .toList();
+        }
+      }
+      return const [];
+    }
+
     return CashShiftReportSummary(
       cashSalesIn: CashShiftSnapshot._asDouble(json['cashSalesIn']),
       cashRefundsOut: CashShiftSnapshot._asDouble(json['cashRefundsOut']),
       operationsIn: CashShiftSnapshot._asDouble(json['operationsIn']),
       operationsOut: CashShiftSnapshot._asDouble(json['operationsOut']),
       openingBalance: CashShiftSnapshot._asDouble(json['openingBalance']),
+      nonCashNet: CashShiftSnapshot._asDouble(json['nonCashNet']),
+      totalSalesNet: CashShiftSnapshot._asDouble(json['totalSalesNet']),
+      nonCashByMethod: parseNonCashMethods(json['paymentsByMethod']),
+      withdrawalRows: parseWithdrawals(json),
+      offRegisterOut: CashShiftSnapshot._asDouble(
+        json['offRegisterOut'] ?? json['operationsBreakdown']?['offRegisterOut'],
+      ),
       closingExpected: json['closingExpected'] == null
           ? null
           : CashShiftSnapshot._asDouble(json['closingExpected']),
@@ -486,5 +578,6 @@ const cashOpTypeLabels = <String, String>{
   'owner_payout': 'Выплата владельцу',
   'supplier_cash': 'Оплата поставщику',
   'rent_cash': 'Оплата аренды',
+  'off_register': 'Вне кассы',
   'other': 'Прочая выемка',
 };
