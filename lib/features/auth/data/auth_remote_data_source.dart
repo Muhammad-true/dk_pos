@@ -22,4 +22,9 @@ abstract class AuthRemoteDataSource {
   });
 
   Future<UserModel> fetchMe();
+
+  Future<void> verifyPassword({
+    required String password,
+    String? username,
+  });
 }

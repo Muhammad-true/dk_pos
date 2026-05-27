@@ -269,18 +269,90 @@ class LocalRefundHistoryEntry {
   }
 }
 
+class LocalPaymentsTodayMethodSummary {
+  const LocalPaymentsTodayMethodSummary({
+    required this.method,
+    required this.payments,
+    required this.refunds,
+    required this.net,
+  });
+
+  final String method;
+  final double payments;
+  final double refunds;
+  final double net;
+
+  factory LocalPaymentsTodayMethodSummary.fromJson(Map<String, dynamic> json) {
+    return LocalPaymentsTodayMethodSummary(
+      method: (json['method'] ?? '').toString(),
+      payments: _asDouble(json['payments']),
+      refunds: _asDouble(json['refunds']),
+      net: _asDouble(json['net']),
+    );
+  }
+
+  static double _asDouble(dynamic v) =>
+      (v is num) ? v.toDouble() : double.tryParse('$v') ?? 0;
+}
+
+class LocalPaymentsTodaySummary {
+  const LocalPaymentsTodaySummary({
+    required this.paymentCount,
+    required this.totalPayments,
+    required this.refundCount,
+    required this.totalRefunds,
+    required this.netTotal,
+    required this.byMethod,
+  });
+
+  final int paymentCount;
+  final double totalPayments;
+  final int refundCount;
+  final double totalRefunds;
+  final double netTotal;
+  final List<LocalPaymentsTodayMethodSummary> byMethod;
+
+  factory LocalPaymentsTodaySummary.fromJson(Map<String, dynamic> json) {
+    final raw = json['byMethod'];
+    final methods = raw is List
+        ? raw
+              .whereType<Map>()
+              .map(
+                (e) => LocalPaymentsTodayMethodSummary.fromJson(
+                  Map<String, dynamic>.from(e),
+                ),
+              )
+              .toList(growable: false)
+        : const <LocalPaymentsTodayMethodSummary>[];
+    return LocalPaymentsTodaySummary(
+      paymentCount: (json['paymentCount'] as num?)?.toInt() ?? 0,
+      totalPayments: LocalPaymentsTodayMethodSummary._asDouble(
+        json['totalPayments'],
+      ),
+      refundCount: (json['refundCount'] as num?)?.toInt() ?? 0,
+      totalRefunds: LocalPaymentsTodayMethodSummary._asDouble(
+        json['totalRefunds'],
+      ),
+      netTotal: LocalPaymentsTodayMethodSummary._asDouble(json['netTotal']),
+      byMethod: methods,
+    );
+  }
+}
+
 class LocalPaymentsTodayHistory {
   const LocalPaymentsTodayHistory({
     required this.payments,
     required this.refunds,
     required this.hasMorePayments,
     required this.hasMoreRefunds,
+    this.summary,
   });
 
   final List<LocalPaymentHistoryEntry> payments;
   final List<LocalRefundHistoryEntry> refunds;
   final bool hasMorePayments;
   final bool hasMoreRefunds;
+  final LocalPaymentsTodaySummary? summary;
 }
 
 class LocalPaymentsRepository {
@@ -437,11 +509,18 @@ class LocalPaymentsRepository {
               .toList(growable: false);
     final hasMorePayments = body['hasMorePayments'] == true;
     final hasMoreRefunds = body['hasMoreRefunds'] == true;
+    final rawSummary = body['summary'];
+    final summary = rawSummary is Map
+        ? LocalPaymentsTodaySummary.fromJson(
+            Map<String, dynamic>.from(rawSummary),
+          )
+        : null;
     return LocalPaymentsTodayHistory(
       payments: payments,
       refunds: refunds,
       hasMorePayments: hasMorePayments,
       hasMoreRefunds: hasMoreRefunds,
+      summary: summary,
     );
   }
 

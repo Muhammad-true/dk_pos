@@ -19,6 +19,7 @@ import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/core/formatting/money_format.dart';
 import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/core/locale/api_locale.dart';
+import 'package:dk_pos/features/auth/presentation/cashier_password_gate_dialog.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/auth/bloc/auth_event.dart';
 import 'package:dk_pos/features/auth/bloc/auth_state.dart';
@@ -816,6 +817,12 @@ class _PosViewState extends State<_PosView> {
     final role = context.read<AuthBloc>().state.user?.role;
     if (role != 'cashier' && role != 'admin') return;
     if (!mounted) return;
+    final allowed = await showCashierPasswordGate(
+      context,
+      title: 'Оплаты за сегодня',
+      subtitle: 'Введите пароль кассира для просмотра',
+    );
+    if (!allowed || !mounted) return;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => _TodayPaymentsDialogLoader(
@@ -1419,6 +1426,8 @@ class _PosViewState extends State<_PosView> {
                           onOpenTableBills: () =>
                               showOpenTableBillsDialog(rootContext),
                           onOpenSettings: _showSettingsDialog,
+                          onOpenCash: () =>
+                              showPosCashManagementDialog(rootContext),
                           onLogout: () => _logout(rootContext),
                         )
                       : null,
@@ -1528,15 +1537,15 @@ class _PosViewState extends State<_PosView> {
                                   ),
                                 if (user?.role == 'cashier' || user?.role == 'admin')
                                   IconButton(
-                                    icon: const Icon(Icons.account_balance_wallet_outlined),
-                                    tooltip: 'Касса: внесение и выемка',
-                                    onPressed: () => showPosCashManagementDialog(context),
-                                  ),
-                                if (user?.role == 'cashier' || user?.role == 'admin')
-                                  IconButton(
                                     icon: const Icon(Icons.payments_rounded),
                                     tooltip: 'Оплаты за сегодня',
                                     onPressed: _showTodayPaymentsHistoryDialog,
+                                  ),
+                                if (user?.role == 'cashier' || user?.role == 'admin')
+                                  IconButton(
+                                    icon: const Icon(Icons.account_balance_wallet_outlined),
+                                    tooltip: 'Касса: смена, внесение и выемка',
+                                    onPressed: () => showPosCashManagementDialog(context),
                                   ),
                                 TextButton.icon(
                                   onPressed: () => _logout(context),
@@ -1572,6 +1581,18 @@ class _PosViewState extends State<_PosView> {
                                   _posScaffoldKey.currentState?.openDrawer(),
                               icon: const Icon(Icons.menu_rounded),
                             ),
+                            if (user?.role == 'cashier' || user?.role == 'admin') ...[
+                              IconButton(
+                                icon: const Icon(Icons.account_balance_wallet_outlined),
+                                tooltip: 'Касса: смена, внесение и выемка',
+                                onPressed: () => showPosCashManagementDialog(context),
+                              ),
+                              IconButton(
+                                tooltip: l10n.actionExit,
+                                onPressed: () => _logout(context),
+                                icon: const Icon(Icons.logout_rounded),
+                              ),
+                            ],
                           ]
                         : [
                             if (!appendFullscreenMode) ...[
@@ -1611,15 +1632,15 @@ class _PosViewState extends State<_PosView> {
                                 ),
                               if (user?.role == 'cashier' || user?.role == 'admin')
                                 IconButton(
-                                  icon: const Icon(Icons.account_balance_wallet_outlined),
-                                  tooltip: 'Касса: внесение и выемка',
-                                  onPressed: () => showPosCashManagementDialog(context),
-                                ),
-                              if (user?.role == 'cashier' || user?.role == 'admin')
-                                IconButton(
                                   icon: const Icon(Icons.payments_rounded),
                                   tooltip: 'Оплаты за сегодня',
                                   onPressed: _showTodayPaymentsHistoryDialog,
+                                ),
+                              if (user?.role == 'cashier' || user?.role == 'admin')
+                                IconButton(
+                                  icon: const Icon(Icons.account_balance_wallet_outlined),
+                                  tooltip: 'Касса: смена, внесение и выемка',
+                                  onPressed: () => showPosCashManagementDialog(context),
                                 ),
                               TextButton.icon(
                                 onPressed: () => _logout(context),
@@ -1942,6 +1963,21 @@ class _PosViewState extends State<_PosView> {
                                                           onPressed:
                                                               _showTodayPaymentsHistoryDialog,
                                                         ),
+                                                      if (user?.role ==
+                                                              'cashier' ||
+                                                          user?.role == 'admin')
+                                                        IconButton(
+                                                          icon: const Icon(
+                                                            Icons
+                                                                .account_balance_wallet_outlined,
+                                                          ),
+                                                          tooltip:
+                                                              'Касса: смена, внесение и выемка',
+                                                          onPressed: () =>
+                                                              showPosCashManagementDialog(
+                                                                context,
+                                                              ),
+                                                        ),
                                                       IconButton(
                                                         tooltip: l10n.actionExit,
                                                         onPressed: () =>
@@ -2210,6 +2246,7 @@ class _PosMobileDrawer extends StatelessWidget {
     required this.onRefreshCustomerDisplay,
     required this.onOpenTableBills,
     required this.onOpenSettings,
+    required this.onOpenCash,
     required this.onLogout,
   });
 
@@ -2225,6 +2262,7 @@ class _PosMobileDrawer extends StatelessWidget {
   final Future<void> Function() onRefreshCustomerDisplay;
   final VoidCallback onOpenTableBills;
   final VoidCallback onOpenSettings;
+  final VoidCallback onOpenCash;
   final VoidCallback onLogout;
 
   Future<void> _closeThen(
@@ -2327,6 +2365,16 @@ class _PosMobileDrawer extends StatelessWidget {
                 onOpenSettings();
               },
             ),
+            if (isCashierOrAdmin)
+              ListTile(
+                leading: const Icon(Icons.account_balance_wallet_outlined),
+                title: const Text('Касса (смена)'),
+                subtitle: const Text('Открыть / закрыть смену'),
+                onTap: () {
+                  Navigator.pop(context);
+                  onOpenCash();
+                },
+              ),
             const Divider(height: 1),
             ListTile(
               leading: Icon(Icons.logout_rounded, color: scheme.error),
@@ -3149,6 +3197,7 @@ class _TodayPaymentsDialogLoaderState extends State<_TodayPaymentsDialogLoader> 
   bool _loadingMore = false;
   List<LocalPaymentHistoryEntry> _payments = const [];
   List<LocalRefundHistoryEntry> _refunds = const [];
+  LocalPaymentsTodaySummary? _summary;
   bool _hasMorePayments = false;
   bool _hasMoreRefunds = false;
   String? _error;
@@ -3173,6 +3222,7 @@ class _TodayPaymentsDialogLoaderState extends State<_TodayPaymentsDialogLoader> 
       setState(() {
         _payments = history.payments;
         _refunds = history.refunds;
+        _summary = history.summary;
         _hasMorePayments = history.hasMorePayments;
         _hasMoreRefunds = history.hasMoreRefunds;
         _loading = false;
@@ -3260,6 +3310,7 @@ class _TodayPaymentsDialogLoaderState extends State<_TodayPaymentsDialogLoader> 
     return _TodayPaymentsDialog(
       entries: _payments,
       refunds: _refunds,
+      summary: _summary,
       hasMorePayments: _hasMorePayments,
       hasMoreRefunds: _hasMoreRefunds,
       loadingMore: _loadingMore,
@@ -3276,11 +3327,13 @@ class _TodayPaymentsDialog extends StatelessWidget {
     required this.hasMorePayments,
     required this.hasMoreRefunds,
     required this.loadingMore,
+    this.summary,
     this.onLoadMore,
   });
 
   final List<LocalPaymentHistoryEntry> entries;
   final List<LocalRefundHistoryEntry> refunds;
+  final LocalPaymentsTodaySummary? summary;
   final bool hasMorePayments;
   final bool hasMoreRefunds;
   final bool loadingMore;
@@ -3290,10 +3343,22 @@ class _TodayPaymentsDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final totalPayments = entries.fold<double>(0, (sum, e) => sum + e.amount);
-    final totalRefunds = refunds.fold<double>(0, (sum, e) => sum + e.amount);
-    final netTotal = totalPayments - totalRefunds;
-    final methodRows = _buildMethodTotals(entries, refunds);
+    final totalPayments = summary?.totalPayments ??
+        entries.fold<double>(0, (sum, e) => sum + e.amount);
+    final totalRefunds = summary?.totalRefunds ??
+        refunds.fold<double>(0, (sum, e) => sum + e.amount);
+    final netTotal = summary?.netTotal ?? (totalPayments - totalRefunds);
+    final methodRows = summary != null
+        ? summary!.byMethod
+            .map(
+              (row) => _PaymentMethodTotalsRow(
+                method: row.method,
+                payments: row.payments,
+                refunds: row.refunds,
+              ),
+            )
+            .toList(growable: false)
+        : _buildMethodTotals(entries, refunds);
     final dialogWidth =
         math.min(820.0, MediaQuery.sizeOf(context).width * 0.94).toDouble();
     final dialogHeight =
@@ -3369,6 +3434,21 @@ class _TodayPaymentsDialog extends StatelessWidget {
               ],
             ),
           ),
+          if (summary != null &&
+              (summary!.paymentCount > entries.length ||
+                  summary!.refundCount > refunds.length))
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: Text(
+                  'Итоги за весь день (${summary!.paymentCount} оплат, '
+                  '${summary!.refundCount} возвратов). Ниже — последние записи.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ),
           const SliverToBoxAdapter(child: SizedBox(height: 12)),
           SliverToBoxAdapter(
             child: Text(
@@ -3484,7 +3564,11 @@ class _TodayPaymentsDialog extends StatelessWidget {
                       : TextButton.icon(
                           onPressed: () => onLoadMore!(),
                           icon: const Icon(Icons.expand_more),
-                          label: const Text('Показать ещё'),
+                          label: Text(
+                            summary != null
+                                ? 'Показать ещё в списке'
+                                : 'Показать ещё',
+                          ),
                         ),
                 ),
               ),

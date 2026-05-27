@@ -53,6 +53,12 @@ class AuthRepository {
 
   Future<UserModel> fetchMe() => _remote.fetchMe();
 
+  Future<void> verifyPassword({
+    required String password,
+    String? username,
+  }) =>
+      _remote.verifyPassword(password: password, username: username);
+
   Future<void> persistSession(String token, UserModel user) async {
     await _kv.setString(_kToken, token);
     await _kv.setString(_kUserJson, jsonEncode(_userToJson(user)));

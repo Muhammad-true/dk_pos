@@ -60,6 +60,24 @@ class AuthRemoteDataSourceImpl implements AuthRemoteDataSource {
   }
 
   @override
+  Future<void> verifyPassword({
+    required String password,
+    String? username,
+  }) async {
+    final body = <String, dynamic>{'password': password};
+    final u = username?.trim();
+    if (u != null && u.isNotEmpty) body['username'] = u;
+    final res = await _http.post('api/auth/verify-password', body: body);
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Неверный пароль',
+      );
+    }
+  }
+
+  @override
   Future<UserModel> fetchMe() async {
     final res = await _http.get('api/auth/me');
     if (res.statusCode != 200) {
