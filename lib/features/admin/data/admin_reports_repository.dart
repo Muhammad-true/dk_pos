@@ -432,11 +432,103 @@ class AdminSiteOrderImportFailureRow {
   final String? resolvedAt;
 }
 
+class AdminPaymentCheckItem {
+  const AdminPaymentCheckItem({
+    required this.menuItemId,
+    required this.name,
+    required this.quantity,
+    required this.unitPrice,
+    required this.lineTotal,
+  });
+
+  final String menuItemId;
+  final String name;
+  final double quantity;
+  final double unitPrice;
+  final double lineTotal;
+
+  factory AdminPaymentCheckItem.fromJson(Map<String, dynamic> json) {
+    return AdminPaymentCheckItem(
+      menuItemId: json['menuItemId']?.toString() ?? '',
+      name: json['name']?.toString() ?? 'Товар',
+      quantity: _asDouble(json['quantity']),
+      unitPrice: _asDouble(json['unitPrice']),
+      lineTotal: _asDouble(json['lineTotal']),
+    );
+  }
+}
+
+class AdminPaymentCheckDetail {
+  const AdminPaymentCheckDetail({
+    required this.paymentUuid,
+    required this.orderNumber,
+    required this.methodTitle,
+    required this.amount,
+    required this.createdAtIso,
+    required this.items,
+  });
+
+  final String paymentUuid;
+  final String orderNumber;
+  final String methodTitle;
+  final double amount;
+  final String createdAtIso;
+  final List<AdminPaymentCheckItem> items;
+
+  factory AdminPaymentCheckDetail.fromJson(Map<String, dynamic> json) {
+    final rawItems = json['items'];
+    final items = rawItems is List
+        ? rawItems
+            .whereType<Map>()
+            .map((e) => AdminPaymentCheckItem.fromJson(Map<String, dynamic>.from(e)))
+            .toList()
+        : <AdminPaymentCheckItem>[];
+    return AdminPaymentCheckDetail(
+      paymentUuid: json['paymentUuid']?.toString() ?? '',
+      orderNumber: json['orderNumber']?.toString() ?? '',
+      methodTitle: json['methodTitle']?.toString() ?? json['method']?.toString() ?? '',
+      amount: _asDouble(json['amount']),
+      createdAtIso: json['createdAt']?.toString() ?? '',
+      items: items,
+    );
+  }
+}
+
+double _asDouble(dynamic v) {
+  if (v is num) return v.toDouble();
+  return double.tryParse(v?.toString() ?? '') ?? 0;
+}
+
 class AdminReportsRepository {
   AdminReportsRepository(this._http);
 
   final HttpClient _http;
   String get _defaultBranchId => AppConfig.storeBranchId;
+
+  Future<AdminPaymentCheckDetail> fetchPaymentCheck({
+    required String paymentUuid,
+    String? branchId,
+  }) async {
+    final resolvedBranchId = (branchId == null || branchId.trim().isEmpty)
+        ? _defaultBranchId
+        : branchId.trim();
+    final res = await _http.get(
+      'api/local/reports/payments/$paymentUuid/check',
+      query: {'branchId': resolvedBranchId},
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Не удалось загрузить позиции чека',
+      );
+    }
+    final body = res.body;
+    if (body is! Map) {
+      throw ApiException(res.statusCode, 'Некорректный ответ чека');
+    }
+    return AdminPaymentCheckDetail.fromJson(Map<String, dynamic>.from(body));
+  }
 
   Future<AdminSalesReport> fetchSalesReport({
     required String dateFrom,

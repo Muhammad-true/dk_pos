@@ -481,6 +481,7 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
                       rows: [
                         for (final p in _report!.payments)
                           DataRow(
+                            onSelectChanged: (_) => _showPaymentCheck(context, p),
                             cells: [
                               DataCell(
                                 Text(
@@ -521,6 +522,67 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
       return fmt.format(dt);
     } catch (_) {
       return iso;
+    }
+  }
+
+  Future<void> _showPaymentCheck(BuildContext context, AdminSalesPaymentRow payment) async {
+    if (payment.paymentUuid.isEmpty) return;
+    final repo = context.read<AdminReportsRepository>();
+    try {
+      final detail = await repo.fetchPaymentCheck(
+        paymentUuid: payment.paymentUuid,
+        branchId: _branchId,
+      );
+      if (!context.mounted) return;
+      final timeLabel = detail.createdAtIso.isNotEmpty
+          ? _formatPaymentTime(detail.createdAtIso, DateFormat('d MMM y, HH:mm', 'ru'))
+          : '—';
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('Чек №${detail.orderNumber.isNotEmpty ? detail.orderNumber : '—'}'),
+          content: SizedBox(
+            width: 480,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('$timeLabel · ${detail.methodTitle} · ${formatSomoni(detail.amount)}'),
+                  const SizedBox(height: 12),
+                  if (detail.items.isEmpty)
+                    const Text('Позиции не найдены.')
+                  else
+                    ...detail.items.map(
+                      (it) => Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                '${it.name} × ${it.quantity.toStringAsFixed(it.quantity.truncateToDouble() == it.quantity ? 0 : 1)}',
+                              ),
+                            ),
+                            Text(formatSomoni(it.lineTotal > 0 ? it.lineTotal : it.unitPrice * it.quantity)),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Закрыть')),
+          ],
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Не удалось загрузить чек: $e')),
+      );
     }
   }
 }
