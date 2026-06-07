@@ -1,4 +1,6 @@
 import 'package:dk_pos/core/error/api_exception.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/network/http_client.dart';
 
@@ -184,6 +186,8 @@ class LocalKitchenQueueOrder {
   const LocalKitchenQueueOrder({
     required this.id,
     required this.number,
+    this.orderType,
+    this.tableLabel,
     required this.status,
     required this.totalPrice,
     required this.items,
@@ -192,6 +196,8 @@ class LocalKitchenQueueOrder {
 
   final String id;
   final String number;
+  final String? orderType;
+  final String? tableLabel;
   final String status;
   final double totalPrice;
   final List<LocalKitchenQueueItem> items;
@@ -212,6 +218,8 @@ class LocalKitchenQueueOrder {
     return LocalKitchenQueueOrder(
       id: json['id']?.toString() ?? '',
       number: json['number']?.toString() ?? '',
+      orderType: json['orderType']?.toString() ?? json['order_type']?.toString(),
+      tableLabel: json['tableLabel']?.toString() ?? json['table_label']?.toString(),
       status: json['status']?.toString() ?? 'new',
       totalPrice: num.tryParse(json['totalPrice']?.toString() ?? '')?.toDouble() ?? 0,
       items: items,
@@ -306,12 +314,18 @@ class LocalOrdersRepository {
   final HttpClient _http;
   String get _defaultBranchId => AppConfig.storeBranchId;
 
+  String get _defaultTerminalId {
+    final v = dotenv.maybeGet('POS_TERMINAL_ID')?.trim();
+    return (v != null && v.isNotEmpty) ? v : 'KASSA-1';
+  }
+
   Future<LocalOrderResult> createOrUpdateOrder({
     required String orderId,
     required List<LocalOrderLineInput> lines,
     required double totalAmount,
     required String orderType,
     String? tableLabel,
+    String? terminalId,
   }) async {
     final bodyLines = lines
         .map(
@@ -329,10 +343,12 @@ class LocalOrdersRepository {
       'api/local/orders',
       body: {
         'orderId': orderId,
+        'branchId': _defaultBranchId,
         'lines': bodyLines,
         'totalAmount': totalAmount,
         'orderType': orderType,
         'tableLabel': tableLabel,
+        'terminalId': terminalId ?? _defaultTerminalId,
       },
     );
     if (res.statusCode != 200 && res.statusCode != 201) {
@@ -679,13 +695,18 @@ class LocalOrdersRepository {
     required String orderId,
     required String menuItemId,
     required int quantity,
+    String? lineKey,
+    String? reason,
     String? branchId,
   }) async {
+    final cleanReason = reason?.trim();
     final res = await _http.patch(
       'api/local/orders/$orderId/line',
       body: {
         'menuItemId': menuItemId,
+        if (lineKey != null && lineKey.trim().isNotEmpty) 'lineKey': lineKey.trim(),
         'quantity': quantity,
+        if (cleanReason != null && cleanReason.isNotEmpty) 'reason': cleanReason,
         'branchId': branchId ?? _defaultBranchId,
       },
     );
@@ -694,7 +715,7 @@ class LocalOrdersRepository {
         res.statusCode,
         res.body,
         fallbackMessage:
-            'Нельзя отменить позицию: блюдо уже готово на кухне. Убрать или изменить количество можно только пока кухня ещё не нажала «Готово» (после принятия заказа кухней в работу это ещё допускается, после «Готово» — нет).',
+            'Нельзя убрать позицию. Если кухня уже приняла блюдо — укажите причину убирания.',
       );
     }
     final body = res.body;
@@ -762,11 +783,14 @@ class LocalOrdersRepository {
           : double.tryParse(upRaw?.toString() ?? '');
       final midRaw = m['menuItemId'] ?? m['menu_item_id'];
       final mid = midRaw?.toString().trim();
+      final lkRaw = m['lineKey'] ?? m['line_key'];
+      final lk = lkRaw?.toString().trim();
       return LocalOpenTableBillLineDto(
         name: m['name']?.toString() ?? '',
         quantity: qty,
         lineTotal: total,
         menuItemId: mid != null && mid.isNotEmpty ? mid : null,
+        lineKey: lk != null && lk.isNotEmpty ? lk : null,
         unitPrice: up,
         kitchenLineStatus:
             m['kitchenLineStatus']?.toString() ?? m['kitchen_line_status']?.toString(),
@@ -799,8 +823,18 @@ class LocalOrdersRepository {
           total: total,
           orderType: m['orderType']?.toString() ?? m['order_type']?.toString() ?? 'На месте',
           tableLabel: m['tableLabel']?.toString() ?? m['table_label']?.toString() ?? '',
+          isDelivery: m['isDelivery'] == true || m['is_delivery'] == true,
+          customerPhone: m['customerPhone']?.toString() ?? m['customer_phone']?.toString(),
           orderSource: m['orderSource']?.toString() ?? m['order_source']?.toString(),
           createdAtIso: m['createdAt']?.toString() ?? m['created_at']?.toString(),
+          createdByUsername: m['createdByUsername']?.toString() ??
+              m['created_by_username']?.toString(),
+          createdByRole: m['createdByRole']?.toString() ??
+              m['created_by_role']?.toString(),
+          terminalId: m['terminalId']?.toString() ?? m['terminal_id']?.toString(),
+          isWaiterOrder: m['isWaiterOrder'] == true || m['is_waiter_order'] == true,
+          isTakeaway: m['isTakeaway'] == true || m['is_takeaway'] == true,
+          isCashierOrder: m['isCashierOrder'] == true || m['is_cashier_order'] == true,
           lines: lines,
         ),
       );
@@ -815,6 +849,7 @@ class LocalOpenTableBillLineDto {
     required this.quantity,
     required this.lineTotal,
     this.menuItemId,
+    this.lineKey,
     this.unitPrice,
     this.kitchenLineStatus,
     this.kitchenStationId,
@@ -824,6 +859,7 @@ class LocalOpenTableBillLineDto {
   final int quantity;
   final double lineTotal;
   final String? menuItemId;
+  final String? lineKey;
   final double? unitPrice;
   final String? kitchenLineStatus;
   final int? kitchenStationId;
@@ -840,6 +876,14 @@ class LocalOpenTableBillDto {
     required this.lines,
     this.orderSource,
     this.createdAtIso,
+    this.isDelivery = false,
+    this.customerPhone,
+    this.createdByUsername,
+    this.createdByRole,
+    this.terminalId,
+    this.isWaiterOrder = false,
+    this.isTakeaway = false,
+    this.isCashierOrder = false,
   });
 
   final String id;
@@ -851,5 +895,13 @@ class LocalOpenTableBillDto {
   /// `pos` | `website` — с бэкенда open-table-bills.
   final String? orderSource;
   final String? createdAtIso;
+  final bool isDelivery;
+  final String? customerPhone;
+  final String? createdByUsername;
+  final String? createdByRole;
+  final String? terminalId;
+  final bool isWaiterOrder;
+  final bool isTakeaway;
+  final bool isCashierOrder;
   final List<LocalOpenTableBillLineDto> lines;
 }

@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/features/admin/data/admin_reports_repository.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_server_env_section.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_server_network_section.dart';
 
 enum _KitchenAuditSort { best, slow }
 
@@ -430,6 +431,8 @@ class _AdminKitchenOpsPanelState extends State<AdminKitchenOpsPanel> {
                             ),
                           ],
                         ),
+                        const SizedBox(height: 10),
+                        const AdminServerNetworkSection(),
                         const SizedBox(height: 10),
                         const AdminServerEnvSection(),
                         const SizedBox(height: 10),

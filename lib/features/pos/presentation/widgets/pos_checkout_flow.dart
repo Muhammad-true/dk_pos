@@ -22,6 +22,7 @@ import 'package:dk_pos/features/loyalty/data/local_loyalty_repository.dart';
 import 'package:dk_pos/features/pos/bloc/pos_hall_orders_cubit.dart';
 import 'package:dk_pos/features/pos/data/open_table_bill_from_server.dart';
 import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
+import 'package:dk_pos/features/cash/presentation/pos_cash_flow.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_online_order_edit_flow.dart';
 import 'package:flutter/services.dart';
 
@@ -95,6 +96,11 @@ Future<void> runPosCheckoutFlow(
 }) async {
   if (cart.isEmpty || !context.mounted) return;
   final user = context.read<AuthBloc>().state.user;
+  final role = (user?.role ?? '').trim().toLowerCase();
+  if (role == 'cashier' || role == 'admin') {
+    final shiftOpen = await ensureCashShiftOpen(context);
+    if (!shiftOpen || !context.mounted) return;
+  }
   final isWaiter = user?.isWaiter == true;
   final append = appendToOpenBill;
 
@@ -104,6 +110,7 @@ Future<void> runPosCheckoutFlow(
 
   int? tableNumber;
   PosTableZone? tableZone;
+  String? deliveryPhone;
 
   if (append != null) {
     effectiveOrderTypeLabel = append.orderTypeLabel;
@@ -164,6 +171,13 @@ Future<void> runPosCheckoutFlow(
     }
   }
 
+  if (append == null && effectiveOrderType == PosCheckoutOrderType.delivery) {
+    final phone = await _pickDeliveryPhone(context);
+    if (!context.mounted) return;
+    if (phone == null) return;
+    deliveryPhone = phone;
+  }
+
   bool payNow = false;
   if (append == null && !effectiveWaiterMode) {
     final timing = await _pickPayTiming(context);
@@ -207,22 +221,30 @@ Future<void> runPosCheckoutFlow(
     if (!context.mounted || skipReceipt == null) return;
   }
 
+  final hall = context.read<PosHallOrdersCubit>();
+  final cartBloc = context.read<CartBloc>();
+
+  // Актуальная корзина после диалогов (стол, оплата, наличные) — иначе на сервер уходит устаревший снимок.
+  final cartLive = cartBloc.state;
+  final appendBaselineForGate = append != null
+      ? hall.state.openBillAppendBaselineQtyByLineKey
+      : const <String, int>{};
+  if (cartLive.isEmpty && appendBaselineForGate.isEmpty) return;
+  payableTotal = paymentDiscount?.payableAmount ?? cartLive.total;
+
   PosTableBill? openBillBefore;
   if (append == null && tableNumber != null && tableZone != null) {
-    openBillBefore = context.read<PosHallOrdersCubit>().findOpenBillForTable(
+    openBillBefore = hall.findOpenBillForTable(
       number: tableNumber,
       zone: tableZone,
     );
   }
 
-  final hall = context.read<PosHallOrdersCubit>();
-  final cartBloc = context.read<CartBloc>();
-
   late final String registeredId;
   if (append != null) {
     registeredId = append.id;
   } else {
-    final lines = cart.sortedLines
+    final lines = cartLive.sortedLines
         .map(
           (l) => PosTableBillLine(
             name: l.item.name,
@@ -231,16 +253,25 @@ Future<void> runPosCheckoutFlow(
           ),
         )
         .toList(growable: false);
+    final preSyncDeliveryPhone =
+        TjPhoneDialLockedFormatter.ensureStored(deliveryPhone ?? '').trim();
+    final billIsDelivery = effectiveOrderType == PosCheckoutOrderType.delivery;
     final bill = PosTableBill(
       id: 'tb-${DateTime.now().millisecondsSinceEpoch}',
       lines: lines,
-      total: cart.total,
+      total: cartLive.total,
       orderTypeLabel: effectiveOrderTypeLabel,
       tableNumber: tableNumber,
       tableZone: tableZone,
       createdAt: DateTime.now(),
       isPaid: false,
       paymentMethod: null,
+      isDelivery: billIsDelivery,
+      customerPhone:
+          preSyncDeliveryPhone.isNotEmpty ? preSyncDeliveryPhone : null,
+      tableLabel: billIsDelivery && preSyncDeliveryPhone.isNotEmpty
+          ? 'Доставка · тел. получателя: $preSyncDeliveryPhone'
+          : '',
     );
     final registered = hall.registerOrMergeBill(bill);
     registeredId = registered.id;
@@ -253,17 +284,64 @@ Future<void> runPosCheckoutFlow(
   final orderSync = await _syncLocalOrder(
     context,
     orderId: registeredId,
-    cart: cart,
+    cart: cartLive,
     orderTypeLabel: effectiveOrderTypeLabel,
     tableZone: tableZone,
     tableNumber: tableNumber,
+    deliveryPhone: deliveryPhone,
     appendBaselineQtyByLineKey: appendBaselineQtyByLineKey,
   );
   if (!context.mounted) return;
 
-  if (append != null && !orderSync.synced) {
+  if (!orderSync.synced) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(orderSync.message ?? 'Не удалось сохранить заказ')),
+    );
+    return;
+  }
+
+  final normalizedDeliveryPhone =
+      TjPhoneDialLockedFormatter.ensureStored(deliveryPhone ?? '').trim();
+  final isDeliveryCheckout =
+      effectiveOrderType == PosCheckoutOrderType.delivery;
+  if (isDeliveryCheckout &&
+      normalizedDeliveryPhone.isNotEmpty &&
+      !payNow &&
+      append == null) {
+    try {
+      await context.read<LocalHardwareRepository>().printReceipt(
+            orderId: registeredId,
+            totalAmount: cartLive.total,
+            paymentMethod: 'delivery',
+            receiptTitle: 'ЗАКАЗ · ДОСТАВКА',
+            customerPhone: normalizedDeliveryPhone,
+            isDeliveryOrder: true,
+          );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Печать чека доставки не удалась: $e')),
+        );
+      }
+    }
+  }
+
+  if (orderSync.orderCancelledEmpty) {
+    cartBloc.add(const CartCleared());
+    if (append != null) {
+      hall.clearOpenBillAppend();
+    }
+    await refreshOpenTableBillsIntoHall(context);
+    if (!context.mounted) return;
+    final numLabel = orderSync.orderNumber?.trim() ?? '';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          numLabel.isEmpty
+              ? 'Заказ отменён — все позиции удалены'
+              : 'Заказ №$numLabel отменён — все позиции удалены',
+        ),
+      ),
     );
     return;
   }
@@ -311,7 +389,7 @@ Future<void> runPosCheckoutFlow(
   }
   final consentEdit = append != null && hall.state.openBillAppendCustomerConsent;
   final consentMeta = hall.state.openBillAppendConsentMeta;
-  final appendTotal = cart.total;
+  final appendTotal = cartLive.total;
 
   cartBloc.add(const CartCleared());
   if (append != null) {
@@ -364,7 +442,7 @@ Future<void> runPosCheckoutFlow(
           if (cashDraft != null)
             'Получено ${formatSomoni(cashDraft.received)}, сдача ${formatSomoni(cashDraft.change)}',
           if (paymentDiscount != null && paymentDiscount.totalDiscount > 0)
-            'Скидка ${formatSomoni(paymentDiscount.totalDiscount)} (${formatSomoni(cart.total)} -> ${formatSomoni(paymentDiscount.payableAmount)})',
+            'Скидка ${formatSomoni(paymentDiscount.totalDiscount)} (${formatSomoni(cartLive.total)} -> ${formatSomoni(paymentDiscount.payableAmount)})',
         ].join(' • '),
       ),
     ),
@@ -1963,6 +2041,89 @@ class _PosMoneyKeypad extends StatelessWidget {
   }
 }
 
+/// Национальная часть после [kDefaultPhoneDialPrefix] (до 9 цифр).
+class _TjPhoneNationalInputController {
+  String national = '';
+
+  String get display =>
+      TjPhoneDialLockedFormatter.ensureStored(kDefaultPhoneDialPrefix + national);
+
+  void setFromStored(String? stored) {
+    national = TjPhoneDialLockedFormatter.nationalDigitsFromAny(stored ?? '');
+  }
+
+  void appendDigit(String digit) {
+    if (!RegExp(r'^[0-9]$').hasMatch(digit)) return;
+    if (national.length >= 9) return;
+    national += digit;
+  }
+
+  void backspace() {
+    if (national.isEmpty) return;
+    national = national.substring(0, national.length - 1);
+  }
+
+  void clear() => national = '';
+}
+
+/// Цифровая клавиатура для телефона доставки (только 0–9, без изменения +992).
+class _PosPhoneDigitKeypad extends StatelessWidget {
+  const _PosPhoneDigitKeypad({
+    required this.onDigit,
+    required this.onBackspace,
+    required this.onClear,
+  });
+
+  final void Function(String digit) onDigit;
+  final VoidCallback onBackspace;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final digitStyle = theme.textTheme.titleLarge?.copyWith(
+      fontWeight: FontWeight.w800,
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GridView.count(
+          crossAxisCount: 3,
+          shrinkWrap: true,
+          mainAxisSpacing: 8,
+          crossAxisSpacing: 8,
+          childAspectRatio: 1.8,
+          children: [
+            for (final d in ['1', '2', '3', '4', '5', '6', '7', '8', '9'])
+              FilledButton.tonal(
+                onPressed: () => onDigit(d),
+                child: Text(d, style: digitStyle),
+              ),
+            FilledButton.tonal(
+              onPressed: onClear,
+              child: Text(
+                'Стереть',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            FilledButton.tonal(
+              onPressed: () => onDigit('0'),
+              child: Text('0', style: digitStyle),
+            ),
+            FilledButton.tonal(
+              onPressed: onBackspace,
+              child: const Icon(Icons.backspace_outlined),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
 class _MoneyRawInputController {
   String raw = '';
 
@@ -2571,6 +2732,20 @@ Future<void> payOpenBill(
   required PosTableBill bill,
 }) async {
   if (bill.isPaid || !context.mounted) return;
+  if (bill.lines.isEmpty || bill.total <= 0) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Счёт пуст — оплата недоступна (заказ отменён или без позиций)'),
+      ),
+    );
+    return;
+  }
+  if (bill.orderStatus.trim().toLowerCase() == 'cancelled') {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Заказ отменён — оплата недоступна')),
+    );
+    return;
+  }
   final outcome = await payPosOrderAtCashier(
     context,
     orderId: bill.id,
@@ -2830,6 +3005,7 @@ Future<_OrderSyncResult> _syncLocalOrder(
   required String orderTypeLabel,
   required PosTableZone? tableZone,
   required int? tableNumber,
+  String? deliveryPhone,
   Map<String, int>? appendBaselineQtyByLineKey,
 }) async {
   final repo = context.read<LocalOrdersRepository>();
@@ -2841,6 +3017,8 @@ Future<_OrderSyncResult> _syncLocalOrder(
       for (final l in cart.sortedLines) l.lineKey: l.quantity,
     };
     var didPatch = false;
+    var orderCancelledEmpty = false;
+    String? cancelledOrderNumber;
     for (final e in baseline.entries) {
       final lineKey = e.key;
       final baseQty = e.value;
@@ -2855,14 +3033,19 @@ Future<_OrderSyncResult> _syncLocalOrder(
         }
         menuItemId ??= lineKey.split('::').first;
         final mid = menuItemId;
-        if (mid == null || mid.isEmpty) continue;
+        if (mid.isEmpty) continue;
         try {
-          await repo.patchOrderLineQuantity(
+          final patchResult = await repo.patchOrderLineQuantity(
             orderId: orderId,
             menuItemId: mid,
+            lineKey: lineKey,
             quantity: cartQty,
           );
           didPatch = true;
+          if (patchResult.orderCancelledEmpty) {
+            orderCancelledEmpty = true;
+            cancelledOrderNumber = patchResult.number;
+          }
         } on ApiException catch (e) {
           return _OrderSyncResult(
             synced: false,
@@ -2875,6 +3058,14 @@ Future<_OrderSyncResult> _syncLocalOrder(
           );
         }
       }
+    }
+    if (orderCancelledEmpty) {
+      return _OrderSyncResult(
+        synced: true,
+        orderCancelledEmpty: true,
+        orderNumber: cancelledOrderNumber,
+        message: 'Заказ отменён — позиций не осталось',
+      );
     }
     lines = [];
     for (final line in cart.sortedLines) {
@@ -2919,11 +3110,17 @@ Future<_OrderSyncResult> _syncLocalOrder(
         .toList(growable: false);
   }
 
+  final normalizedDeliveryPhone =
+      TjPhoneDialLockedFormatter.ensureStored(deliveryPhone ?? '').trim();
+  final isDeliveryOrder = orderTypeLabel.toLowerCase().contains('доставк') ||
+      orderTypeLabel.toLowerCase().contains('delivery');
   final tableLabel = tableNumber != null
       ? (tableZone != null
             ? '${tableZone.shortLabel} • стол $tableNumber'
             : 'Стол $tableNumber')
-      : null;
+      : (isDeliveryOrder && normalizedDeliveryPhone.isNotEmpty
+            ? 'Доставка · тел. получателя: $normalizedDeliveryPhone'
+            : null);
 
   try {
     if (lines.isNotEmpty) {
@@ -2965,6 +3162,130 @@ Future<_OrderSyncResult> _syncLocalOrder(
   }
 }
 
+Future<String?> _pickDeliveryPhone(BuildContext context) async {
+  return showDialog<String>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) => const _DeliveryPhoneDialog(),
+  );
+}
+
+class _DeliveryPhoneDialog extends StatefulWidget {
+  const _DeliveryPhoneDialog();
+
+  @override
+  State<_DeliveryPhoneDialog> createState() => _DeliveryPhoneDialogState();
+}
+
+class _DeliveryPhoneDialogState extends State<_DeliveryPhoneDialog> {
+  final _input = _TjPhoneNationalInputController();
+  String? _error;
+
+  void _submit() {
+    final phone = _input.display.trim();
+    if (_input.national.isEmpty) {
+      setState(() => _error = 'Введите телефон получателя');
+      return;
+    }
+    if (_input.national.length < 9) {
+      setState(
+        () => _error = 'После +992 нужно 9 цифр (сейчас ${_input.national.length})',
+      );
+      return;
+    }
+    Navigator.of(context).pop(phone);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final nationalDisplay = _input.national.isEmpty
+        ? '_________'
+        : _input.national.padRight(9, '·');
+    return AlertDialog(
+      title: const Text('Телефон получателя'),
+      content: SizedBox(
+        width: _dialogWidth(context, 400),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Телефон получателя доставки. Префикс +992 фиксирован — введите 9 цифр кнопками ниже.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+                height: 1.35,
+              ),
+            ),
+            const SizedBox(height: 12),
+            InputDecorator(
+              decoration: const InputDecoration(
+                labelText: 'Телефон получателя',
+                border: OutlineInputBorder(),
+              ),
+              child: Row(
+                children: [
+                  Text(
+                    kDefaultPhoneDialPrefix,
+                    style: theme.textTheme.headlineSmall?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: scheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      nationalDisplay,
+                      textAlign: TextAlign.right,
+                      style: theme.textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            _PosPhoneDigitKeypad(
+              onDigit: (d) => setState(() {
+                _error = null;
+                _input.appendDigit(d);
+              }),
+              onBackspace: () => setState(() {
+                _error = null;
+                _input.backspace();
+              }),
+              onClear: () => setState(() {
+                _error = null;
+                _input.clear();
+              }),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _error!,
+                style: TextStyle(color: scheme.error),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: const Text('Продолжить'),
+        ),
+      ],
+    );
+  }
+}
+
 class _PaymentAttemptResult {
   const _PaymentAttemptResult({
     required this.accepted,
@@ -2986,8 +3307,15 @@ class _PaymentAttemptResult {
 }
 
 class _OrderSyncResult {
-  const _OrderSyncResult({required this.synced, required this.message});
+  const _OrderSyncResult({
+    required this.synced,
+    this.message,
+    this.orderCancelledEmpty = false,
+    this.orderNumber,
+  });
 
   final bool synced;
   final String? message;
+  final bool orderCancelledEmpty;
+  final String? orderNumber;
 }

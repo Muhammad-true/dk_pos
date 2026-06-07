@@ -24,7 +24,7 @@ import 'package:dk_pos/features/admin/presentation/widgets/admin_list_row_card.d
 
 const _kScreenTypes = ['carousel', 'tv2', 'tv3', 'tv4', 'customer_display'];
 
-const _kTv2PageTypes = ['split', 'drinks', 'carousel', 'list', 'video_bg'];
+const _kTv2PageTypes = ['split', 'drinks', 'carousel', 'list', 'product_grid', 'video_bg'];
 
 /// Ключи конфига, которые задаёт конструктор шаблона (остальное — в «доп. JSON»).
 const _kTemplateStripKeys = <String>{
@@ -35,6 +35,13 @@ const _kTemplateStripKeys = <String>{
   'tv2ListColumns',
   'tv2_list_columns',
   'tv2SectionColumns',
+  'tv2ListMaxRows',
+  'tv2_list_max_rows',
+  'tv2ListRows',
+  'tv2ListMaxItemsPerPage',
+  'tv2_list_max_items_per_page',
+  'tv2ListAutoSplit',
+  'tv2_list_auto_split',
   'tv1MaxSectionsPerSlide',
   'tv1_max_sections_per_slide',
   'tv1CategoriesPerSlide',
@@ -93,6 +100,30 @@ int? _readTv1MaxPerSlide(Map<String, dynamic> c) {
     if (x != null) return x;
   }
   return null;
+}
+
+int? _readTv2ListMaxRows(Map<String, dynamic> c) {
+  for (final k in ['tv2ListMaxRows', 'tv2_list_max_rows', 'tv2ListRows']) {
+    final x = _cfgPositiveInt(c[k]);
+    if (x != null) return x;
+  }
+  return null;
+}
+
+int? _readTv2ListMaxItems(Map<String, dynamic> c) {
+  for (final k in ['tv2ListMaxItemsPerPage', 'tv2_list_max_items_per_page']) {
+    final x = _cfgPositiveInt(c[k]);
+    if (x != null) return x;
+  }
+  return null;
+}
+
+bool _readTv2ListAutoSplit(Map<String, dynamic> c) {
+  final v = c['tv2ListAutoSplit'] ?? c['tv2_list_auto_split'];
+  if (v == false || v == 0 || v == '0' || v.toString().toLowerCase() == 'false') {
+    return false;
+  }
+  return true;
 }
 
 bool _readUiCenterGrid(Map<String, dynamic> c) {
@@ -465,6 +496,8 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
   late final TextEditingController _sortCtrl;
   late final TextEditingController _extraConfigCtrl;
   late final TextEditingController _tv1MaxSectionsCtrl;
+  late final TextEditingController _tv2ListMaxRowsCtrl;
+  late final TextEditingController _tv2ListMaxItemsCtrl;
   late String _type;
   late bool _active;
   bool _saving = false;
@@ -475,6 +508,7 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
   int _tv1ColMode = 0;
   /// 0 = авто; 1–3 = колонки списка ТВ2.
   int _tv2ColMode = 0;
+  bool _tv2ListAutoSplit = true;
   bool _uiCenterGrid = true;
 
   bool get _isCreate => widget.existing == null;
@@ -490,6 +524,8 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
     );
     _extraConfigCtrl = TextEditingController(text: '{}');
     _tv1MaxSectionsCtrl = TextEditingController();
+    _tv2ListMaxRowsCtrl = TextEditingController();
+    _tv2ListMaxItemsCtrl = TextEditingController();
     _type = e != null && _kScreenTypes.contains(e.type) ? e.type : 'carousel';
     _active = e?.isActive ?? true;
     _applyConfigToTemplate(e?.config);
@@ -501,7 +537,10 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
   void _applyConfigToTemplate(Map<String, dynamic>? cfg) {
     _tv1ColMode = 0;
     _tv2ColMode = 0;
+    _tv2ListAutoSplit = true;
     _tv1MaxSectionsCtrl.clear();
+    _tv2ListMaxRowsCtrl.clear();
+    _tv2ListMaxItemsCtrl.clear();
     _uiCenterGrid = true;
     if (cfg == null || cfg.isEmpty) {
       _extraConfigCtrl.text = '{}';
@@ -513,6 +552,11 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
     if (v2 != null) _tv2ColMode = v2;
     final mx = _readTv1MaxPerSlide(cfg);
     if (mx != null) _tv1MaxSectionsCtrl.text = mx.toString();
+    final tv2Rows = _readTv2ListMaxRows(cfg);
+    if (tv2Rows != null) _tv2ListMaxRowsCtrl.text = tv2Rows.toString();
+    final tv2Items = _readTv2ListMaxItems(cfg);
+    if (tv2Items != null) _tv2ListMaxItemsCtrl.text = tv2Items.toString();
+    _tv2ListAutoSplit = _readTv2ListAutoSplit(cfg);
     _uiCenterGrid = _readUiCenterGrid(cfg);
     final stripped = _copyConfigWithoutTemplateKeys(cfg);
     _extraConfigCtrl.text = stripped.isEmpty
@@ -534,6 +578,17 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
         break;
       case 'tv2':
         if (_tv2ColMode > 0) m['tv2ListColumns'] = _tv2ColMode;
+        if (!_tv2ListAutoSplit) m['tv2ListAutoSplit'] = false;
+        final rows = _tv2ListMaxRowsCtrl.text.trim();
+        if (rows.isNotEmpty) {
+          final n = int.tryParse(rows);
+          if (n != null && n > 0) m['tv2ListMaxRows'] = n;
+        }
+        final items = _tv2ListMaxItemsCtrl.text.trim();
+        if (items.isNotEmpty) {
+          final n = int.tryParse(items);
+          if (n != null && n > 0) m['tv2ListMaxItemsPerPage'] = n;
+        }
         if (!_uiCenterGrid) m['uiCenterGrid'] = false;
         break;
       default:
@@ -568,6 +623,8 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
     _sortCtrl.dispose();
     _extraConfigCtrl.dispose();
     _tv1MaxSectionsCtrl.dispose();
+    _tv2ListMaxRowsCtrl.dispose();
+    _tv2ListMaxItemsCtrl.dispose();
     super.dispose();
   }
 
@@ -1053,6 +1110,39 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
                                       }
                                     },
                             ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: _tv2ListMaxRowsCtrl,
+                              decoration: InputDecoration(
+                                labelText: l10n.adminScreenTv2ListMaxRows,
+                                helperText: l10n.adminScreenTv2ListMaxRowsHint,
+                                border: const OutlineInputBorder(),
+                              ),
+                              keyboardType: TextInputType.number,
+                            ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: _tv2ListMaxItemsCtrl,
+                              decoration: InputDecoration(
+                                labelText: l10n.adminScreenTv2ListMaxItems,
+                                helperText: l10n.adminScreenTv2ListMaxItemsHint,
+                                border: const OutlineInputBorder(),
+                              ),
+                              keyboardType: TextInputType.number,
+                            ),
+                            const SizedBox(height: 4),
+                            SwitchListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(l10n.adminScreenTv2ListAutoSplit),
+                              subtitle: Text(
+                                l10n.adminScreenTv2ListAutoSplitHint,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                              value: _tv2ListAutoSplit,
+                              onChanged: _saving
+                                  ? null
+                                  : (v) => setState(() => _tv2ListAutoSplit = v),
+                            ),
                           ],
                           if (_type == 'carousel' || _type == 'tv2') ...[
                             const SizedBox(height: 4),
@@ -1148,6 +1238,8 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
         return l10n.adminTv2PageTypeCarousel;
       case 'list':
         return l10n.adminTv2PageTypeList;
+      case 'product_grid':
+        return l10n.adminTv2PageTypeProductGrid;
       case 'video_bg':
         return l10n.adminTv2PageTypeVideoBg;
       default:

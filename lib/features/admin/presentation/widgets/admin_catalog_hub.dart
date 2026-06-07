@@ -6,7 +6,7 @@ import 'package:dk_pos/features/admin/bloc/screens_admin_event.dart';
 import 'package:dk_pos/features/admin/bloc/catalog_admin_bloc.dart';
 import 'package:dk_pos/features/admin/bloc/menu_items_admin_bloc.dart';
 import 'package:dk_pos/features/admin/data/screens_admin_repository.dart';
-import 'package:dk_pos/features/admin/presentation/screens/admin_tv_queue_board_designer_screen.dart';
+import 'package:dk_pos/features/admin/presentation/screens/admin_tv_settings_screen.dart';
 import 'package:dk_pos/features/admin/presentation/navigation/admin_modern_page_route.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_catalog_panel.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_menu_items_panel.dart';
@@ -109,12 +109,12 @@ class _AdminCatalogHubState extends State<AdminCatalogHub> {
     );
   }
 
-  void _openTvQueueDesigner(BuildContext context) {
+  void _openTvSettings(BuildContext context) {
     _push(
       context,
-      const _CatalogSubScaffold(
-        title: 'ТВ-очередь',
-        child: AdminTvQueueBoardDesignerScreen(),
+      _CatalogSubScaffold(
+        title: 'Настройки ТВ',
+        child: AdminTvSettingsScreen(maxBodyWidth: widget.maxBodyWidth),
       ),
     );
   }
@@ -248,12 +248,12 @@ class _AdminCatalogHubState extends State<AdminCatalogHub> {
                 ),
                 const SizedBox(height: 12),
                 _HubTile(
-                  icon: Icons.format_list_numbered_rounded,
+                  icon: Icons.settings_remote_rounded,
                   iconColor: scheme.primary,
-                  title: 'ТВ-очередь',
+                  title: 'Настройки ТВ',
                   subtitle:
-                      'Цвета, размеры шапки, полосок, анимация смены номеров (экран очереди, не меню)',
-                  onTap: () => _openTvQueueDesigner(context),
+                      'Режим очереди, звук, TTS, экраны ТВ4 и оформление доски — без правки .env на приставке',
+                  onTap: () => _openTvSettings(context),
                 ),
               ],
             );

@@ -129,8 +129,7 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 
   Future<void> _logout(BuildContext context) async {
-    final role = context.read<AuthBloc>().state.user?.role ?? '';
-    final ok = await confirmLogoutWithShiftChecks(context, role: role);
+    final ok = await confirmSettingsPanelLogout(context);
     if (!ok || !context.mounted) return;
     context.read<AuthBloc>().add(const AuthLogoutRequested());
   }

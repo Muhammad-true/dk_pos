@@ -700,6 +700,42 @@ abstract class AppLocalizations {
   /// **'Колонок списка (ТВ2)'**
   String get adminScreenTv2Columns;
 
+  /// No description provided for @adminScreenTv2ListMaxRows.
+  ///
+  /// In ru, this message translates to:
+  /// **'Строк на странице list (необязательно)'**
+  String get adminScreenTv2ListMaxRows;
+
+  /// No description provided for @adminScreenTv2ListMaxRowsHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Пусто — авто по размеру шрифта и экрана. Умножается на число колонок.'**
+  String get adminScreenTv2ListMaxRowsHint;
+
+  /// No description provided for @adminScreenTv2ListMaxItems.
+  ///
+  /// In ru, this message translates to:
+  /// **'Макс. позиций на экран list (необязательно)'**
+  String get adminScreenTv2ListMaxItems;
+
+  /// No description provided for @adminScreenTv2ListMaxItemsHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Жёсткий лимит; перекрывает «строк × колонки». Пусто — считается автоматически.'**
+  String get adminScreenTv2ListMaxItemsHint;
+
+  /// No description provided for @adminScreenTv2ListAutoSplit.
+  ///
+  /// In ru, this message translates to:
+  /// **'Авто-страницы для list'**
+  String get adminScreenTv2ListAutoSplit;
+
+  /// No description provided for @adminScreenTv2ListAutoSplitHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Если позиций больше, чем помещается — создаётся вторая (третья…) страница в ротации.'**
+  String get adminScreenTv2ListAutoSplitHint;
+
   /// No description provided for @adminScreenTv2ShowTemplate.
   ///
   /// In ru, this message translates to:
@@ -1414,6 +1450,12 @@ abstract class AppLocalizations {
   /// **'Заголовок сетки (рус.)'**
   String get adminTv2EditorListGridTitleRu;
 
+  /// No description provided for @adminTv2EditorProductGridTitleRu.
+  ///
+  /// In ru, this message translates to:
+  /// **'Заголовок страницы (рус.)'**
+  String get adminTv2EditorProductGridTitleRu;
+
   /// No description provided for @adminTv2EditorPageHintSplit.
   ///
   /// In ru, this message translates to:
@@ -1425,6 +1467,12 @@ abstract class AppLocalizations {
   /// In ru, this message translates to:
   /// **'Сетка товаров и крупная карточка справа.'**
   String get adminTv2EditorPageHintList;
+
+  /// No description provided for @adminTv2EditorPageHintProductGrid.
+  ///
+  /// In ru, this message translates to:
+  /// **'Сетка с фото на весь экран; лишние товары — на следующих страницах.'**
+  String get adminTv2EditorPageHintProductGrid;
 
   /// No description provided for @adminTv2EditorPageHintVideoBg.
   ///
@@ -1449,6 +1497,12 @@ abstract class AppLocalizations {
   /// In ru, this message translates to:
   /// **'В сетке'**
   String get adminTv2EditorRoleListGrid;
+
+  /// No description provided for @adminTv2EditorRoleProductGridItem.
+  ///
+  /// In ru, this message translates to:
+  /// **'Товар в сетке'**
+  String get adminTv2EditorRoleProductGridItem;
 
   /// No description provided for @adminTv2EditorSaveTitles.
   ///
@@ -1521,6 +1575,102 @@ abstract class AppLocalizations {
   /// In ru, this message translates to:
   /// **'Шаблон list — сетка карточек по всем позициям.'**
   String get adminTv2EditorLayoutListHint;
+
+  /// No description provided for @adminTv2EditorLayoutProductGridHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Шаблон product_grid — карточки с фото на весь экран.'**
+  String get adminTv2EditorLayoutProductGridHint;
+
+  /// No description provided for @adminTv2ProductGridLayoutTitle.
+  ///
+  /// In ru, this message translates to:
+  /// **'Сетка на экране'**
+  String get adminTv2ProductGridLayoutTitle;
+
+  /// No description provided for @adminTv2ProductGridDragHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Удерживайте превью и ведите влево/вправо — меняется число колонок (2–5).'**
+  String get adminTv2ProductGridDragHint;
+
+  /// No description provided for @adminTv2ProductGridColsAuto.
+  ///
+  /// In ru, this message translates to:
+  /// **'Авто (~{cols} кол.)'**
+  String adminTv2ProductGridColsAuto(int cols);
+
+  /// No description provided for @adminTv2ProductGridColsFixed.
+  ///
+  /// In ru, this message translates to:
+  /// **'{cols} колонки'**
+  String adminTv2ProductGridColsFixed(int cols);
+
+  /// No description provided for @adminTv2ProductGridColsLess.
+  ///
+  /// In ru, this message translates to:
+  /// **'Меньше колонок'**
+  String get adminTv2ProductGridColsLess;
+
+  /// No description provided for @adminTv2ProductGridColsMore.
+  ///
+  /// In ru, this message translates to:
+  /// **'Больше колонок'**
+  String get adminTv2ProductGridColsMore;
+
+  /// No description provided for @adminTv2ProductGridCardSizeLabel.
+  ///
+  /// In ru, this message translates to:
+  /// **'Размер карточки (как на кассе)'**
+  String get adminTv2ProductGridCardSizeLabel;
+
+  /// No description provided for @adminTv2ProductGridCardSizeHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Компакт — больше карточек; крупный — крупнее фото и текст.'**
+  String get adminTv2ProductGridCardSizeHint;
+
+  /// No description provided for @adminTv2ProductGridCardSizeCompact.
+  ///
+  /// In ru, this message translates to:
+  /// **'Компакт'**
+  String get adminTv2ProductGridCardSizeCompact;
+
+  /// No description provided for @adminTv2ProductGridCardSizeNormal.
+  ///
+  /// In ru, this message translates to:
+  /// **'Обычный'**
+  String get adminTv2ProductGridCardSizeNormal;
+
+  /// No description provided for @adminTv2ProductGridCardSizeLarge.
+  ///
+  /// In ru, this message translates to:
+  /// **'Крупный'**
+  String get adminTv2ProductGridCardSizeLarge;
+
+  /// No description provided for @adminTv2PageTransitionPerPage.
+  ///
+  /// In ru, this message translates to:
+  /// **'Анимация перехода (эта страница)'**
+  String get adminTv2PageTransitionPerPage;
+
+  /// No description provided for @adminTv2PageTransitionPerPageHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Пусто — как задано для всего экрана в настройках ТВ.'**
+  String get adminTv2PageTransitionPerPageHint;
+
+  /// No description provided for @adminTv2PageTransitionInherit.
+  ///
+  /// In ru, this message translates to:
+  /// **'Как у экрана'**
+  String get adminTv2PageTransitionInherit;
+
+  /// No description provided for @adminTv2EditorItemsReorderHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Удерживайте ≡ и перетащите для смены порядка.'**
+  String get adminTv2EditorItemsReorderHint;
 
   /// No description provided for @adminTv2EditorLayoutMore.
   ///
@@ -1713,6 +1863,12 @@ abstract class AppLocalizations {
   /// In ru, this message translates to:
   /// **'Список (list)'**
   String get adminTv2PageTypeList;
+
+  /// No description provided for @adminTv2PageTypeProductGrid.
+  ///
+  /// In ru, this message translates to:
+  /// **'Сетка товаров (product_grid)'**
+  String get adminTv2PageTypeProductGrid;
 
   /// No description provided for @adminTv2PageTypeVideoBg.
   ///

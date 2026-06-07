@@ -36,4 +36,10 @@ abstract class ScreensAdminRemoteDataSource {
   );
 
   Future<void> deleteScreenPageItem(int screenId, int pageId, int itemRowId);
+
+  Future<void> reorderScreenPageItems(
+    int screenId,
+    int pageId,
+    List<Map<String, dynamic>> items,
+  );
 }

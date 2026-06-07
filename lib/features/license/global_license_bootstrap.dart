@@ -4,7 +4,9 @@ import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/network/dio_factory.dart';
 import 'package:dk_pos/features/license/license_global_api.dart';
 import 'package:dk_pos/features/license/license_local_api.dart';
+import 'package:dk_pos/features/license/license_runtime_config.dart';
 import 'package:dk_pos/features/license/license_storage.dart';
+import 'package:dk_pos/features/license/local_server_discovery.dart';
 
 sealed class GlobalLicenseStartupResult {}
 
@@ -136,9 +138,22 @@ class GlobalLicenseBootstrap {
   }
 
   /// Старт POS: 1) доступность локального API; 2) `GET /api/local/license/status`; при валидной записи в БД — без ключа.
-  static Future<GlobalLicenseStartupResult> evaluateBeforePos() async {
+  static Future<GlobalLicenseStartupResult> evaluateBeforePos({
+    String? serverManualInput,
+  }) async {
     final storage = LicenseStorage();
     await storage.ensureDeviceId();
+
+    final discovery = await LocalServerDiscovery.resolveAndApply(
+      manualInput: serverManualInput,
+    );
+    if (!discovery.ok) {
+      return GlobalLicenseStartupBlocked(
+        discovery.message ??
+            'Локальный сервер недоступен. Укажите IP компьютера с backend.',
+        suggestServerEndpoint: discovery.needsManualInput,
+      );
+    }
 
     final reach = await _checkLocalBackendReachable();
     if (reach != null) {
@@ -156,10 +171,24 @@ class GlobalLicenseBootstrap {
     );
   }
 
-  static Future<void> activateAndPersist(String licenseKeyPlain) async {
+  static Future<void> activateAndPersist(
+    String licenseKeyPlain, {
+    String? serverManualInput,
+  }) async {
     final storage = LicenseStorage();
     final deviceId = await storage.ensureDeviceId();
     final trimmed = licenseKeyPlain.trim();
+
+    final discovery = await LocalServerDiscovery.resolveAndApply(
+      manualInput: serverManualInput,
+    );
+    if (!discovery.ok) {
+      throw LicenseApiException(
+        discovery.message ?? 'Локальный сервер недоступен',
+        statusCode: 503,
+        code: 'LOCAL_SERVER_UNREACHABLE',
+      );
+    }
 
     final reach = await _checkLocalBackendReachable();
     if (reach is GlobalLicenseStartupBlocked) {
@@ -181,6 +210,7 @@ class GlobalLicenseBootstrap {
           throw LicenseApiException('Срок лицензии истёк', statusCode: 403, code: 'LICENSE_EXPIRED');
         }
         await storage.wipeLegacyLicensePrefs();
+        await LicenseRuntimeConfig.applyAfterLicenseActivation(syncResponse: synced);
         return;
       }
     } on LicenseApiException catch (e) {

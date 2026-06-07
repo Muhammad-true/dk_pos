@@ -121,6 +121,12 @@
   "adminScreenColsAuto": "Auto (by screen width)",
   "adminScreenTv1Columns": "Category columns (TV1)",
   "adminScreenTv2Columns": "List columns (TV2)",
+  "adminScreenTv2ListMaxRows": "Rows per list page (optional)",
+  "adminScreenTv2ListMaxRowsHint": "Empty — auto from font size and screen. Multiplied by column count.",
+  "adminScreenTv2ListMaxItems": "Max items per list screen (optional)",
+  "adminScreenTv2ListMaxItemsHint": "Hard cap; overrides rows × columns. Empty — calculated automatically.",
+  "adminScreenTv2ListAutoSplit": "Auto-split list pages",
+  "adminScreenTv2ListAutoSplitHint": "When items do not fit, extra pages are added to rotation.",
   "adminScreenTv2ShowTemplate": "TV2 display template",
   "adminScreenTv2ShowTemplateClassic": "Classic list",
   "adminScreenTv2ShowTemplateVideoPromo": "Video background + item or combo",
@@ -261,12 +267,15 @@
   "adminTv2EditorListTitleRu": "First column title (Russian)",
   "adminTv2EditorSecondTitleRu": "Second column title (Russian)",
   "adminTv2EditorListGridTitleRu": "Grid title (Russian)",
+  "adminTv2EditorProductGridTitleRu": "Page title (Russian)",
   "adminTv2EditorPageHintSplit": "Two columns on the right (burgers / drinks style).",
   "adminTv2EditorPageHintList": "Product grid and a large card on the right.",
+  "adminTv2EditorPageHintProductGrid": "Full-screen photo grid; overflow splits into extra pages automatically.",
   "adminTv2EditorPageHintVideoBg": "Full-screen video, offer, optional product strips.",
   "adminTv2EditorVideoBgComboNoMenuItems": "Combo mode: items come from the combo; you don’t add menu rows here.",
   "adminTv2EditorRoleHeroCardList": "Right card",
   "adminTv2EditorRoleListGrid": "In grid",
+  "adminTv2EditorRoleProductGridItem": "Grid item",
   "adminTv2EditorSaveTitles": "Save titles",
   "adminTv2EditorItemsSection": "Items on page",
   "adminTv2EditorAddAsRole": "Add as",
@@ -279,6 +288,32 @@
   "adminTv2EditorLayoutTitlePlaceholder": "Title",
   "adminTv2EditorLayoutHeroEmpty": "No hero",
   "adminTv2EditorLayoutListHint": "List template: grid of all items.",
+  "adminTv2EditorLayoutProductGridHint": "Product grid template: photo cards filling the screen.",
+  "adminTv2ProductGridLayoutTitle": "On-screen grid",
+  "adminTv2ProductGridDragHint": "Hold the preview and swipe left/right to change columns (2–5).",
+  "adminTv2ProductGridColsAuto": "Auto (~{cols} cols)",
+  "@adminTv2ProductGridColsAuto": {
+    "placeholders": {
+      "cols": { "type": "int" }
+    }
+  },
+  "adminTv2ProductGridColsFixed": "{cols} columns",
+  "@adminTv2ProductGridColsFixed": {
+    "placeholders": {
+      "cols": { "type": "int" }
+    }
+  },
+  "adminTv2ProductGridColsLess": "Fewer columns",
+  "adminTv2ProductGridColsMore": "More columns",
+  "adminTv2ProductGridCardSizeLabel": "Card size (like POS)",
+  "adminTv2ProductGridCardSizeHint": "Compact — more cards; large — bigger photo and text.",
+  "adminTv2ProductGridCardSizeCompact": "Compact",
+  "adminTv2ProductGridCardSizeNormal": "Normal",
+  "adminTv2ProductGridCardSizeLarge": "Large",
+  "adminTv2PageTransitionPerPage": "Page transition animation",
+  "adminTv2PageTransitionPerPageHint": "Empty — use the TV screen default from settings.",
+  "adminTv2PageTransitionInherit": "Same as screen",
+  "adminTv2EditorItemsReorderHint": "Hold ≡ and drag to reorder items.",
   "adminTv2EditorLayoutMore": "+{count} more",
   "@adminTv2EditorLayoutMore": {
     "placeholders": {
@@ -339,6 +374,7 @@
   "adminTv2PageTypeDrinks": "Drinks (drinks)",
   "adminTv2PageTypeCarousel": "Carousel (carousel)",
   "adminTv2PageTypeList": "List (list)",
+  "adminTv2PageTypeProductGrid": "Product grid (product_grid)",
   "adminTv2PageTypeVideoBg": "Video background",
   "adminTv2OptionalVideoTitle": "Video under layout (optional)",
   "adminTv2OptionalVideoHint": "For split, list, drinks and carousel: the clip plays behind the layout, same as on TV. You can rotate these pages with a full-screen «Video background» page.",

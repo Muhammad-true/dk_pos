@@ -113,7 +113,7 @@ class _PosModifierSheetBodyState extends State<_PosModifierSheetBody> {
             ],
           ),
           Text(
-            '${_unitPrice.toStringAsFixed(_unitPrice == _unitPrice.roundToDouble() ? 0 : 2)} сом.',
+            '${_unitPrice.toStringAsFixed(_unitPrice == _unitPrice.roundToDouble() ? 0 : 2)} сомони',
             style: theme.textTheme.titleMedium?.copyWith(
               color: scheme.primary,
               fontWeight: FontWeight.w700,

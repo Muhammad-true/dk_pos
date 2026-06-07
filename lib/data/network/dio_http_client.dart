@@ -11,6 +11,12 @@ class DioHttpClient implements HttpClient {
 
   final Dio _dio;
 
+  Dio get dio => _dio;
+
+  void updateBaseUrl(String baseUrl) {
+    _dio.options.baseUrl = baseUrl.endsWith('/') ? baseUrl : '$baseUrl/';
+  }
+
   String? _token;
 
   @override

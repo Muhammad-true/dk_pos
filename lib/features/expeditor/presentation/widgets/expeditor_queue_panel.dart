@@ -14,6 +14,36 @@ import 'package:dk_pos/l10n/context_l10n.dart';
 const _kToneBundle = Color(0xFF24B47E);
 const _kTonePickup = Color(0xFF5B8DEF);
 
+String _expeditorOrderDisplayNumber(LocalKitchenQueueOrder order) {
+  final number = order.number.trim();
+  if (number.isEmpty) return number;
+  final low = (order.orderType ?? '').trim().toLowerCase();
+  if (low.contains('доставк') || low == 'delivery') return 'Д-$number';
+  if (low.contains('самовывоз') ||
+      low.contains('с собой') ||
+      low == 'pickup' ||
+      low == 'takeaway' ||
+      low == 'take_away' ||
+      low == 'to_go') {
+    return 'С-$number';
+  }
+  return number;
+}
+
+String? _expeditorOrderTypeBadge(LocalKitchenQueueOrder order) {
+  final low = (order.orderType ?? '').trim().toLowerCase();
+  if (low.contains('доставк') || low == 'delivery') return 'Доставка';
+  if (low.contains('самовывоз') ||
+      low.contains('с собой') ||
+      low == 'pickup' ||
+      low == 'takeaway' ||
+      low == 'take_away' ||
+      low == 'to_go') {
+    return 'Самовывоз';
+  }
+  return null;
+}
+
 /// Очередь сборки/выдачи: одна кнопка на карточке, без дополнительных шагов.
 class ExpeditorQueuePanel extends StatefulWidget {
   const ExpeditorQueuePanel({
@@ -290,7 +320,7 @@ class _ExpeditorOrderCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      l10n.kitchenOrderNumber(order.number),
+                      l10n.kitchenOrderNumber(_expeditorOrderDisplayNumber(order)),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.headlineMedium?.copyWith(
@@ -324,6 +354,20 @@ class _ExpeditorOrderCard extends StatelessWidget {
                         ),
                       ],
                     ),
+                    if (_expeditorOrderTypeBadge(order) != null) ...[
+                      const SizedBox(height: 8),
+                      Chip(
+                        visualDensity: VisualDensity.compact,
+                        label: Text(_expeditorOrderTypeBadge(order)!),
+                        avatar: Icon(
+                          _expeditorOrderTypeBadge(order) == 'Доставка'
+                              ? Icons.delivery_dining_rounded
+                              : Icons.shopping_bag_outlined,
+                          size: 16,
+                          color: tone,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

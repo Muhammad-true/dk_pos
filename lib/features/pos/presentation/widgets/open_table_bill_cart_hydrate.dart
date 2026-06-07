@@ -64,17 +64,29 @@ OpenBillHydrateResult hydrateOpenTableBillIntoCartLines({
       price: up,
       priceText: _priceTextForLine(up),
     );
-    final key = computeCartLineKey(
-      menuItemId: item.id,
-      modifiers: const [],
-      unitPrice: up,
-      catalogBasePrice: template.baseCatalogPrice,
-    );
+    final keyFromServer = bl.lineKey?.trim();
+    final key = keyFromServer != null && keyFromServer.isNotEmpty
+        ? keyFromServer
+        : computeCartLineKey(
+            menuItemId: item.id,
+            modifiers: const [],
+            unitPrice: up,
+            catalogBasePrice: template.baseCatalogPrice,
+          );
     final isKitchen = bl.isKitchenLine;
     final st = (bl.kitchenLineStatus ?? '').toLowerCase().trim();
     final locked = isKitchen && st == 'ready';
     kitchenQtyLockedByLineKey[key] = locked;
-    lines[key] = CartLine(item: item, quantity: bl.quantity);
+    final prev = lines[key];
+    if (prev != null) {
+      lines[key] = CartLine(
+        item: item,
+        quantity: prev.quantity + bl.quantity,
+        modifiers: prev.modifiers,
+      );
+    } else {
+      lines[key] = CartLine(item: item, quantity: bl.quantity);
+    }
   }
 
   final baseline = <String, int>{};

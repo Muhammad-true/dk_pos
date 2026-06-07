@@ -167,6 +167,21 @@ class ScreensAdminRemoteDataSourceImpl implements ScreensAdminRemoteDataSource {
   }
 
   @override
+  Future<void> reorderScreenPageItems(
+    int screenId,
+    int pageId,
+    List<Map<String, dynamic>> items,
+  ) async {
+    final res = await _http.patch(
+      'api/screens/$screenId/pages/$pageId/items/reorder',
+      body: {'items': items},
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(res.statusCode, res.body);
+    }
+  }
+
+  @override
   Future<void> deleteScreenPageItem(int screenId, int pageId, int itemRowId) async {
     final res = await _http.delete(
       'api/screens/$screenId/pages/$pageId/items/$itemRowId',

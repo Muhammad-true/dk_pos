@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_content_config.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_customer_display_panel.dart';
 
@@ -93,11 +94,25 @@ class _CustomerDisplayWindowScreenState
   }
 
   Future<void> _bootstrapCustomerDisplayWindow() async {
+    _applyApiOriginFromLaunchArgs();
     await _configureWindow();
     if (!mounted) return;
     setState(() => _isFullscreen = _fullscreenMode);
     await _loadCartFromFile();
     _startPolling();
+  }
+
+  void _applyApiOriginFromLaunchArgs() {
+    final fromArgs = widget.arguments['apiOrigin']?.toString().trim();
+    if (fromArgs != null && fromArgs.isNotEmpty) {
+      AppConfig.setApiOriginOverride(fromArgs);
+    }
+  }
+
+  void _applyApiOriginFromSync(Map<String, dynamic> decoded) {
+    final origin = decoded['apiOrigin']?.toString().trim();
+    if (origin == null || origin.isEmpty) return;
+    AppConfig.setApiOriginOverride(origin);
   }
 
   @override
@@ -130,6 +145,7 @@ class _CustomerDisplayWindowScreenState
       final raw = await file.readAsString();
       final decoded = jsonDecode(raw);
       if (decoded is! Map<String, dynamic>) return;
+      _applyApiOriginFromSync(decoded);
       final updatedAt = (decoded['updatedAt'] as num?)?.toInt() ?? 0;
       if (_lastUpdatedAt == updatedAt) return;
       final cartJson = decoded['cart'];

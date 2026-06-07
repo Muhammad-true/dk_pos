@@ -15,15 +15,23 @@ class AdminOrdersHub extends StatefulWidget {
 class _AdminOrdersHubState extends State<AdminOrdersHub>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  final _cashShiftsKey = GlobalKey<AdminCashShiftsPanelState>();
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(_onTabChanged);
+  }
+
+  void _onTabChanged() {
+    if (_tabController.index != 1 || _tabController.indexIsChanging) return;
+    _cashShiftsKey.currentState?.reload();
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     super.dispose();
   }
@@ -46,7 +54,10 @@ class _AdminOrdersHubState extends State<AdminOrdersHub>
             controller: _tabController,
             children: [
               AdminSalesReportsPanel(maxBodyWidth: widget.maxBodyWidth),
-              AdminCashShiftsPanel(maxBodyWidth: widget.maxBodyWidth),
+              AdminCashShiftsPanel(
+                key: _cashShiftsKey,
+                maxBodyWidth: widget.maxBodyWidth,
+              ),
             ],
           ),
         ),

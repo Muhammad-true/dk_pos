@@ -19,12 +19,15 @@ import 'package:dk_pos/features/pos/data/open_table_bill_from_server.dart';
 import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
 
 import 'open_table_bill_cart_hydrate.dart';
+import 'pos_bill_channel_chips.dart';
+import 'pos_bill_line_remove_reason_dialog.dart';
 import 'pos_checkout_flow.dart';
 
-bool _isWaiterOrderLabel(String value) {
-  final v = value.trim().toLowerCase();
-  return v.contains('официант') || v.contains('waiter');
-}
+double _openBillsDialogWidth(BuildContext context) =>
+    math.min(520, MediaQuery.sizeOf(context).width * 0.96);
+
+double _billDetailDialogWidth(BuildContext context) =>
+    math.min(540, MediaQuery.sizeOf(context).width * 0.96);
 
 /// [posHostContext] — контекст под деревом [PosScreen] (есть [MenuBloc], [CartBloc]).
 /// Не использовать контекст самого диалога после `pop`: он становится unmounted.
@@ -80,8 +83,8 @@ class _OpenBillsDialog extends StatelessWidget {
             ],
           ),
           content: SizedBox(
-            width: math.min(440, MediaQuery.sizeOf(context).width * 0.94),
-            height: math.min(420, MediaQuery.sizeOf(context).height * 0.76),
+            width: _openBillsDialogWidth(context),
+            height: math.min(460, MediaQuery.sizeOf(context).height * 0.78),
             child: open.isEmpty
                 ? Center(
                     child: Text(
@@ -115,6 +118,16 @@ class _OpenBillsDialog extends StatelessWidget {
       },
     );
   }
+}
+
+String _kitchenLineStatusLabel(PosTableBillLine line) {
+  final st = (line.kitchenLineStatus ?? 'pending').toLowerCase().trim();
+  return switch (st) {
+    'accepted' => 'Кухня: принято',
+    'ready' => 'Кухня: готово',
+    'pending' => 'Кухня: ожидает',
+    _ => 'Кухня: $st',
+  };
 }
 
 Future<void> _refreshOpenBillsHall(BuildContext posHostContext) async {
@@ -205,6 +218,7 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
       quantity: newQty,
       lineTotal: unit * newQty,
       menuItemId: l.menuItemId,
+      lineKey: l.lineKey,
       unitPrice: unit,
       kitchenLineStatus: l.kitchenLineStatus,
       kitchenStationId: l.kitchenStationId,
@@ -222,6 +236,15 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
         isPaid: _bill.isPaid,
         paymentMethod: _bill.paymentMethod,
         orderStatus: _bill.orderStatus,
+        tableLabel: _bill.tableLabel,
+        customerPhone: _bill.customerPhone,
+        isDelivery: _bill.isDelivery,
+        createdByUsername: _bill.createdByUsername,
+        createdByRole: _bill.createdByRole,
+        terminalId: _bill.terminalId,
+        isWaiterOrder: _bill.isWaiterOrder,
+        isTakeaway: _bill.isTakeaway,
+        isCashierOrder: _bill.isCashierOrder,
       );
     });
   }
@@ -241,6 +264,15 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
         isPaid: _bill.isPaid,
         paymentMethod: _bill.paymentMethod,
         orderStatus: _bill.orderStatus,
+        tableLabel: _bill.tableLabel,
+        customerPhone: _bill.customerPhone,
+        isDelivery: _bill.isDelivery,
+        createdByUsername: _bill.createdByUsername,
+        createdByRole: _bill.createdByRole,
+        terminalId: _bill.terminalId,
+        isWaiterOrder: _bill.isWaiterOrder,
+        isTakeaway: _bill.isTakeaway,
+        isCashierOrder: _bill.isCashierOrder,
       );
     });
   }
@@ -252,14 +284,24 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
     final index = _lineIndexOf(line);
     if (index < 0) return false;
     final newQty = line.quantity > 1 ? line.quantity - 1 : 0;
+
+    String? reason;
+    if (line.needsRemovalReason) {
+      reason = await pickBillLineRemoveReason(context);
+      if (!mounted || reason == null) return false;
+    }
+
     setState(() => _busy = true);
     try {
+      final lineKey = line.lineKey?.trim();
       final result = await widget.posHostContext
           .read<LocalOrdersRepository>()
           .patchOrderLineQuantity(
             orderId: _bill.id,
             menuItemId: mid,
+            lineKey: lineKey != null && lineKey.isNotEmpty ? lineKey : null,
             quantity: newQty,
+            reason: reason,
           );
       if (result.orderCancelledEmpty) {
         await _onOrderCancelledEmpty(result.number);
@@ -309,8 +351,8 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
         ),
       ),
       content: SizedBox(
-        width: math.min(400, MediaQuery.sizeOf(context).width * 0.94),
-        height: math.min(480, MediaQuery.sizeOf(context).height * 0.55),
+        width: _billDetailDialogWidth(context),
+        height: math.min(520, MediaQuery.sizeOf(context).height * 0.62),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -320,6 +362,8 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
                 color: scheme.onSurfaceVariant,
               ),
             ),
+            const SizedBox(height: 8),
+            PosBillChannelChips(bill: _bill),
             const SizedBox(height: 6),
             if (_bill.isHandedOutUnpaid) ...[
               Container(
@@ -338,10 +382,12 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
             ],
             Text(
               'Свайп влево: убрать 1 шт. (или всю строку, если 1 шт.). '
-              'Только позиции без кухни. Блюда кухни — через «Добавить товар».',
-              style: theme.textTheme.bodySmall?.copyWith(
+              'Если кухня ещё не приняла — убирается сразу. '
+              'После «Принято» или «Готово» — укажите причину.',
+              style: theme.textTheme.bodyMedium?.copyWith(
                 color: scheme.onSurfaceVariant,
-                height: 1.3,
+                fontWeight: FontWeight.w600,
+                height: 1.35,
               ),
             ),
             const SizedBox(height: 12),
@@ -358,55 +404,57 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
                       itemCount: _bill.lines.length,
                       itemBuilder: (context, i) {
                         final l = _bill.lines[i];
-                        final removable = !l.isKitchenLine &&
-                            (l.menuItemId?.trim().isNotEmpty ?? false);
-                        final row = Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  '${l.quantity}× ${l.name}',
-                                  style: theme.textTheme.bodyMedium,
-                                ),
-                              ),
-                              Text(
-                                formatSomoni(l.lineTotal),
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
+                        final removable =
+                            l.menuItemId?.trim().isNotEmpty ?? false;
+                        final lineTile = _BillLineSwipeTile(
+                          line: l,
+                          theme: theme,
+                          scheme: scheme,
                         );
                         // Нельзя убирать [Dismissible] на время `_busy`: иначе виджет
                         // снимается с дерева до завершения [confirmDismiss], анимация
                         // обрывается и [onDismissed] не вызывается — строка визуально
                         // остаётся до закрытия диалога. Блокировка — overlay + кнопки.
                         if (!removable) {
-                          return row;
+                          return lineTile;
                         }
-                        return Dismissible(
-                          key: ValueKey('${_bill.id}_${l.menuItemId}_$i'),
-                          direction: DismissDirection.endToStart,
-                          confirmDismiss: (_) => _confirmSwipeRemoveLine(l),
-                          onDismissed: (_) => _onDismissedLineAt(i),
-                          background: Container(
-                            alignment: Alignment.centerRight,
-                            padding: const EdgeInsets.only(right: 18),
-                            decoration: BoxDecoration(
-                              color: scheme.error,
-                              borderRadius: BorderRadius.circular(8),
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Dismissible(
+                            key: ValueKey('${_bill.id}_${l.menuItemId}_$i'),
+                            direction: DismissDirection.endToStart,
+                            dismissThresholds: const {
+                              DismissDirection.endToStart: 0.28,
+                            },
+                            confirmDismiss: (_) => _confirmSwipeRemoveLine(l),
+                            onDismissed: (_) => _onDismissedLineAt(i),
+                            background: Container(
+                              alignment: Alignment.centerRight,
+                              padding: const EdgeInsets.only(right: 20),
+                              decoration: BoxDecoration(
+                                color: scheme.error,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Убрать',
+                                    style: theme.textTheme.titleMedium?.copyWith(
+                                      color: scheme.onError,
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Icon(
+                                    Icons.delete_outline_rounded,
+                                    size: 30,
+                                    color: scheme.onError,
+                                  ),
+                                ],
+                              ),
                             ),
-                            child: Icon(
-                              Icons.delete_outline_rounded,
-                              color: scheme.onError,
-                            ),
-                          ),
-                          child: Material(
-                            color: scheme.surfaceContainerLow,
-                            child: row,
+                            child: lineTile,
                           ),
                         );
                       },
@@ -530,7 +578,10 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
             label: const Text('Скидка'),
           ),
           FilledButton.icon(
-            onPressed: _busy
+            onPressed: _busy ||
+                    _bill.lines.isEmpty ||
+                    _bill.total <= 0 ||
+                    _bill.orderStatus.trim().toLowerCase() == 'cancelled'
                 ? null
                 : () async {
                     Navigator.of(context).pop();
@@ -576,6 +627,70 @@ Future<void> _showBillDetail(BuildContext posHostContext, PosTableBill bill) {
   );
 }
 
+class _BillLineSwipeTile extends StatelessWidget {
+  const _BillLineSwipeTile({
+    required this.line,
+    required this.theme,
+    required this.scheme,
+  });
+
+  final PosTableBillLine line;
+  final ThemeData theme;
+  final ColorScheme scheme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: scheme.surfaceContainerHigh,
+      borderRadius: BorderRadius.circular(12),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 60),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      '${line.quantity}× ${line.name}',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        height: 1.25,
+                      ),
+                    ),
+                    if (line.isKitchenLine) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _kitchenLineStatusLabel(line),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                formatSomoni(line.lineTotal),
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  color: scheme.primary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _BillListTile extends StatelessWidget {
   const _BillListTile({required this.bill, required this.onOpen});
 
@@ -587,7 +702,6 @@ class _BillListTile extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final zone = bill.tableZone;
-    final waiterOrder = _isWaiterOrderLabel(bill.orderTypeLabel);
     final zoneAccent = switch (zone) {
       PosTableZone.hall => const Color(0xFFB8956C),
       PosTableZone.veranda => const Color(0xFF2D8B7E),
@@ -616,7 +730,11 @@ class _BillListTile extends StatelessWidget {
                 ),
                 alignment: Alignment.center,
                 child: Icon(
-                  bill.tableNumber != null
+                  bill.isDelivery ||
+                      (bill.tableNumber == null &&
+                          bill.orderTypeLabel.toLowerCase().contains('доставк'))
+                      ? Icons.delivery_dining_rounded
+                      : bill.tableNumber != null
                       ? (zone == PosTableZone.veranda
                           ? Icons.deck_rounded
                           : Icons.table_restaurant_rounded)
@@ -646,37 +764,8 @@ class _BillListTile extends StatelessWidget {
                         color: scheme.onSurfaceVariant,
                       ),
                     ),
-                    if (waiterOrder) ...[
-                      const SizedBox(height: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: scheme.tertiaryContainer,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.room_service_rounded,
-                              size: 13,
-                              color: scheme.onTertiaryContainer,
-                            ),
-                            const SizedBox(width: 6),
-                            Text(
-                              'Официант',
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: scheme.onTertiaryContainer,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                    const SizedBox(height: 6),
+                    PosBillChannelChips(bill: bill),
                   ],
                 ),
               ),

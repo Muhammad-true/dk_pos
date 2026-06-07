@@ -95,6 +95,7 @@ class LocalHardwareRepository {
     String? customerPhone,
     String? deliveryAddress,
     String? deliveryNote,
+    bool? isDeliveryOrder,
     String? branchId,
     String? terminalId,
   }) async {
@@ -114,6 +115,7 @@ class LocalHardwareRepository {
     putIfNotEmpty('customerPhone', customerPhone);
     putIfNotEmpty('deliveryAddress', deliveryAddress);
     putIfNotEmpty('deliveryNote', deliveryNote);
+    if (isDeliveryOrder == true) body['isDeliveryOrder'] = true;
 
     final res = await _http.post(
       'api/local/hardware/receipts/print',

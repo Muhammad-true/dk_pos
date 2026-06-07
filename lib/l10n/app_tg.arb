@@ -121,6 +121,12 @@
   "adminScreenColsAuto": "Авто (аз паҳнои экран)",
   "adminScreenTv1Columns": "Сутунҳои категория (ТВ1)",
   "adminScreenTv2Columns": "Сутунҳои рӯйхат (ТВ2)",
+  "adminScreenTv2ListMaxRows": "Сатрҳо дар саҳифаи list (ихтиёрӣ)",
+  "adminScreenTv2ListMaxRowsHint": "Холӣ — автоматӣ. Барои сутунҳо зarb мешавад.",
+  "adminScreenTv2ListMaxItems": "Ҳадди аксари позитсия дар list (ихтиёрӣ)",
+  "adminScreenTv2ListMaxItemsHint": "Маҳдудияти сахт; холӣ — ҳисоби автоматӣ.",
+  "adminScreenTv2ListAutoSplit": "Авто-саҳифаҳо барои list",
+  "adminScreenTv2ListAutoSplitHint": "Агар ҷо нагиранд — саҳифаи нав ба навбат илова мешавад.",
   "adminScreenTv2ShowTemplate": "Намунаи намоиши ТВ2",
   "adminScreenTv2ShowTemplateClassic": "Рӯйхати классикӣ",
   "adminScreenTv2ShowTemplateVideoPromo": "Заминаи видео + мол ё комбо",
@@ -261,12 +267,15 @@
   "adminTv2EditorListTitleRu": "Сарлавҳаи сутуни якум (русӣ)",
   "adminTv2EditorSecondTitleRu": "Сарлавҳаи сутуни дуюм (русӣ)",
   "adminTv2EditorListGridTitleRu": "Сарлавҳаи торик (русӣ)",
+  "adminTv2EditorProductGridTitleRu": "Сарлавҳаи саҳифа (русӣ)",
   "adminTv2EditorPageHintSplit": "Ду сутун дар рост (бургер / нӯшокӣ).",
   "adminTv2EditorPageHintList": "Торики молҳо ва корт калон дар рост.",
+  "adminTv2EditorPageHintProductGrid": "Торик бо сурат дар тамоми экран; зиёд — саҳифаҳои нав.",
   "adminTv2EditorPageHintVideoBg": "Видео дар замина, оффер ва дар зарурият лентаҳои мол.",
   "adminTv2EditorVideoBgComboNoMenuItems": "Реҷаи «комбо»: таркиб дар комбо; аз меню ин ҷо илова намешавад.",
   "adminTv2EditorRoleHeroCardList": "Корт дар рост",
   "adminTv2EditorRoleListGrid": "Дар торик",
+  "adminTv2EditorRoleProductGridItem": "Мол дар торик",
   "adminTv2EditorSaveTitles": "Захираи сарлавҳаҳо",
   "adminTv2EditorItemsSection": "Молҳо дар саҳифа",
   "adminTv2EditorAddAsRole": "Илова ҳамчун",
@@ -279,6 +288,32 @@
   "adminTv2EditorLayoutTitlePlaceholder": "Сарлавҳа",
   "adminTv2EditorLayoutHeroEmpty": "Герой нест",
   "adminTv2EditorLayoutListHint": "Намунаи list — шабака аз ҳама ҷойҳо.",
+  "adminTv2EditorLayoutProductGridHint": "Намунаи product_grid — кортҳо бо сурат дар экран.",
+  "adminTv2ProductGridLayoutTitle": "Торик дар экран",
+  "adminTv2ProductGridDragHint": "Превро нигоҳ доред ва чап/рост кашед — сутунҳо (2–5).",
+  "adminTv2ProductGridColsAuto": "Авто (~{cols} сут.)",
+  "@adminTv2ProductGridColsAuto": {
+    "placeholders": {
+      "cols": { "type": "int" }
+    }
+  },
+  "adminTv2ProductGridColsFixed": "{cols} сутун",
+  "@adminTv2ProductGridColsFixed": {
+    "placeholders": {
+      "cols": { "type": "int" }
+    }
+  },
+  "adminTv2ProductGridColsLess": "Камтар сутун",
+  "adminTv2ProductGridColsMore": "Бештар сутун",
+  "adminTv2ProductGridCardSizeLabel": "Андозаи корт (мисли касса)",
+  "adminTv2ProductGridCardSizeHint": "Компакт — кортҳои бештар; калон — сурат калонтар.",
+  "adminTv2ProductGridCardSizeCompact": "Компакт",
+  "adminTv2ProductGridCardSizeNormal": "Муқаррар",
+  "adminTv2ProductGridCardSizeLarge": "Калон",
+  "adminTv2PageTransitionPerPage": "Аниматсияи гузариш (ин саҳифа)",
+  "adminTv2PageTransitionPerPageHint": "Холӣ — мисли экран дар танзимот.",
+  "adminTv2PageTransitionInherit": "Мисли экран",
+  "adminTv2EditorItemsReorderHint": "≡-ро нигоҳ доред ва тартибро иваз кунед.",
   "adminTv2EditorLayoutMore": "+{count}",
   "@adminTv2EditorLayoutMore": {
     "placeholders": {
@@ -339,6 +374,7 @@
   "adminTv2PageTypeDrinks": "drinks",
   "adminTv2PageTypeCarousel": "carousel",
   "adminTv2PageTypeList": "list",
+  "adminTv2PageTypeProductGrid": "product_grid",
   "adminTv2PageTypeVideoBg": "Заминаи видео",
   "adminTv2OptionalVideoTitle": "Видео зери макет (ихтиёрӣ)",
   "adminTv2OptionalVideoHint": "Барои split, list, drinks ва carousel: ролик дар пушти макет. Метавонед бо саҳифаи «заминаи видео» дар як гардиш ҷойгир кунед.",

@@ -20,6 +20,7 @@ import 'package:dk_pos/features/admin/data/upload_repository.dart';
 import 'package:dk_pos/features/admin/presentation/screens/tv2_screen_pages_editor_screen.dart';
 import 'package:dk_pos/features/admin/presentation/screens/tv3_promo_pages_editor_screen.dart';
 import 'package:dk_pos/features/admin/presentation/screens/tv4_slides_editor_screen.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_color_picker_field.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
 
 Color _previewScaffoldBg(DisplayPayload p) => tv3PromoShellBackgroundColor(p);
@@ -88,6 +89,10 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
   double _tv2Scale = 1.0;
   double _tv2TitleSize = 0;
   double _tv2ItemNameSize = 0;
+  double _tv2ItemPriceSize = 0;
+  double _tv2HeroNameSize = 0;
+  double _tv2HeroPriceSize = 0;
+  double _tv2ListThumbSize = 0;
   late TextEditingController _cTv3Bg;
   late TextEditingController _cTv3Title;
   late TextEditingController _cTv3Price;
@@ -293,6 +298,10 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
     _tv2Scale = s.scale;
     _tv2TitleSize = s.titleSize ?? 0;
     _tv2ItemNameSize = s.itemNameSize ?? 0;
+    _tv2ItemPriceSize = s.itemPriceSize ?? 0;
+    _tv2HeroNameSize = s.heroNameSize ?? 0;
+    _tv2HeroPriceSize = s.heroPriceSize ?? 0;
+    _tv2ListThumbSize = s.listThumbSize ?? 0;
   }
 
   void _hydrateTv3StyleFields(TvScreenStyle s) {
@@ -329,6 +338,10 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
       accentColor: g(_cTv2Accent),
       titleSize: _tv2TitleSize > 0 ? _tv2TitleSize : null,
       itemNameSize: _tv2ItemNameSize > 0 ? _tv2ItemNameSize : null,
+      itemPriceSize: _tv2ItemPriceSize > 0 ? _tv2ItemPriceSize : null,
+      heroNameSize: _tv2HeroNameSize > 0 ? _tv2HeroNameSize : null,
+      heroPriceSize: _tv2HeroPriceSize > 0 ? _tv2HeroPriceSize : null,
+      listThumbSize: _tv2ListThumbSize > 0 ? _tv2ListThumbSize : null,
       scale: _tv2Scale,
     );
   }
@@ -361,21 +374,18 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
     });
   }
 
-  static const List<String> _presetPalette = [
-    '#FFFFFF',
-    '#000000',
-    '#E4002B',
-    '#1A1A1A',
-    '#F5F5F5',
-    '#FFD54F',
-    '#2E7D32',
-    '#1565C0',
-  ];
-
-  void _pickColor(TextEditingController c, String value) {
-    setState(() {
-      c.text = value;
-    });
+  Widget _styleColorField({
+    required String label,
+    required TextEditingController controller,
+  }) {
+    return AdminColorPickerField(
+      label: label,
+      value: controller.text,
+      allowClear: controller.text.trim().isNotEmpty,
+      onClear: () => setState(() => controller.clear()),
+      onChanged: (hex) => setState(() => controller.text = hex),
+      compact: true,
+    );
   }
 
   /// [DigitalMenuDisplayLayout] берёт URL из `dk_digitial_menu` [AppConfig], у POS — свой
@@ -771,88 +781,23 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                 const SizedBox(height: 16),
                 Text(l10n.adminTvStyleTitle, style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 4),
-                Text(l10n.adminTvStyleHexHint, style: Theme.of(context).textTheme.bodySmall),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _cSlideBg,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    labelText: l10n.adminTvStyleSlideBg,
-                    border: const OutlineInputBorder(),
-                  ),
+                Text(
+                  'Нажмите на цветной образец или выберите из палитры',
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 8),
-                TextField(
-                  controller: _cHeaderBg,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    labelText: l10n.adminTvStyleHeaderBg,
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _cHeaderText,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    labelText: l10n.adminTvStyleHeaderText,
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _cCategoryTitle,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    labelText: l10n.adminTvStyleCategoryTitle,
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
+                _styleColorField(label: l10n.adminTvStyleSlideBg, controller: _cSlideBg),
+                _styleColorField(label: l10n.adminTvStyleHeaderBg, controller: _cHeaderBg),
+                _styleColorField(label: l10n.adminTvStyleHeaderText, controller: _cHeaderText),
+                _styleColorField(label: l10n.adminTvStyleCategoryTitle, controller: _cCategoryTitle),
+                _styleColorField(
+                  label: l10n.adminTvStyleCategorySubtitle,
                   controller: _cCategorySubtitle,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    labelText: l10n.adminTvStyleCategorySubtitle,
-                    border: const OutlineInputBorder(),
-                  ),
                 ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _cItemName,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    labelText: l10n.adminTvStyleItemName,
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _cItemDesc,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    labelText: l10n.adminTvStyleItemDesc,
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _cItemPrice,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    labelText: l10n.adminTvStyleItemPrice,
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _cDivider,
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    labelText: l10n.adminTvStyleDivider,
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
+                _styleColorField(label: l10n.adminTvStyleItemName, controller: _cItemName),
+                _styleColorField(label: l10n.adminTvStyleItemDesc, controller: _cItemDesc),
+                _styleColorField(label: l10n.adminTvStyleItemPrice, controller: _cItemPrice),
+                _styleColorField(label: l10n.adminTvStyleDivider, controller: _cDivider),
                 const SizedBox(height: 12),
                 Text(
                   '${l10n.adminTvStyleFontScale} (${_fontScale.toStringAsFixed(2)}×)',
@@ -1016,42 +961,13 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                   ),
                 ],
                 const SizedBox(height: 12),
-                Text('Стиль ТВ3 (#RRGGBB)', style: Theme.of(context).textTheme.titleSmall),
+                Text('Стиль ТВ3', style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 8),
-                _ColorPaletteField(
-                  label: 'Фон',
-                  selectedHex: _cTv3Bg.text,
-                  palette: _presetPalette,
-                  onSelect: (v) => _pickColor(_cTv3Bg, v),
-                ),
-                const SizedBox(height: 8),
-                _ColorPaletteField(
-                  label: 'Цвет заголовка',
-                  selectedHex: _cTv3Title.text,
-                  palette: _presetPalette,
-                  onSelect: (v) => _pickColor(_cTv3Title, v),
-                ),
-                const SizedBox(height: 8),
-                _ColorPaletteField(
-                  label: 'Цвет цены',
-                  selectedHex: _cTv3Price.text,
-                  palette: _presetPalette,
-                  onSelect: (v) => _pickColor(_cTv3Price, v),
-                ),
-                const SizedBox(height: 8),
-                _ColorPaletteField(
-                  label: 'Цвет текста шапки',
-                  selectedHex: _cTv3HeaderText.text,
-                  palette: _presetPalette,
-                  onSelect: (v) => _pickColor(_cTv3HeaderText, v),
-                ),
-                const SizedBox(height: 8),
-                _ColorPaletteField(
-                  label: 'Акцентный цвет',
-                  selectedHex: _cTv3Accent.text,
-                  palette: _presetPalette,
-                  onSelect: (v) => _pickColor(_cTv3Accent, v),
-                ),
+                _styleColorField(label: 'Фон', controller: _cTv3Bg),
+                _styleColorField(label: 'Цвет заголовка', controller: _cTv3Title),
+                _styleColorField(label: 'Цвет цены', controller: _cTv3Price),
+                _styleColorField(label: 'Цвет текста шапки', controller: _cTv3HeaderText),
+                _styleColorField(label: 'Акцентный цвет', controller: _cTv3Accent),
                 const SizedBox(height: 8),
                 Text('Масштаб (${_tv3Scale.toStringAsFixed(2)}x)'),
                 Slider(
@@ -1158,42 +1074,13 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                   ),
                   const SizedBox(height: 16),
                 ],
-                Text('Стиль ТВ2 (#RRGGBB)', style: Theme.of(context).textTheme.titleSmall),
+                Text('Стиль ТВ2', style: Theme.of(context).textTheme.titleSmall),
                 const SizedBox(height: 8),
-                _ColorPaletteField(
-                  label: 'Фон',
-                  selectedHex: _cTv2Bg.text,
-                  palette: _presetPalette,
-                  onSelect: (v) => _pickColor(_cTv2Bg, v),
-                ),
-                const SizedBox(height: 8),
-                _ColorPaletteField(
-                  label: 'Цвет заголовка',
-                  selectedHex: _cTv2Title.text,
-                  palette: _presetPalette,
-                  onSelect: (v) => _pickColor(_cTv2Title, v),
-                ),
-                const SizedBox(height: 8),
-                _ColorPaletteField(
-                  label: 'Цвет цены',
-                  selectedHex: _cTv2Price.text,
-                  palette: _presetPalette,
-                  onSelect: (v) => _pickColor(_cTv2Price, v),
-                ),
-                const SizedBox(height: 8),
-                _ColorPaletteField(
-                  label: 'Цвет текста шапки',
-                  selectedHex: _cTv2HeaderText.text,
-                  palette: _presetPalette,
-                  onSelect: (v) => _pickColor(_cTv2HeaderText, v),
-                ),
-                const SizedBox(height: 8),
-                _ColorPaletteField(
-                  label: 'Акцентный цвет',
-                  selectedHex: _cTv2Accent.text,
-                  palette: _presetPalette,
-                  onSelect: (v) => _pickColor(_cTv2Accent, v),
-                ),
+                _styleColorField(label: 'Фон', controller: _cTv2Bg),
+                _styleColorField(label: 'Цвет заголовка', controller: _cTv2Title),
+                _styleColorField(label: 'Цвет цены', controller: _cTv2Price),
+                _styleColorField(label: 'Цвет текста шапки', controller: _cTv2HeaderText),
+                _styleColorField(label: 'Акцентный цвет', controller: _cTv2Accent),
                 const SizedBox(height: 8),
                 Text('Размер заголовка: ${_tv2TitleSize > 0 ? _tv2TitleSize.toStringAsFixed(0) : 'по умолчанию'}'),
                 Slider(
@@ -1211,10 +1098,46 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                   divisions: 42,
                   onChanged: (v) => setState(() => _tv2ItemNameSize = v),
                 ),
+                Text('Размер цены: ${_tv2ItemPriceSize > 0 ? _tv2ItemPriceSize.toStringAsFixed(0) : 'по умолчанию'}'),
+                Slider(
+                  value: ((_tv2ItemPriceSize > 0 ? _tv2ItemPriceSize : 28).clamp(10, 80)).toDouble(),
+                  min: 10,
+                  max: 80,
+                  divisions: 35,
+                  onChanged: (v) => setState(() => _tv2ItemPriceSize = v),
+                ),
+                Text('Hero — название: ${_tv2HeroNameSize > 0 ? _tv2HeroNameSize.toStringAsFixed(0) : 'по умолчанию'}'),
+                Slider(
+                  value: ((_tv2HeroNameSize > 0 ? _tv2HeroNameSize : 48).clamp(16, 120)).toDouble(),
+                  min: 16,
+                  max: 120,
+                  divisions: 52,
+                  onChanged: (v) => setState(() => _tv2HeroNameSize = v),
+                ),
+                Text('Hero — цена: ${_tv2HeroPriceSize > 0 ? _tv2HeroPriceSize.toStringAsFixed(0) : 'по умолчанию'}'),
+                Slider(
+                  value: ((_tv2HeroPriceSize > 0 ? _tv2HeroPriceSize : 40).clamp(12, 96)).toDouble(),
+                  min: 12,
+                  max: 96,
+                  divisions: 42,
+                  onChanged: (v) => setState(() => _tv2HeroPriceSize = v),
+                ),
+                Text('Миниатюра в списке: ${_tv2ListThumbSize > 0 ? _tv2ListThumbSize.toStringAsFixed(0) : '56'} px'),
+                Slider(
+                  value: ((_tv2ListThumbSize > 0 ? _tv2ListThumbSize : 56).clamp(32, 120)).toDouble(),
+                  min: 32,
+                  max: 120,
+                  divisions: 22,
+                  onChanged: (v) => setState(() => _tv2ListThumbSize = v),
+                ),
                 TextButton(
                   onPressed: () => setState(() {
                     _tv2TitleSize = 0;
                     _tv2ItemNameSize = 0;
+                    _tv2ItemPriceSize = 0;
+                    _tv2HeroNameSize = 0;
+                    _tv2HeroPriceSize = 0;
+                    _tv2ListThumbSize = 0;
                   }),
                   child: const Text('Сбросить размеры ТВ2'),
                 ),
@@ -1440,60 +1363,6 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
     );
 
     return scaffold;
-  }
-}
-
-class _ColorPaletteField extends StatelessWidget {
-  const _ColorPaletteField({
-    required this.label,
-    required this.selectedHex,
-    required this.palette,
-    required this.onSelect,
-  });
-
-  final String label;
-  final String selectedHex;
-  final List<String> palette;
-  final ValueChanged<String> onSelect;
-
-  Color _hexToColor(String hex) {
-    final v = parseTvLayoutHexColor(hex);
-    return v ?? Colors.transparent;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final selected = selectedHex.trim().toUpperCase();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(label, style: Theme.of(context).textTheme.bodyMedium),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            for (final hex in palette)
-              InkWell(
-                onTap: () => onSelect(hex),
-                borderRadius: BorderRadius.circular(8),
-                child: Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: _hexToColor(hex),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: selected == hex ? const Color(0xFFE4002B) : Colors.black26,
-                      width: selected == hex ? 2 : 1,
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ],
-    );
   }
 }
 

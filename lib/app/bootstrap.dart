@@ -13,8 +13,9 @@ import 'package:dk_digitial_menu/core/app_config.dart' as dm_app_config;
 import 'package:dk_pos/app/app_update_info.dart';
 import 'package:dk_pos/core/cache/pos_local_cache_cleanup.dart';
 import 'package:dk_pos/features/license/global_license_bootstrap.dart';
-import 'package:dk_pos/features/license/license_local_api.dart';
 import 'package:dk_pos/features/license/license_global_api.dart';
+import 'package:dk_pos/features/license/license_runtime_config.dart';
+import 'package:dk_pos/features/license/local_server_discovery.dart';
 import 'package:dk_pos/app/dk_pos_app.dart';
 import 'package:dk_pos/app/locale/locale_bloc.dart';
 import 'package:dk_pos/app/locale/locale_event.dart';
@@ -22,6 +23,7 @@ import 'package:dk_pos/app/pos_catalog_grid/pos_catalog_grid_cubit.dart';
 import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
 import 'package:dk_pos/app/router/app_router.dart' show AppRouter;
 import 'package:dk_pos/core/config/app_config.dart';
+import 'package:dk_pos/core/config/server_endpoint_applier.dart';
 import 'package:dk_pos/core/config/server_endpoint_store.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/core/network/dio_factory.dart';
@@ -55,6 +57,7 @@ import 'package:dk_pos/features/admin/data/users_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/kitchen_stations_repository.dart';
 import 'package:dk_pos/features/admin/data/kitchen_buttons_repository.dart';
 import 'package:dk_pos/features/admin/data/local_audio_settings_repository.dart';
+import 'package:dk_pos/features/admin/data/local_tv_display_settings_repository.dart';
 import 'package:dk_pos/features/admin/data/local_order_handout_settings_repository.dart';
 import 'package:dk_pos/features/admin/data/local_receipt_settings_repository.dart';
 import 'package:dk_pos/features/cash/data/local_cash_repository.dart';
@@ -70,6 +73,8 @@ import 'package:dk_pos/features/kitchen_board/background/kitchen_background_serv
 import 'package:dk_pos/features/pos/presentation/screens/customer_display_window.dart';
 import 'package:dk_pos/features/update/pos_update_merged_check.dart';
 import 'package:dk_pos/features/update/silent_update_dialog.dart';
+import 'package:dk_pos/features/update/update_bottom_banner.dart';
+import 'package:dk_pos/features/update/update_coordinator.dart';
 import 'package:dk_pos/features/update/update_download_launcher.dart';
 import 'package:dk_pos/theme/app_theme.dart';
 
@@ -203,6 +208,7 @@ Future<void> bootstrap([List<String> args = const []]) async {
   final customerWindowPayload = _tryParseSubWindowArgs(args);
   if (customerWindowPayload != null &&
       customerWindowPayload['type'] == 'customer_display') {
+    await _applyCustomerDisplayApiOrigin(customerWindowPayload);
     final windowId = int.parse(args[1]);
     runApp(
       CustomerDisplayWindowApp(
@@ -220,6 +226,22 @@ Future<void> bootstrap([List<String> args = const []]) async {
   }
 
   runApp(const _PosBootstrapGate());
+}
+
+/// Второе окно (экран клиента) — отдельный процесс: без этого QR/логотипы
+/// грузятся с 127.0.0.1, хотя тексты приходят из sync-файла.
+Future<void> _applyCustomerDisplayApiOrigin(
+  Map<String, dynamic> payload,
+) async {
+  final fromPayload = payload['apiOrigin']?.toString().trim();
+  if (fromPayload != null && fromPayload.isNotEmpty) {
+    AppConfig.setApiOriginOverride(fromPayload);
+    return;
+  }
+  final savedOrigin = await ServerEndpointStore.read();
+  if (savedOrigin != null && savedOrigin.isNotEmpty) {
+    AppConfig.setApiOriginOverride(savedOrigin);
+  }
 }
 
 Map<String, dynamic>? _tryParseSubWindowArgs(List<String> args) {
@@ -259,6 +281,8 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
   String? _licenseFormError;
   bool _licenseNeedsKey = false;
   AppUpdateInfo? _blockingUpdate;
+  bool _autoDiscoveryAttempted = false;
+  final _updateCoordinator = UpdateCoordinator();
 
   /// Подпись под индикатором при старте (сначала лицензия через локальный API).
   String? _loadingSubtitle;
@@ -272,6 +296,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
 
   @override
   void dispose() {
+    _updateCoordinator.dispose();
     _ipController.dispose();
     _licenseKeyController.dispose();
     super.dispose();
@@ -299,6 +324,18 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         _licenseNeedsKey = true;
       });
     } else if (lr is GlobalLicenseStartupBlocked) {
+      if (lr.suggestServerEndpoint && !_autoDiscoveryAttempted) {
+        _autoDiscoveryAttempted = true;
+        if (mounted) {
+          setState(() => _loadingSubtitle = 'Автопоиск сервера в локальной сети…');
+        }
+        final discovery = await LocalServerDiscovery.resolveAndApply();
+        if (!mounted) return;
+        if (discovery.ok) {
+          await _runStartupPipeline();
+          return;
+        }
+      }
       if (lr.suggestServerEndpoint) {
         _ipController.text = AppConfig.apiOrigin;
       }
@@ -311,7 +348,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
     } else if (lr is GlobalLicenseStartupOk) {
       if (!mounted) return;
       setState(() => _loadingSubtitle = 'Загрузка кассы…');
-      await _syncDefaultStoreBranchIdFromLocalLicense();
+      await LicenseRuntimeConfig.applyAfterLicenseActivation();
       if (!mounted) return;
       await _bootstrapApp();
     }
@@ -345,19 +382,28 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       setState(() => _licenseFormError = 'Введите ключ лицензии');
       return;
     }
+    final serverRaw = _licenseNetworkSuggestServer ? _ipController.text.trim() : null;
+    if (_licenseNetworkSuggestServer && (serverRaw == null || serverRaw.isEmpty)) {
+      setState(() => _licenseFormError = 'Укажите IP сервера кассы');
+      return;
+    }
     setState(() {
       _loading = true;
       _licenseFormError = null;
-      _loadingSubtitle = 'Сохранение лицензии на сервере (локальная БД)…';
+      _loadingSubtitle = 'Подключение и активация лицензии…';
     });
     try {
-      await GlobalLicenseBootstrap.activateAndPersist(key);
+      await GlobalLicenseBootstrap.activateAndPersist(
+        key,
+        serverManualInput: serverRaw?.isNotEmpty == true ? serverRaw : null,
+      );
       if (!mounted) return;
       setState(() {
         _licenseNeedsKey = false;
+        _licenseNetworkError = null;
+        _licenseNetworkSuggestServer = false;
         _loadingSubtitle = 'Загрузка кассы…';
       });
-      await _syncDefaultStoreBranchIdFromLocalLicense();
       if (!mounted) return;
       await _bootstrapApp();
     } on LicenseApiException catch (e) {
@@ -387,25 +433,6 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         _licenseFormError = e.toString();
       });
     }
-  }
-
-  Future<void> _syncDefaultStoreBranchIdFromLocalLicense() async {
-    try {
-      final dio = createDio();
-      final status = await LicenseLocalApi(dio).getStatus();
-      final fr = status['franchise'];
-      if (fr is Map) {
-        final id = fr['id'];
-        final n = id is int
-            ? id
-            : int.tryParse(id is num ? id.toString() : (id?.toString() ?? ''));
-        if (n != null && n > 0) {
-          AppConfig.setDefaultStoreBranchIdFromFranchise(n);
-          return;
-        }
-      }
-    } catch (_) {}
-    AppConfig.clearDefaultStoreBranchIdFromFranchise();
   }
 
   Future<void> _bootstrapApp() async {
@@ -443,6 +470,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       final menuUnitsRepo = MenuUnitsRepository(http);
       final uploadRepo = UploadRepository(http);
       final localAudioSettingsRepo = LocalAudioSettingsRepository(http);
+      final localTvDisplaySettingsRepo = LocalTvDisplaySettingsRepository(http);
       final localOrderHandoutSettingsRepo =
           LocalOrderHandoutSettingsRepository(http);
       final localReceiptSettingsRepo = LocalReceiptSettingsRepository(http);
@@ -505,6 +533,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           combosAdminRepo: combosAdminRepo,
           uploadRepo: uploadRepo,
           localAudioSettingsRepo: localAudioSettingsRepo,
+          localTvDisplaySettingsRepo: localTvDisplaySettingsRepo,
           localOrderHandoutSettingsRepo: localOrderHandoutSettingsRepo,
           localReceiptSettingsRepo: localReceiptSettingsRepo,
           localHardwareRepo: localHardwareRepo,
@@ -548,7 +577,6 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       setState(() => _error = 'Введите IP сервера');
       return;
     }
-    final normalized = AppConfig.normalizeServerConnectionInput(raw);
 
     final prevSaved = await ServerEndpointStore.read();
 
@@ -557,13 +585,11 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       _loading = true;
     });
 
-    AppConfig.setApiOriginOverride(normalized);
-    dm_app_config.AppConfig.setApiOriginOverride(normalized);
-
     try {
-      final dio = createDio();
-      await _ensureApiAvailable(DioHttpClient(dio));
-      await ServerEndpointStore.save(normalized);
+      final result = await ServerEndpointApplier.apply(raw);
+      if (!result.ok) {
+        throw StateError(result.message ?? 'Сервер недоступен');
+      }
       await clearPosLocalCaches();
       await _runStartupPipeline();
     } catch (e) {
@@ -575,10 +601,13 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         dm_app_config.AppConfig.clearApiOriginOverride();
       }
       if (!mounted) return;
+      final msg = e is StateError
+          ? e.message
+          : ServerEndpointApplier.formatConnectionError(e);
       if (fromLicenseScreen) {
         setState(() {
           _payload = null;
-          _licenseNetworkError = _formatStartupError(e);
+          _licenseNetworkError = msg;
           _licenseNetworkSuggestServer = true;
           _licenseNeedsKey = false;
           _loading = false;
@@ -586,12 +615,12 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           _loadingSubtitle = null;
           _error = null;
         });
-        _ipController.text = normalized;
+        _ipController.text = raw;
         return;
       }
       setState(() {
         _payload = null;
-        _error = _formatStartupError(e);
+        _error = msg;
         _loading = false;
         _blockingUpdate = null;
         _loadingSubtitle = null;
@@ -709,38 +738,46 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                               style: const TextStyle(height: 1.35),
                             ),
                             if (_licenseNetworkSuggestServer) ...[
-                              const SizedBox(height: 16),
-                              const Text(
-                                'IP компьютера с backend (порт 3000, если не указан). Пример: 192.168.1.100',
-                                textAlign: TextAlign.center,
-                                style: TextStyle(fontSize: 13, height: 1.35),
-                              ),
                               const SizedBox(height: 12),
+                              const Text(
+                                'Введите IP компьютера, где запущен backend. После подключения касса проверит локальную лицензию и продолжит запуск.',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(fontSize: 13, height: 1.4),
+                              ),
+                              const SizedBox(height: 14),
                               TextField(
                                 controller: _ipController,
                                 keyboardType: TextInputType.url,
                                 textInputAction: TextInputAction.done,
-                                onSubmitted: (_) =>
-                                    _saveServerIp(fromLicenseScreen: true),
+                                onSubmitted: (_) => _saveServerIp(fromLicenseScreen: true),
                                 inputFormatters: [
                                   FilteringTextInputFormatter.deny(
                                     RegExp(r'\s'),
                                   ),
                                 ],
                                 decoration: const InputDecoration(
-                                  labelText: 'Адрес сервера',
+                                  labelText: 'IP сервера кассы',
                                   hintText: '192.168.1.100',
                                   prefixIcon: Icon(Icons.dns_rounded),
                                   border: OutlineInputBorder(),
                                 ),
                               ),
+                              if (_licenseFormError != null) ...[
+                                const SizedBox(height: 10),
+                                Text(
+                                  _licenseFormError!,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    color: Color(0xFFB42318),
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
                               const SizedBox(height: 14),
                               FilledButton(
                                 onPressed: _loading
                                     ? null
-                                    : () => _saveServerIp(
-                                        fromLicenseScreen: true,
-                                      ),
+                                    : () => _saveServerIp(fromLicenseScreen: true),
                                 style: FilledButton.styleFrom(
                                   backgroundColor: const Color(0xFFE4002B),
                                   foregroundColor: Colors.white,
@@ -749,7 +786,9 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                                   ),
                                 ),
                                 child: Text(
-                                  _loading ? 'Подключение…' : 'Подключиться',
+                                  _loading
+                                      ? 'Настройка…'
+                                      : 'Подключить сервер',
                                 ),
                               ),
                               const SizedBox(height: 8),
@@ -846,7 +885,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                             ),
                             const SizedBox(height: 14),
                             const Text(
-                              'Ключ франшизы',
+                              'Активация точки',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 22,
@@ -855,9 +894,8 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                             ),
                             const SizedBox(height: 8),
                             Text(
-                              'Сначала POS спросил локальный сервер (${AppConfig.apiOrigin}): есть ли лицензия в базе точки и действует ли срок. '
-                              'Если записи нет или срок истёк — нужен ключ. После «Активировать» ключ уходит на сервер в POST /api/local/license/sync, '
-                              'в MySQL обновляется таблица local_pos_license (одна строка на точку); остальные кассы с тем же API подхватят лицензию без повторного ввода.',
+                              'Введите ключ лицензии — касса подключится к ${AppConfig.apiOrigin}, '
+                              'сохранит точку в базе и подтянет меню с глобала. Другие терминалы этой точки увидят лицензию без повторного ввода ключа.',
                               textAlign: TextAlign.center,
                               style: TextStyle(
                                 fontSize: 13,
@@ -1155,6 +1193,9 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         RepositoryProvider<LocalAudioSettingsRepository>.value(
           value: payload.localAudioSettingsRepo,
         ),
+        RepositoryProvider<LocalTvDisplaySettingsRepository>.value(
+          value: payload.localTvDisplaySettingsRepo,
+        ),
         RepositoryProvider<LocalOrderHandoutSettingsRepository>.value(
           value: payload.localOrderHandoutSettingsRepo,
         ),
@@ -1194,9 +1235,14 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           BlocProvider<AuthBloc>.value(value: payload.authBloc),
           BlocProvider<CartBloc>(create: (_) => CartBloc(payload.cartRepo)),
         ],
-        child: DkPosApp(
-          router: payload.appRouter,
-          startupUpdate: payload.startupUpdate,
+        child: UpdateCoordinatorHost(
+          coordinator: _updateCoordinator,
+          child: UpdateBottomBanner(
+            coordinator: _updateCoordinator,
+            child: DkPosApp(
+              router: payload.appRouter,
+            ),
+          ),
         ),
       ),
     );
@@ -1224,6 +1270,7 @@ class _BootPayload {
     required this.combosAdminRepo,
     required this.uploadRepo,
     required this.localAudioSettingsRepo,
+    required this.localTvDisplaySettingsRepo,
     required this.localOrderHandoutSettingsRepo,
     required this.localReceiptSettingsRepo,
     required this.localHardwareRepo,
@@ -1261,6 +1308,7 @@ class _BootPayload {
   final CombosAdminRepository combosAdminRepo;
   final UploadRepository uploadRepo;
   final LocalAudioSettingsRepository localAudioSettingsRepo;
+  final LocalTvDisplaySettingsRepository localTvDisplaySettingsRepo;
   final LocalOrderHandoutSettingsRepository localOrderHandoutSettingsRepo;
   final LocalReceiptSettingsRepository localReceiptSettingsRepo;
   final LocalHardwareRepository localHardwareRepo;

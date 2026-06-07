@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:auto_route/auto_route.dart';
 import 'package:dk_pos/app/app_locale_scope.dart';
-import 'package:dk_pos/app/app_update_info.dart';
 import 'package:dk_pos/app/locale/locale_bloc.dart';
 import 'package:dk_pos/app/router/app_router.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
@@ -14,7 +12,6 @@ import 'package:dk_pos/features/auth/bloc/auth_state.dart';
 import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
 import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
 import 'package:dk_pos/features/cart/bloc/cart_event.dart';
-import 'package:dk_pos/features/update/update_download_launcher.dart';
 import 'package:dk_pos/theme/theme.dart';
 
 /// Корень UI: тема, локализация, роутер, синхронизация с [AuthBloc].
@@ -22,11 +19,9 @@ class DkPosApp extends StatelessWidget {
   const DkPosApp({
     super.key,
     required this.router,
-    this.startupUpdate,
   });
 
   final AppRouter router;
-  final AppUpdateInfo? startupUpdate;
 
   @override
   Widget build(BuildContext context) {
@@ -53,12 +48,9 @@ class DkPosApp extends StatelessWidget {
             routerConfig: router.config(),
             builder: (context, child) {
               return _ShiftLifecycleSync(
-                child: _StartupUpdateNotice(
-                  updateInfo: startupUpdate,
-                  child: _RouterAuthSync(
-                    router: router,
-                    child: child ?? const SizedBox.shrink(),
-                  ),
+                child: _RouterAuthSync(
+                  router: router,
+                  child: child ?? const SizedBox.shrink(),
                 ),
               );
             },
@@ -120,88 +112,6 @@ class _ShiftLifecycleSyncState extends State<_ShiftLifecycleSync>
   Widget build(BuildContext context) => widget.child;
 }
 
-class _StartupUpdateNotice extends StatefulWidget {
-  const _StartupUpdateNotice({
-    required this.updateInfo,
-    required this.child,
-  });
-
-  final AppUpdateInfo? updateInfo;
-  final Widget child;
-
-  @override
-  State<_StartupUpdateNotice> createState() => _StartupUpdateNoticeState();
-}
-
-class _StartupUpdateNoticeState extends State<_StartupUpdateNotice> {
-  bool _shown = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final info = widget.updateInfo;
-    if (!_shown && info != null && info.shouldNotify && !info.requiresBlock) {
-      _shown = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        if (!mounted) return;
-        await showDialog<void>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: const Text('Доступно обновление'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '${info.displayName}: ${info.installedVersion} -> ${info.targetVersion ?? "новая версия"}',
-                ),
-                if ((info.releaseNotes ?? '').trim().isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Text(info.releaseNotes!),
-                ],
-                if ((info.downloadUrl ?? '').trim().isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  SelectableText(info.downloadUrl!),
-                ],
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Позже'),
-              ),
-              if ((info.downloadUrl ?? '').trim().isNotEmpty) ...[
-                TextButton(
-                  onPressed: () async {
-                    await Clipboard.setData(
-                      ClipboardData(text: info.downloadUrl ?? ''),
-                    );
-                    if (ctx.mounted) Navigator.of(ctx).pop();
-                  },
-                  child: const Text('Скопировать ссылку'),
-                ),
-                FilledButton(
-                  onPressed: () async {
-                    final ok = await openUpdateDownloadUrl(info.downloadUrl!);
-                    if (!ctx.mounted) return;
-                    if (!ok) {
-                      ScaffoldMessenger.of(ctx).showSnackBar(
-                        const SnackBar(
-                          content: Text('Не удалось открыть ссылку'),
-                        ),
-                      );
-                    }
-                  },
-                  child: const Text('Скачать / установить'),
-                ),
-              ],
-            ],
-          ),
-        );
-      });
-    }
-    return widget.child;
-  }
-}
 
 class _RouterAuthSync extends StatefulWidget {
   const _RouterAuthSync({required this.router, required this.child});

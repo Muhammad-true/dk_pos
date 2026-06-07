@@ -25,6 +25,7 @@ class PosTableBillLine extends Equatable {
     required this.quantity,
     required this.lineTotal,
     this.menuItemId,
+    this.lineKey,
     this.unitPrice,
     this.kitchenLineStatus,
     this.kitchenStationId,
@@ -35,6 +36,8 @@ class PosTableBillLine extends Equatable {
   final double lineTotal;
   /// С сервера open-table-bills — для подстановки в корзину.
   final String? menuItemId;
+  /// Ключ строки в order_items (как в корзине).
+  final String? lineKey;
   final double? unitPrice;
 
   /// С сервера: этап строки кухни (`pending` / `accepted` / `ready`).
@@ -46,12 +49,20 @@ class PosTableBillLine extends Equatable {
   bool get isKitchenLine =>
       kitchenStationId != null && kitchenStationId! > 0;
 
+  /// Кухня уже приняла в работу — при убирании из счёта нужна причина.
+  bool get needsRemovalReason {
+    if (!isKitchenLine) return false;
+    final st = (kitchenLineStatus ?? 'pending').toLowerCase().trim();
+    return st == 'accepted' || st == 'ready';
+  }
+
   @override
   List<Object?> get props => [
         name,
         quantity,
         lineTotal,
         menuItemId,
+        lineKey,
         unitPrice,
         kitchenLineStatus,
         kitchenStationId,
@@ -71,6 +82,15 @@ class PosTableBill extends Equatable {
     this.isPaid = false,
     this.paymentMethod,
     this.orderStatus = '',
+    this.tableLabel = '',
+    this.customerPhone,
+    this.isDelivery = false,
+    this.createdByUsername,
+    this.createdByRole,
+    this.terminalId,
+    this.isWaiterOrder = false,
+    this.isTakeaway = false,
+    this.isCashierOrder = false,
   });
 
   final String id;
@@ -87,6 +107,26 @@ class PosTableBill extends Equatable {
   /// Статус заказа с сервера (`new`, `cooking`, `ready`, `done`, …).
   final String orderStatus;
 
+  /// Сырая метка с сервера (`table_label`), в т.ч. «Доставка · тел: …».
+  final String tableLabel;
+
+  /// Телефон клиента для доставки (из table_label или API).
+  final String? customerPhone;
+
+  final bool isDelivery;
+
+  /// Имя пользователя, создавшего заказ (официант / кассир).
+  final String? createdByUsername;
+
+  final String? createdByRole;
+
+  /// Терминал кассы (`POS_TERMINAL_ID`).
+  final String? terminalId;
+
+  final bool isWaiterOrder;
+  final bool isTakeaway;
+  final bool isCashierOrder;
+
   bool get isHandedOutUnpaid =>
       !isPaid && orderStatus.trim().toLowerCase() == 'done';
 
@@ -95,6 +135,15 @@ class PosTableBill extends Equatable {
       final z = tableZone;
       if (z != null) return '${z.shortLabel} • стол $tableNumber';
       return 'Стол $tableNumber';
+    }
+    final delivery =
+        isDelivery || orderTypeLabel.toLowerCase().contains('доставк');
+    if (delivery) {
+      final phone = customerPhone?.trim();
+      if (phone != null && phone.isNotEmpty) {
+        return 'Доставка · тел. получателя $phone';
+      }
+      return 'Доставка';
     }
     if (orderTypeLabel == 'На месте') return 'Стол не указан';
     return orderTypeLabel;
@@ -114,6 +163,16 @@ class PosTableBill extends Equatable {
       createdAt: createdAt,
       isPaid: isPaid ?? this.isPaid,
       paymentMethod: paymentMethod ?? this.paymentMethod,
+      orderStatus: orderStatus,
+      tableLabel: tableLabel,
+      customerPhone: customerPhone,
+      isDelivery: isDelivery,
+      createdByUsername: createdByUsername,
+      createdByRole: createdByRole,
+      terminalId: terminalId,
+      isWaiterOrder: isWaiterOrder,
+      isTakeaway: isTakeaway,
+      isCashierOrder: isCashierOrder,
     );
   }
 
@@ -129,5 +188,14 @@ class PosTableBill extends Equatable {
         isPaid,
         paymentMethod,
         orderStatus,
+        tableLabel,
+        customerPhone,
+        isDelivery,
+        createdByUsername,
+        createdByRole,
+        terminalId,
+        isWaiterOrder,
+        isTakeaway,
+        isCashierOrder,
       ];
 }

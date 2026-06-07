@@ -6,12 +6,29 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'package:dk_pos/app/pos_theme/pos_theme_toggle_button.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
+import 'package:dk_pos/features/kitchen_board/presentation/widgets/kitchen_order_number_badge.dart';
 import 'package:dk_pos/features/orders/presentation/widgets/pos_queue_section_label.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
 import 'package:dk_pos/theme/pos_workspace_theme.dart';
 
 const _kTonePreparing = Color(0xFFE4002B);
 const _kToneReady = Color(0xFF24B47E);
+
+String _queueBoardOrderDisplayNumber(LocalKitchenQueueOrder order) {
+  final number = order.number.trim();
+  if (number.isEmpty) return number;
+  final low = (order.orderType ?? '').trim().toLowerCase();
+  if (low.contains('доставк') || low == 'delivery') return 'Д-$number';
+  if (low.contains('самовывоз') ||
+      low.contains('с собой') ||
+      low == 'pickup' ||
+      low == 'takeaway' ||
+      low == 'take_away' ||
+      low == 'to_go') {
+    return 'С-$number';
+  }
+  return number;
+}
 
 @RoutePage()
 class QueueBoardScreen extends StatefulWidget {
@@ -252,22 +269,9 @@ class _QueueBoardCard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: tone.withValues(alpha: 0.14),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              order.number,
-              style: theme.textTheme.headlineSmall?.copyWith(
-                fontWeight: FontWeight.w900,
-                color: tone,
-                letterSpacing: -0.5,
-              ),
-            ),
+          KitchenOrderNumberBadge(
+            displayNumber: _queueBoardOrderDisplayNumber(order),
+            tone: tone,
           ),
           const SizedBox(width: 14),
           Expanded(

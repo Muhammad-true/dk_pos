@@ -13,15 +13,15 @@ import 'package:dk_pos/app/locale/locale_bloc.dart';
 import 'package:dk_pos/app/locale/locale_event.dart';
 import 'package:dk_pos/app/locale/locale_state.dart';
 import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
-import 'package:dk_pos/core/cache/pos_local_cache_cleanup.dart';
 import 'package:dk_pos/core/config/app_config.dart';
+import 'package:dk_pos/core/network/http_client.dart';
+import 'package:dk_pos/data/network/dio_http_client.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/core/formatting/money_format.dart';
 import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/core/locale/api_locale.dart';
 import 'package:dk_pos/features/auth/presentation/cashier_password_gate_dialog.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
-import 'package:dk_pos/features/auth/bloc/auth_event.dart';
 import 'package:dk_pos/features/auth/bloc/auth_state.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
 import 'package:dk_pos/features/cash/presentation/pos_cash_flow.dart';
@@ -37,6 +37,7 @@ import 'package:dk_pos/features/admin/data/screens_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/local_audio_settings_repository.dart';
 import 'package:dk_pos/features/kitchen_board/audio/kitchen_order_alert.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_catalog_grid_settings_editor.dart';
+import 'package:dk_pos/features/pos/presentation/widgets/pos_server_endpoint_editor.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_modifier_sheet.dart';
 import 'package:dk_pos/features/expeditor/presentation/widgets/expeditor_queue_panel.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
@@ -165,6 +166,27 @@ String _cashierBoardOrderTypeRu(String? orderTypeRaw) {
   if (low == 'pickup') return 'Самовывоз';
   if (low == 'parking') return 'Парковка';
   return v;
+}
+
+String _cashierOrderDisplayNumber({
+  required String number,
+  required String? orderTypeRaw,
+}) {
+  final cleanNumber = number.trim();
+  if (cleanNumber.isEmpty) return cleanNumber;
+  final low = (orderTypeRaw ?? '').trim().toLowerCase();
+  if (low.contains('доставк') || low == 'delivery') {
+    return 'Д-$cleanNumber';
+  }
+  if (low.contains('самовывоз') ||
+      low.contains('с собой') ||
+      low == 'pickup' ||
+      low == 'takeaway' ||
+      low == 'take_away' ||
+      low == 'to_go') {
+    return 'С-$cleanNumber';
+  }
+  return cleanNumber;
 }
 
 String _paymentHistoryTableFallback(LocalPaymentHistoryEntry e) {
@@ -319,6 +341,9 @@ class _PosViewState extends State<_PosView> {
       final role = context.read<AuthBloc>().state.user?.role;
       if (role == 'cashier' || role == 'admin') {
         await ensureCashShiftOpen(context);
+        if (_canUseCustomerDisplay && mounted) {
+          await _autoOpenCustomerDisplay(silent: true);
+        }
       }
     });
   }
@@ -626,7 +651,9 @@ class _PosViewState extends State<_PosView> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Заказ №${row.order.number} принят на кассе'),
+          content: Text(
+            'Заказ №${_cashierOrderDisplayNumber(number: row.order.number, orderTypeRaw: row.orderType)} принят на кассе',
+          ),
         ),
       );
     } on ApiException catch (e) {
@@ -719,12 +746,7 @@ class _PosViewState extends State<_PosView> {
   }
 
   void _logout(BuildContext context) async {
-    final role = context.read<AuthBloc>().state.user?.role ?? '';
-    final ok = await confirmLogoutWithShiftChecks(context, role: role);
-    if (!ok || !context.mounted) return;
-    unawaited(clearPosLocalCaches());
-    context.read<CartBloc>().add(const CartResetAll());
-    context.read<AuthBloc>().add(const AuthLogoutRequested());
+    await performPosSessionLogout(context);
   }
 
   Future<void> _handleCatalogItemAdd(PosMenuItem item) async {
@@ -769,6 +791,11 @@ class _PosViewState extends State<_PosView> {
           Navigator.of(dialogContext).pop();
           await _cancelActiveOrder(order);
           if (mounted) await _showOrdersDialog();
+        },
+        onCallCustomer: (order) {
+          final label = order.tableLabel?.trim() ?? '';
+          final meta = parseWebsiteOrderDeliveryMeta(label);
+          callWebsiteOrderCustomer(context, meta.phone);
         },
       ),
     ).then((_) => _refreshExpeditorQueueCounts());
@@ -863,7 +890,7 @@ class _PosViewState extends State<_PosView> {
             content: Text(
               [
                 if (notReady)
-                  'Заказ №${o.number} ещё не в статусе «Готов».',
+                  'Заказ №${_cashierOrderDisplayNumber(number: o.number, orderTypeRaw: row.orderType)} ещё не в статусе «Готов».',
                 if (needsPayment)
                   'Оплата ещё не проведена — после выдачи примите её в «Счета на оплату».',
                 'Подтвердите ручное закрытие/выдачу.',
@@ -920,8 +947,8 @@ class _PosViewState extends State<_PosView> {
         SnackBar(
           content: Text(
             needsPayment
-                ? 'Заказ №${o.number} выдан. Оплату проведите в «Счета на оплату».'
-                : 'Заказ №${o.number} выдан',
+                ? 'Заказ №${_cashierOrderDisplayNumber(number: o.number, orderTypeRaw: row.orderType)} выдан. Оплату проведите в «Счета на оплату».'
+                : 'Заказ №${_cashierOrderDisplayNumber(number: o.number, orderTypeRaw: row.orderType)} выдан',
           ),
         ),
       );
@@ -947,7 +974,7 @@ class _PosViewState extends State<_PosView> {
           title: const Text('Отменить заказ?'),
           content: Text(
             [
-              'Заказ №${o.number} будет переведен в статус «Отменен».',
+              'Заказ №${_cashierOrderDisplayNumber(number: o.number, orderTypeRaw: row.orderType)} будет переведен в статус «Отменен».',
               if (row.requiresPayment)
                 'По заказу стоит отметка «нужна оплата». Проверьте с гостем перед отменой.',
             ].join('\n'),
@@ -976,7 +1003,11 @@ class _PosViewState extends State<_PosView> {
       await _refreshOpenTableBills();
       if (!mounted) return;
       messenger.showSnackBar(
-        SnackBar(content: Text('Заказ №${o.number} отменен')),
+        SnackBar(
+          content: Text(
+            'Заказ №${_cashierOrderDisplayNumber(number: o.number, orderTypeRaw: row.orderType)} отменен',
+          ),
+        ),
       );
     } on ApiException catch (e) {
       final msg = e.message.toLowerCase();
@@ -1015,7 +1046,7 @@ class _PosViewState extends State<_PosView> {
               SnackBar(
                 content: Text(
                   hardwareHint == null || hardwareHint.isEmpty
-                      ? 'Возврат выполнен. Заказ №${o.number} отменен'
+                      ? 'Возврат выполнен. Заказ №${_cashierOrderDisplayNumber(number: o.number, orderTypeRaw: row.orderType)} отменен'
                       : 'Возврат выполнен. $hardwareHint',
                 ),
               ),
@@ -1115,11 +1146,51 @@ class _PosViewState extends State<_PosView> {
     );
   }
 
+  Future<void> _autoOpenCustomerDisplay({bool silent = false}) async {
+    final role = context.read<AuthBloc>().state.user?.role;
+    if (role != 'cashier' && role != 'admin') return;
+    if (!_canUseCustomerDisplay) return;
+    await _openCustomerDisplayInternal(
+      showAlreadyOpenMessage: false,
+      showSuccessMessage: !silent,
+      showFailureMessage: !silent,
+    );
+  }
+
   Future<void> _openCustomerDisplayByClick() async {
     final role = context.read<AuthBloc>().state.user?.role;
     if (role != 'cashier' && role != 'admin') return;
-    if (!_customerDisplaySupported) {
+    await _openCustomerDisplayInternal(
+      showAlreadyOpenMessage: true,
+      showSuccessMessage: true,
+      showFailureMessage: true,
+    );
+  }
+
+  Future<void> _closeCustomerDisplayByClick() async {
+    final role = context.read<AuthBloc>().state.user?.role;
+    if (role != 'cashier' && role != 'admin') return;
+    if (!CustomerDisplayWindowService.instance.isOpen) {
       if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Экран клиента не открыт')),
+      );
+      return;
+    }
+    await CustomerDisplayWindowService.instance.close();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Экран клиента закрыт')),
+    );
+  }
+
+  Future<void> _openCustomerDisplayInternal({
+    required bool showAlreadyOpenMessage,
+    required bool showSuccessMessage,
+    required bool showFailureMessage,
+  }) async {
+    if (!_customerDisplaySupported) {
+      if (!mounted || !showFailureMessage) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Экран клиента доступен только на Windows-версии POS'),
@@ -1128,7 +1199,7 @@ class _PosViewState extends State<_PosView> {
       return;
     }
     if (AppConfig.isCustomerDisplayWindowDisabled) {
-      if (!mounted) return;
+      if (!mounted || !showFailureMessage) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
@@ -1141,38 +1212,78 @@ class _PosViewState extends State<_PosView> {
     try {
       final cartState = context.read<CartBloc>().state;
       final config = await _loadCustomerDisplayConfig();
-      await CustomerDisplayWindowService.instance.setDisplayContentConfig(
-        config,
+      final result =
+          await CustomerDisplayWindowService.instance.openCustomerDisplay(
         cartState,
       );
-      final opened = await CustomerDisplayWindowService.instance.openCustomerDisplay(
-        cartState,
-      );
-      if (!mounted) return;
-      if (!opened) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Не удалось открыть экран клиента. Проверьте второй монитор и настройки Windows.',
-            ),
-          ),
+      if (result != CustomerDisplayOpenResult.failed) {
+        await CustomerDisplayWindowService.instance.setDisplayContentConfig(
+          config,
+          cartState,
         );
-        return;
       }
-      await CustomerDisplayWindowService.instance.setDisplayContentConfig(
-        config,
-        cartState,
-      );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Экран клиента открыт: чек и QR активны')),
-      );
+      switch (result) {
+        case CustomerDisplayOpenResult.alreadyOpen:
+          if (showAlreadyOpenMessage) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Окно клиента уже открыто')),
+            );
+          }
+        case CustomerDisplayOpenResult.opened:
+          if (showSuccessMessage) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Экран клиента открыт: чек и QR активны'),
+              ),
+            );
+          }
+        case CustomerDisplayOpenResult.failed:
+          if (showFailureMessage) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Не удалось открыть экран клиента. Проверьте второй монитор и настройки Windows.',
+                ),
+              ),
+            );
+          }
+      }
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || !showFailureMessage) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Не удалось открыть экран клиента: $e')),
       );
     }
+  }
+
+  Widget _customerDisplayToolbarActions() {
+    return ValueListenableBuilder<bool>(
+      valueListenable: CustomerDisplayWindowService.instance.openNotifier,
+      builder: (context, isOpen, _) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(isOpen ? Icons.tv_rounded : Icons.tv_outlined),
+              tooltip: isOpen ? 'Экран клиента (открыт)' : 'Открыть экран клиента',
+              onPressed: _openCustomerDisplayByClick,
+            ),
+            if (isOpen)
+              IconButton(
+                icon: const Icon(Icons.close_rounded),
+                tooltip: 'Закрыть экран клиента',
+                onPressed: _closeCustomerDisplayByClick,
+              ),
+            IconButton(
+              icon: const Icon(Icons.sync_rounded),
+              tooltip: 'Обновить экран клиента',
+              onPressed: _refreshCustomerDisplayConfigByClick,
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<CustomerDisplayContentConfig?> _loadCustomerDisplayConfig() async {
@@ -1237,6 +1348,10 @@ class _PosViewState extends State<_PosView> {
   Future<void> _showSettingsDialog() {
     final localeBloc = context.read<LocaleBloc>();
     var selectedLocaleCode = localeBloc.state.locale.languageCode;
+    final role = context.read<AuthBloc>().state.user?.role;
+    final isAdmin = role == 'admin';
+    final http = context.read<HttpClient>();
+    final dioClient = http is DioHttpClient ? http : null;
 
     return showDialog<void>(
       context: context,
@@ -1336,6 +1451,14 @@ class _PosViewState extends State<_PosView> {
                       },
                     ),
                     const SizedBox(height: 22),
+                    const Divider(),
+                    const SizedBox(height: 16),
+                    PosServerEndpointEditor(
+                      compact: true,
+                      allowSaveOnServer: isAdmin,
+                      httpClient: dioClient,
+                    ),
+                    const SizedBox(height: 18),
                     const Divider(),
                     const SizedBox(height: 16),
                     const PosCatalogGridSettingsEditor(),
@@ -1519,22 +1642,9 @@ class _PosViewState extends State<_PosView> {
                                             ),
                                           ),
                                 ),
-                                if ((user?.role == 'cashier' ||
-                                        user?.role == 'admin') &&
-                                    _canUseCustomerDisplay)
-                                  IconButton(
-                                    icon: const Icon(Icons.tv_rounded),
-                                    tooltip: 'Экран клиента',
-                                    onPressed: _openCustomerDisplayByClick,
-                                  ),
-                                if ((user?.role == 'cashier' ||
-                                        user?.role == 'admin') &&
-                                    _canUseCustomerDisplay)
-                                  IconButton(
-                                    icon: const Icon(Icons.sync_rounded),
-                                    tooltip: 'Обновить экран клиента',
-                                    onPressed: _refreshCustomerDisplayConfigByClick,
-                                  ),
+                                if (user?.role == 'cashier' ||
+                                    user?.role == 'admin')
+                                  _customerDisplayToolbarActions(),
                                 if (user?.role == 'cashier' || user?.role == 'admin')
                                   IconButton(
                                     icon: const Icon(Icons.payments_rounded),
@@ -1614,22 +1724,9 @@ class _PosViewState extends State<_PosView> {
                                           ),
                                         ),
                               ),
-                              if ((user?.role == 'cashier' ||
-                                      user?.role == 'admin') &&
-                                  _canUseCustomerDisplay)
-                                IconButton(
-                                  icon: const Icon(Icons.tv_rounded),
-                                  tooltip: 'Экран клиента',
-                                  onPressed: _openCustomerDisplayByClick,
-                                ),
-                              if ((user?.role == 'cashier' ||
-                                      user?.role == 'admin') &&
-                                  _canUseCustomerDisplay)
-                                IconButton(
-                                  icon: const Icon(Icons.sync_rounded),
-                                  tooltip: 'Обновить экран клиента',
-                                  onPressed: _refreshCustomerDisplayConfigByClick,
-                                ),
+                              if (user?.role == 'cashier' ||
+                                  user?.role == 'admin')
+                                _customerDisplayToolbarActions(),
                               if (user?.role == 'cashier' || user?.role == 'admin')
                                 IconButton(
                                   icon: const Icon(Icons.payments_rounded),
@@ -1923,33 +2020,10 @@ class _PosViewState extends State<_PosView> {
                                                                       ),
                                                                     ),
                                                       ),
-                                                      if ((user?.role ==
-                                                                  'cashier' ||
-                                                              user?.role ==
-                                                                  'admin') &&
-                                                          _canUseCustomerDisplay)
-                                                        IconButton(
-                                                          icon: const Icon(
-                                                            Icons.tv_rounded,
-                                                          ),
-                                                          tooltip: 'Экран клиента',
-                                                          onPressed:
-                                                              _openCustomerDisplayByClick,
-                                                        ),
-                                                      if ((user?.role ==
-                                                                  'cashier' ||
-                                                              user?.role ==
-                                                                  'admin') &&
-                                                          _canUseCustomerDisplay)
-                                                        IconButton(
-                                                          icon: const Icon(
-                                                            Icons.sync_rounded,
-                                                          ),
-                                                          tooltip:
-                                                              'Обновить экран клиента',
-                                                          onPressed:
-                                                              _refreshCustomerDisplayConfigByClick,
-                                                        ),
+                                                      if (user?.role ==
+                                                              'cashier' ||
+                                                          user?.role == 'admin')
+                                                        _customerDisplayToolbarActions(),
                                                       if (user?.role ==
                                                               'cashier' ||
                                                           user?.role == 'admin')
@@ -2791,6 +2865,7 @@ class _PosOrdersDialog extends StatelessWidget {
     required this.onCashierAck,
     required this.onCloseOrder,
     required this.onCancelOrder,
+    required this.onCallCustomer,
   });
 
   final List<LocalCashierBoardOrder> orders;
@@ -2798,6 +2873,7 @@ class _PosOrdersDialog extends StatelessWidget {
   final Future<void> Function(LocalCashierBoardOrder) onCashierAck;
   final Future<void> Function(LocalCashierBoardOrder) onCloseOrder;
   final Future<void> Function(LocalCashierBoardOrder) onCancelOrder;
+  final void Function(LocalCashierBoardOrder) onCallCustomer;
 
   @override
   Widget build(BuildContext context) {
@@ -2819,6 +2895,7 @@ class _PosOrdersDialog extends StatelessWidget {
             onCashierAck: onCashierAck,
             onCloseOrder: onCloseOrder,
             onCancelOrder: onCancelOrder,
+            onCallCustomer: onCallCustomer,
           ),
         ),
         actions: [
@@ -2861,6 +2938,7 @@ class _PosOrdersDialog extends StatelessWidget {
                         onCashierAck: onCashierAck,
                         onCloseOrder: onCloseOrder,
                         onCancelOrder: onCancelOrder,
+                        onCallCustomer: onCallCustomer,
                       ),
                       const ExpeditorQueuePanel(embedded: true),
                     ],
@@ -2905,12 +2983,14 @@ class _HallOrdersList extends StatefulWidget {
     required this.onCashierAck,
     required this.onCloseOrder,
     required this.onCancelOrder,
+    required this.onCallCustomer,
   });
 
   final List<LocalCashierBoardOrder> orders;
   final Future<void> Function(LocalCashierBoardOrder) onCashierAck;
   final Future<void> Function(LocalCashierBoardOrder) onCloseOrder;
   final Future<void> Function(LocalCashierBoardOrder) onCancelOrder;
+  final void Function(LocalCashierBoardOrder) onCallCustomer;
 
   @override
   State<_HallOrdersList> createState() => _HallOrdersListState();
@@ -3103,6 +3183,7 @@ class _HallOrdersListState extends State<_HallOrdersList> {
             onCashierAck: () => widget.onCashierAck(filtered[i]),
             onCloseOrder: () => widget.onCloseOrder(filtered[i]),
             onCancelOrder: () => widget.onCancelOrder(filtered[i]),
+            onCallCustomer: () => widget.onCallCustomer(filtered[i]),
           ),
           if (i != filtered.length - 1) const SizedBox(height: 10),
         ],
@@ -3193,6 +3274,11 @@ class _TodayPaymentsDialogLoader extends StatefulWidget {
 class _TodayPaymentsDialogLoaderState extends State<_TodayPaymentsDialogLoader> {
   static const int _pageSize = 40;
 
+  String get _terminalId =>
+      context.read<LocalPaymentsRepository>().defaultTerminalId;
+
+  String get _dialogTitle => 'Оплаты за сегодня · $_terminalId';
+
   bool _loading = true;
   bool _loadingMore = false;
   List<LocalPaymentHistoryEntry> _payments = const [];
@@ -3213,6 +3299,7 @@ class _TodayPaymentsDialogLoaderState extends State<_TodayPaymentsDialogLoader> 
       final history =
           await context.read<LocalPaymentsRepository>().fetchTodayHistoryBundle(
                 branchId: widget.branchId,
+                terminalId: _terminalId,
                 limit: _pageSize,
                 paymentOffset: 0,
                 refundOffset: 0,
@@ -3249,6 +3336,7 @@ class _TodayPaymentsDialogLoaderState extends State<_TodayPaymentsDialogLoader> 
       final next =
           await context.read<LocalPaymentsRepository>().fetchTodayHistoryBundle(
                 branchId: widget.branchId,
+                terminalId: _terminalId,
                 limit: _pageSize,
                 paymentOffset: _payments.length,
                 refundOffset: _refunds.length,
@@ -3280,7 +3368,7 @@ class _TodayPaymentsDialogLoaderState extends State<_TodayPaymentsDialogLoader> 
     if (_loading) {
       return AlertDialog(
         backgroundColor: scheme.surfaceContainerLow,
-        title: Text('Оплаты за сегодня', style: titleStyle),
+        title: Text(_dialogTitle, style: titleStyle),
         content: SizedBox(
           width: math.min(400, MediaQuery.sizeOf(context).width * 0.9),
           height: 120,
@@ -3297,7 +3385,7 @@ class _TodayPaymentsDialogLoaderState extends State<_TodayPaymentsDialogLoader> 
     if (_error != null) {
       return AlertDialog(
         backgroundColor: scheme.surfaceContainerLow,
-        title: Text('Оплаты за сегодня', style: titleStyle),
+        title: Text(_dialogTitle, style: titleStyle),
         content: Text(_error!),
         actions: [
           TextButton(
@@ -3308,6 +3396,8 @@ class _TodayPaymentsDialogLoaderState extends State<_TodayPaymentsDialogLoader> 
       );
     }
     return _TodayPaymentsDialog(
+      title: _dialogTitle,
+      terminalId: _terminalId,
       entries: _payments,
       refunds: _refunds,
       summary: _summary,
@@ -3322,6 +3412,8 @@ class _TodayPaymentsDialogLoaderState extends State<_TodayPaymentsDialogLoader> 
 
 class _TodayPaymentsDialog extends StatelessWidget {
   const _TodayPaymentsDialog({
+    required this.title,
+    required this.terminalId,
     required this.entries,
     required this.refunds,
     required this.hasMorePayments,
@@ -3331,6 +3423,8 @@ class _TodayPaymentsDialog extends StatelessWidget {
     this.onLoadMore,
   });
 
+  final String title;
+  final String terminalId;
   final List<LocalPaymentHistoryEntry> entries;
   final List<LocalRefundHistoryEntry> refunds;
   final LocalPaymentsTodaySummary? summary;
@@ -3441,8 +3535,9 @@ class _TodayPaymentsDialog extends StatelessWidget {
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 10),
                 child: Text(
-                  'Итоги за весь день (${summary!.paymentCount} оплат, '
-                  '${summary!.refundCount} возвратов). Ниже — последние записи.',
+                  'Итоги за сегодня по кассе $terminalId '
+                  '(${summary!.paymentCount} оплат, ${summary!.refundCount} возвратов). '
+                  'Другая касса в этот список не попадает.',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: scheme.onSurfaceVariant,
                   ),
@@ -3580,7 +3675,7 @@ class _TodayPaymentsDialog extends StatelessWidget {
     return AlertDialog(
       backgroundColor: scheme.surfaceContainerLow,
       title: Text(
-        'Оплаты за сегодня',
+        title,
         style: theme.textTheme.titleLarge?.copyWith(
           fontWeight: FontWeight.w800,
         ),
@@ -3660,9 +3755,13 @@ class _RefundHistoryTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final titleNo = entry.orderNumber.trim().isNotEmpty
+    final titleNoRaw = entry.orderNumber.trim().isNotEmpty
         ? entry.orderNumber.trim()
         : entry.orderId.trim();
+    final titleNo = _cashierOrderDisplayNumber(
+      number: titleNoRaw,
+      orderTypeRaw: entry.orderType,
+    );
     final itemPreview = entry.items.isEmpty
         ? 'Состав не найден'
         : entry.items
@@ -3844,6 +3943,26 @@ class _PaymentHistoryTile extends StatelessWidget {
                     ),
                   ),
                 ],
+                if (websiteMeta.phone != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Тел: ${websiteMeta.phone}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+                if (websiteMeta.phone != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Тел: ${websiteMeta.phone}',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
                 if (websiteMeta.courierHandoff != null) ...[
                   const SizedBox(height: 4),
                   Text(
@@ -4011,7 +4130,7 @@ class _OrderListTile extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '№ ${o.number}',
+                  '№ ${_cashierOrderDisplayNumber(number: o.number, orderTypeRaw: order.orderType)}',
                   style: theme.textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.w800,
                   ),
@@ -4177,7 +4296,7 @@ class _OrderListTile extends StatelessWidget {
           Column(
             children: [
               if (!completed) ...[
-                if (isWebsite && onCallCustomer != null && websiteMeta.phone != null) ...[
+                if (onCallCustomer != null && websiteMeta.phone != null) ...[
                   OutlinedButton.icon(
                     onPressed: onCallCustomer,
                     icon: const Icon(Icons.phone_rounded, size: 18),

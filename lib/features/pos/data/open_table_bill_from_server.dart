@@ -24,6 +24,14 @@ PosTableBill posTableBillFromServerDto(LocalOpenTableBillDto d) {
   final baseType = openTableBillOrderTypeLabelRu(d.orderType);
   final typeLabel =
       src == 'website' ? 'Онлайн · $baseType' : baseType;
+  final tableLabel = d.tableLabel.trim();
+  final phoneFromApi = d.customerPhone?.trim();
+  final phoneFromLabel = parseDeliveryPhoneFromTableLabel(tableLabel);
+  final customerPhone = (phoneFromApi != null && phoneFromApi.isNotEmpty)
+      ? phoneFromApi
+      : phoneFromLabel;
+  final isDelivery =
+      d.isDelivery || typeLabel.toLowerCase().contains('доставк');
   return PosTableBill(
     id: d.id,
     lines: d.lines
@@ -33,6 +41,7 @@ PosTableBill posTableBillFromServerDto(LocalOpenTableBillDto d) {
             quantity: l.quantity,
             lineTotal: l.lineTotal,
             menuItemId: l.menuItemId,
+            lineKey: l.lineKey,
             unitPrice: l.unitPrice,
             kitchenLineStatus: l.kitchenLineStatus,
             kitchenStationId: l.kitchenStationId,
@@ -47,5 +56,14 @@ PosTableBill posTableBillFromServerDto(LocalOpenTableBillDto d) {
     isPaid: false,
     paymentMethod: null,
     orderStatus: d.status,
+    tableLabel: tableLabel,
+    customerPhone: customerPhone,
+    isDelivery: isDelivery,
+    createdByUsername: d.createdByUsername,
+    createdByRole: d.createdByRole,
+    terminalId: d.terminalId,
+    isWaiterOrder: d.isWaiterOrder,
+    isTakeaway: d.isTakeaway,
+    isCashierOrder: d.isCashierOrder,
   );
 }

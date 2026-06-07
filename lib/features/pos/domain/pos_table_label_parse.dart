@@ -24,3 +24,21 @@ import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
 
   return (zone: null, number: null);
 }
+
+/// Телефон из метки доставки кассы: «Доставка · тел: +992…».
+String? parseDeliveryPhoneFromTableLabel(String raw) {
+  final s = raw.trim();
+  if (s.isEmpty) return null;
+  final m = RegExp(
+    r'(?:тел\.?|телефон|phone)(?:\s*получателя)?\s*[·:.]?\s*([+\d][\d\s()\-]{6,28})',
+    caseSensitive: false,
+  ).firstMatch(s);
+  if (m == null) return null;
+  final phone = m.group(1)?.replaceAll(RegExp(r'\s+'), ' ').trim();
+  return phone != null && phone.isNotEmpty ? phone : null;
+}
+
+bool tableLabelLooksLikeDelivery(String raw) {
+  final s = raw.trim().toLowerCase();
+  return s.contains('доставк') || s.contains('delivery');
+}

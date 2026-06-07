@@ -324,6 +324,28 @@ class AppLocalizationsTg extends AppLocalizations {
   String get adminScreenTv2Columns => 'Сутунҳои рӯйхат (ТВ2)';
 
   @override
+  String get adminScreenTv2ListMaxRows => 'Сатрҳо дар саҳифаи list (ихтиёрӣ)';
+
+  @override
+  String get adminScreenTv2ListMaxRowsHint =>
+      'Холӣ — автоматӣ. Барои сутунҳо зarb мешавад.';
+
+  @override
+  String get adminScreenTv2ListMaxItems =>
+      'Ҳадди аксари позитсия дар list (ихтиёрӣ)';
+
+  @override
+  String get adminScreenTv2ListMaxItemsHint =>
+      'Маҳдудияти сахт; холӣ — ҳисоби автоматӣ.';
+
+  @override
+  String get adminScreenTv2ListAutoSplit => 'Авто-саҳифаҳо барои list';
+
+  @override
+  String get adminScreenTv2ListAutoSplitHint =>
+      'Агар ҷо нагиранд — саҳифаи нав ба навбат илова мешавад.';
+
+  @override
   String get adminScreenTv2ShowTemplate => 'Намунаи намоиши ТВ2';
 
   @override
@@ -709,12 +731,19 @@ class AppLocalizationsTg extends AppLocalizations {
   String get adminTv2EditorListGridTitleRu => 'Сарлавҳаи торик (русӣ)';
 
   @override
+  String get adminTv2EditorProductGridTitleRu => 'Сарлавҳаи саҳифа (русӣ)';
+
+  @override
   String get adminTv2EditorPageHintSplit =>
       'Ду сутун дар рост (бургер / нӯшокӣ).';
 
   @override
   String get adminTv2EditorPageHintList =>
       'Торики молҳо ва корт калон дар рост.';
+
+  @override
+  String get adminTv2EditorPageHintProductGrid =>
+      'Торик бо сурат дар тамоми экран; зиёд — саҳифаҳои нав.';
 
   @override
   String get adminTv2EditorPageHintVideoBg =>
@@ -729,6 +758,9 @@ class AppLocalizationsTg extends AppLocalizations {
 
   @override
   String get adminTv2EditorRoleListGrid => 'Дар торик';
+
+  @override
+  String get adminTv2EditorRoleProductGridItem => 'Мол дар торик';
 
   @override
   String get adminTv2EditorSaveTitles => 'Захираи сарлавҳаҳо';
@@ -766,6 +798,63 @@ class AppLocalizationsTg extends AppLocalizations {
   @override
   String get adminTv2EditorLayoutListHint =>
       'Намунаи list — шабака аз ҳама ҷойҳо.';
+
+  @override
+  String get adminTv2EditorLayoutProductGridHint =>
+      'Намунаи product_grid — кортҳо бо сурат дар экран.';
+
+  @override
+  String get adminTv2ProductGridLayoutTitle => 'Торик дар экран';
+
+  @override
+  String get adminTv2ProductGridDragHint =>
+      'Превро нигоҳ доред ва чап/рост кашед — сутунҳо (2–5).';
+
+  @override
+  String adminTv2ProductGridColsAuto(int cols) {
+    return 'Авто (~$cols сут.)';
+  }
+
+  @override
+  String adminTv2ProductGridColsFixed(int cols) {
+    return '$cols сутун';
+  }
+
+  @override
+  String get adminTv2ProductGridColsLess => 'Камтар сутун';
+
+  @override
+  String get adminTv2ProductGridColsMore => 'Бештар сутун';
+
+  @override
+  String get adminTv2ProductGridCardSizeLabel => 'Андозаи корт (мисли касса)';
+
+  @override
+  String get adminTv2ProductGridCardSizeHint =>
+      'Компакт — кортҳои бештар; калон — сурат калонтар.';
+
+  @override
+  String get adminTv2ProductGridCardSizeCompact => 'Компакт';
+
+  @override
+  String get adminTv2ProductGridCardSizeNormal => 'Муқаррар';
+
+  @override
+  String get adminTv2ProductGridCardSizeLarge => 'Калон';
+
+  @override
+  String get adminTv2PageTransitionPerPage => 'Аниматсияи гузариш (ин саҳифа)';
+
+  @override
+  String get adminTv2PageTransitionPerPageHint =>
+      'Холӣ — мисли экран дар танзимот.';
+
+  @override
+  String get adminTv2PageTransitionInherit => 'Мисли экран';
+
+  @override
+  String get adminTv2EditorItemsReorderHint =>
+      '≡-ро нигоҳ доред ва тартибро иваз кунед.';
 
   @override
   String adminTv2EditorLayoutMore(int count) {
@@ -878,6 +967,9 @@ class AppLocalizationsTg extends AppLocalizations {
 
   @override
   String get adminTv2PageTypeList => 'list';
+
+  @override
+  String get adminTv2PageTypeProductGrid => 'product_grid';
 
   @override
   String get adminTv2PageTypeVideoBg => 'Заминаи видео';

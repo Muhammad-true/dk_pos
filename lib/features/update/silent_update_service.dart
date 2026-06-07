@@ -36,6 +36,7 @@ class SilentUpdateService {
     final key = appKey.trim().toLowerCase();
     if (key == 'server') return SilentUpdateTarget.server;
     if (key == 'pos_android') return SilentUpdateTarget.posAndroid;
+    if (key == 'digital_menu') return SilentUpdateTarget.posAndroid;
     if (key == 'pos') {
       if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
         return SilentUpdateTarget.posAndroid;
@@ -134,6 +135,64 @@ class SilentUpdateService {
     );
   }
 
+  /// Путь к уже скачанному установщику (если есть).
+  Future<String?> findCachedInstaller({
+    required String appKey,
+    required String downloadUrl,
+  }) async {
+    if (kIsWeb) return null;
+    final target = targetForAppKey(appKey);
+    final dest = await _resolveCachePath(downloadUrl, target);
+    if (await File(dest).exists()) return dest;
+    return null;
+  }
+
+  /// Тихое скачивание в кэш без установки.
+  Future<String> prefetchToCache({
+    required String appKey,
+    required String downloadUrl,
+    void Function(int received, int? total)? onProgress,
+  }) async {
+    final target = targetForAppKey(appKey);
+    return _downloadToCache(downloadUrl, target, onProgress);
+  }
+
+  /// Удалить старые установщики этого компонента (перед скачиванием новой версии).
+  Future<void> clearCachedInstallersForAppKey(String appKey) async {
+    if (kIsWeb) return;
+    final target = targetForAppKey(appKey);
+    final base = await resolveUpdateDownloadDirectory();
+    final prefix = 'dk_pos_updates_${target.name}_';
+    if (!await base.exists()) return;
+    await for (final entity in base.list()) {
+      if (entity is! File) continue;
+      if (entity.path.contains(prefix)) {
+        try {
+          await entity.delete();
+        } catch (_) {}
+      }
+    }
+  }
+
+  /// Установка из уже скачанного файла (без повторного скачивания).
+  Future<SilentUpdateResult> installCached({
+    required String appKey,
+    required String localPath,
+  }) async {
+    final target = targetForAppKey(appKey);
+    if (!canSilentInstall(target)) {
+      return SilentUpdateResult(
+        ok: false,
+        message:
+            'Тихая установка недоступна для ${target.name} на этом устройстве',
+      );
+    }
+    return _platform.installDownloadedArtifact(
+      localPath: localPath,
+      target: target,
+    );
+  }
+
   Future<String> _downloadToCache(
     String url,
     SilentUpdateTarget target,
@@ -142,11 +201,7 @@ class SilentUpdateService {
     if (kIsWeb) {
       throw UnsupportedError('Скачивание установщика недоступно в web');
     }
-    final base = await resolveUpdateDownloadDirectory();
-    final fileName = _fileNameFromUrl(url, target);
-    final sep = Platform.pathSeparator;
-    final dest = '${base.path}${sep}dk_pos_updates_${target.name}_$fileName';
-
+    final dest = await _resolveCachePath(url, target);
     await _downloadDio.download(
       url,
       dest,
@@ -157,6 +212,13 @@ class SilentUpdateService {
       ),
     );
     return dest;
+  }
+
+  Future<String> _resolveCachePath(String url, SilentUpdateTarget target) async {
+    final base = await resolveUpdateDownloadDirectory();
+    final fileName = _fileNameFromUrl(url, target);
+    final sep = Platform.pathSeparator;
+    return '${base.path}${sep}dk_pos_updates_${target.name}_$fileName';
   }
 
   String _fileNameFromUrl(String url, SilentUpdateTarget target) {

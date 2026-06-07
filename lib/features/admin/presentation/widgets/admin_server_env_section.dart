@@ -161,11 +161,11 @@ class _AdminServerEnvSectionState extends State<AdminServerEnvSection> {
       child: ExpansionTile(
         initiallyExpanded: false,
         title: Text(
-          'Сервер: глобал и синк (как в .env)',
+          'Параметры сервера (глобал, синк, касса)',
           style: text.titleSmall?.copyWith(fontWeight: FontWeight.w800),
         ),
         subtitle: Text(
-          'Хранится в БД; после «Сохранить» перезапустите Node (служба / PM2 / docker).',
+          'Хранится в БД. Касса (резерв размена) — сразу; глобал/синк — перезапуск Node после сохранения.',
           style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
         ),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),

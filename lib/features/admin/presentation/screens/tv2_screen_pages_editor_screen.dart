@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
@@ -17,10 +18,154 @@ import 'package:dk_pos/features/admin/data/upload_repository.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/tv_video_bg_media_editor.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
 
-const _kTv2PageTypes = ['split', 'drinks', 'carousel', 'list', 'video_bg'];
+const _kTv2PageTypes = ['split', 'drinks', 'carousel', 'list', 'product_grid', 'video_bg'];
 const _kRoles = ['hero', 'list', 'hotdog'];
 
 bool _tv2EditorIsList(String t) => t.toLowerCase().trim() == 'list';
+
+bool _tv2EditorIsProductGrid(String t) =>
+    t.toLowerCase().trim() == 'product_grid';
+
+bool _tv2EditorIsCatalogPage(String t) =>
+    _tv2EditorIsList(t) || _tv2EditorIsProductGrid(t);
+
+int _readProductGridColsFromCfg(Map<String, dynamic>? cfg) {
+  final raw =
+      cfg?['tv2ProductGridColumns'] ?? cfg?['tv2_product_grid_columns'];
+  if (raw is num) {
+    final n = raw.toInt();
+    if (n >= 2 && n <= 5) return n;
+  }
+  if (raw is String) {
+    final n = int.tryParse(raw.trim());
+    if (n != null && n >= 2 && n <= 5) return n;
+  }
+  return 0;
+}
+
+int _previewProductGridCols(Map<String, dynamic>? cfg) {
+  final c = _readProductGridColsFromCfg(cfg);
+  return c > 0 ? c : 3;
+}
+
+String _readPageTransition(Map<String, dynamic>? cfg) {
+  final raw = cfg?['pageTransition'] ?? cfg?['page_transition'];
+  if (raw == null) return '';
+  final s = raw.toString().trim();
+  return s.isEmpty ? '' : s;
+}
+
+String _readProductGridCardSize(Map<String, dynamic>? cfg) {
+  final raw =
+      cfg?['tv2ProductGridCardSize'] ?? cfg?['tv2_product_grid_card_size'];
+  if (raw == null) return 'normal';
+  final t = raw.toString().trim().toLowerCase();
+  if (t == 'compact' || t == 'large') return t;
+  return 'normal';
+}
+
+double _previewProductGridAspect(Map<String, dynamic>? cfg) {
+  return switch (_readProductGridCardSize(cfg)) {
+    'compact' => 0.82,
+    'large' => 1.02,
+    _ => 0.92,
+  };
+}
+
+Widget _productGridPreviewCells(
+  BuildContext context,
+  List<ScreenPageItemRow> rows,
+  int cols, {
+  int maxCells = 12,
+  Map<String, dynamic>? pageConfig,
+}) {
+  final theme = Theme.of(context);
+  final count = rows.isEmpty
+      ? math.min(maxCells, cols * 2)
+      : math.min(rows.length, maxCells);
+  const gap = 4.0;
+  final aspect = _previewProductGridAspect(pageConfig);
+  return GridView.builder(
+    physics: const NeverScrollableScrollPhysics(),
+    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: cols.clamp(2, 5),
+      crossAxisSpacing: gap,
+      mainAxisSpacing: gap,
+      childAspectRatio: aspect,
+    ),
+    itemCount: count,
+    itemBuilder: (_, i) {
+      final label = i < rows.length ? rows[i].name.ru : '';
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(4),
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Colors.white, Color(0xFFFAFAFA)],
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Center(
+                      child: Icon(
+                        Icons.lunch_dining_rounded,
+                        size: 16,
+                        color: _kTv2PreviewRed.withValues(alpha: 0.35),
+                      ),
+                    ),
+                    Positioned(
+                      top: 2,
+                      right: 2,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: _kTv2PreviewRed,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: const Text(
+                          '—',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 7,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (label.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(3, 2, 3, 3),
+                  child: Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      fontSize: 8,
+                      height: 1.05,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
 
 bool _tv2EditorVideoBgCombo(Map<String, dynamic>? config) {
   final tc = config?['tv2Content'] ?? config?['tv2_content'];
@@ -31,6 +176,7 @@ bool _tv2EditorVideoBgCombo(Map<String, dynamic>? config) {
 List<String> _tv2EditorRoles(String pageType, Map<String, dynamic>? config) {
   final t = pageType.toLowerCase().trim();
   if (t == 'list') return ['hero', 'list'];
+  if (t == 'product_grid') return ['list'];
   if (t == 'video_bg') return [];
   return _kRoles;
 }
@@ -388,6 +534,51 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
     }
   }
 
+  Future<void> _reorderPageItems(
+    int pageId,
+    String role,
+    int oldIndex,
+    int newIndex,
+    AppLocalizations l10n,
+  ) async {
+    if (!_detailByPageId.containsKey(pageId)) {
+      await _loadDetail(pageId);
+    }
+    final d = _detailByPageId[pageId];
+    if (d == null) return;
+    var roleItems = d.items.where((e) => e.role == role).toList()
+      ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    if (roleItems.length < 2) return;
+    var ni = newIndex;
+    if (ni > oldIndex) ni -= 1;
+    if (oldIndex < 0 ||
+        oldIndex >= roleItems.length ||
+        ni < 0 ||
+        ni >= roleItems.length) {
+      return;
+    }
+    final moved = roleItems.removeAt(oldIndex);
+    roleItems.insert(ni, moved);
+    final updates = [
+      for (var i = 0; i < roleItems.length; i++)
+        {'id': roleItems[i].id, 'sort_order': i},
+    ];
+    try {
+      await widget.screensRepo.reorderScreenPageItems(
+        widget.screenId,
+        pageId,
+        updates,
+      );
+      _detailByPageId.remove(pageId);
+      await _loadDetail(pageId);
+      await _reload();
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
+  }
+
   Future<void> _clearAllPageItems(int pageId) async {
     if (!_detailByPageId.containsKey(pageId)) {
       await _loadDetail(pageId);
@@ -433,6 +624,35 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       final d = _detailByPageId[pageId];
       final base = Map<String, dynamic>.from(d?.page.config ?? {});
       base['tv2Content'] = {'mode': 'combo'};
+      await widget.screensRepo.patchScreenPage(
+        widget.screenId,
+        pageId,
+        config: base,
+      );
+      _detailByPageId.remove(pageId);
+      await _loadDetail(pageId);
+      await _reload();
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
+  }
+
+  Future<void> _patchPageLayout(
+    int pageId,
+    Map<String, dynamic> layoutPatch,
+  ) async {
+    final d = _detailByPageId[pageId];
+    final base = Map<String, dynamic>.from(d?.page.config ?? {});
+    for (final e in layoutPatch.entries) {
+      if (e.value == null) {
+        base.remove(e.key);
+      } else {
+        base[e.key] = e.value;
+      }
+    }
+    try {
       await widget.screensRepo.patchScreenPage(
         widget.screenId,
         pageId,
@@ -537,6 +757,8 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         return l10n.adminTv2PageTypeCarousel;
       case 'list':
         return l10n.adminTv2PageTypeList;
+      case 'product_grid':
+        return l10n.adminTv2PageTypeProductGrid;
       case 'video_bg':
         return l10n.adminTv2PageTypeVideoBg;
       default:
@@ -564,6 +786,9 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
     if (_tv2EditorIsList(pageType)) {
       if (role == 'hero') return l10n.adminTv2EditorRoleHeroCardList;
       if (role == 'list') return l10n.adminTv2EditorRoleListGrid;
+    }
+    if (_tv2EditorIsProductGrid(pageType) && role == 'list') {
+      return l10n.adminTv2EditorRoleProductGridItem;
     }
     return _roleLabel(l10n, role);
   }
@@ -829,8 +1054,18 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
                                       _pickItemDialog(_pages[i].id, role, l10n),
                                   onRemoveItem: (rowId) =>
                                       _removeItem(_pages[i].id, rowId, l10n),
+                                  onReorderItems: (role, oldI, newI) =>
+                                      _reorderPageItems(
+                                        _pages[i].id,
+                                        role,
+                                        oldI,
+                                        newI,
+                                        l10n,
+                                      ),
                                   onPatchTvVideoBg: (m) =>
                                       _patchTvVideoBg(_pages[i].id, m),
+                                  onPatchPageLayout: (m) =>
+                                      _patchPageLayout(_pages[i].id, m),
                                   onVideoBgPickHero: () =>
                                       _videoBgPickHero(_pages[i].id, l10n),
                                   onVideoBgApplyCombo: (cid) =>
@@ -972,6 +1207,46 @@ class _Tv2LayoutMiniPreview extends StatelessWidget {
             ),
             child: Wrap(
               children: _productTiles(context, sorted, l10n, maxVisible: 24),
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (t == 'product_grid') {
+      final gridItems =
+          sorted.where((e) => e.role.toLowerCase().trim() == 'list').toList();
+      final cols = _previewProductGridCols(pageConfig);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            l10n.adminTv2EditorLayoutPreview,
+            style: theme.textTheme.titleSmall,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            l10n.adminTv2EditorLayoutProductGridHint,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 8),
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: scheme.outlineVariant),
+              ),
+              child: _productGridPreviewCells(
+                context,
+                gridItems,
+                cols,
+                pageConfig: pageConfig,
+              ),
             ),
           ),
         ],
@@ -1297,7 +1572,9 @@ class _PageCard extends StatefulWidget {
     required this.onSaveTitles,
     required this.onPickItem,
     required this.onRemoveItem,
+    required this.onReorderItems,
     required this.onPatchTvVideoBg,
+    required this.onPatchPageLayout,
     required this.onVideoBgPickHero,
     required this.onVideoBgApplyCombo,
     required this.onVideoBgSwitchToMenuMode,
@@ -1317,7 +1594,10 @@ class _PageCard extends StatefulWidget {
   final Future<void> Function(String listRu, String secondRu) onSaveTitles;
   final Future<void> Function(String role) onPickItem;
   final Future<void> Function(int itemRowId) onRemoveItem;
+  final Future<void> Function(String role, int oldIndex, int newIndex)
+      onReorderItems;
   final Future<void> Function(Map<String, dynamic> patch) onPatchTvVideoBg;
+  final Future<void> Function(Map<String, dynamic> patch) onPatchPageLayout;
   final Future<void> Function() onVideoBgPickHero;
   final Future<void> Function(int comboId) onVideoBgApplyCombo;
   final Future<void> Function() onVideoBgSwitchToMenuMode;
@@ -1383,16 +1663,19 @@ class _PageCardState extends State<_PageCard> {
     final p = widget.pageListRow;
     final items = widget.detail?.items ?? const <ScreenPageItemRow>[];
     final pt = p.pageType.toLowerCase().trim();
-    final listOnly = _tv2EditorIsList(p.pageType);
+    final listOnly = _tv2EditorIsCatalogPage(p.pageType);
+    final productGrid = _tv2EditorIsProductGrid(p.pageType);
     final videoBg = pt == 'video_bg';
     final pageCfg = widget.detail?.page.config;
     final roles = _tv2EditorRoles(p.pageType, pageCfg);
 
     final subtitleHint = videoBg
         ? l10n.adminTv2EditorPageHintVideoBg
-        : listOnly
-            ? l10n.adminTv2EditorPageHintList
-            : l10n.adminTv2EditorPageHintSplit;
+        : _tv2EditorIsProductGrid(p.pageType)
+            ? l10n.adminTv2EditorPageHintProductGrid
+            : listOnly
+                ? l10n.adminTv2EditorPageHintList
+                : l10n.adminTv2EditorPageHintSplit;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -1442,7 +1725,9 @@ class _PageCardState extends State<_PageCard> {
                     controller: _listCtrl,
                     decoration: InputDecoration(
                       labelText: listOnly
-                          ? l10n.adminTv2EditorListGridTitleRu
+                          ? (_tv2EditorIsProductGrid(p.pageType)
+                              ? l10n.adminTv2EditorProductGridTitleRu
+                              : l10n.adminTv2EditorListGridTitleRu)
                           : l10n.adminTv2EditorListTitleRu,
                       border: const OutlineInputBorder(),
                     ),
@@ -1462,6 +1747,66 @@ class _PageCardState extends State<_PageCard> {
                     onPressed: () => widget.onSaveTitles(_listCtrl.text, _secondCtrl.text),
                     child: Text(l10n.adminTv2EditorSaveTitles),
                   ),
+                  if (productGrid) ...[
+                    const Divider(height: 24),
+                    _ProductGridLayoutEditor(
+                      l10n: l10n,
+                      config: pageCfg,
+                      itemCount: items
+                          .where((e) => e.role.toLowerCase().trim() == 'list')
+                          .length,
+                      onPatch: widget.onPatchPageLayout,
+                    ),
+                  ],
+                  if (!videoBg) ...[
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      key: ValueKey<String>(
+                        'ptr-${_readPageTransition(pageCfg)}',
+                      ),
+                      isExpanded: true,
+                      initialValue: _readPageTransition(pageCfg),
+                      decoration: InputDecoration(
+                        labelText: l10n.adminTv2PageTransitionPerPage,
+                        helperText: l10n.adminTv2PageTransitionPerPageHint,
+                        border: const OutlineInputBorder(),
+                      ),
+                      items: [
+                        DropdownMenuItem(
+                          value: '',
+                          child: Text(l10n.adminTv2PageTransitionInherit),
+                        ),
+                        DropdownMenuItem(
+                          value: 'fade',
+                          child: Text(l10n.adminTvTransitionFade),
+                        ),
+                        DropdownMenuItem(
+                          value: 'slideUp',
+                          child: Text(l10n.adminTvTransitionSlideUp),
+                        ),
+                        DropdownMenuItem(
+                          value: 'slide',
+                          child: Text(l10n.adminTvTransitionSlide),
+                        ),
+                        DropdownMenuItem(
+                          value: 'crossFade',
+                          child: Text(l10n.adminTvTransitionCrossFade),
+                        ),
+                        DropdownMenuItem(
+                          value: 'scale',
+                          child: Text(l10n.adminTvTransitionScale),
+                        ),
+                        DropdownMenuItem(
+                          value: 'none',
+                          child: Text(l10n.adminTvTransitionNone),
+                        ),
+                      ],
+                      onChanged: (v) => widget.onPatchPageLayout({
+                        'pageTransition':
+                            (v == null || v.isEmpty) ? null : v,
+                      }),
+                    ),
+                  ],
                   const Divider(height: 24),
                   _Tv2OptionalBackgroundVideoEditor(
                     l10n: l10n,
@@ -1548,17 +1893,13 @@ class _PageCardState extends State<_PageCard> {
                       style: Theme.of(context).textTheme.bodySmall,
                     )
                   else
-                    ...items.map(
-                      (it) => ListTile(
-                        title: Text(it.name.ru),
-                        subtitle: Text(
-                          '${it.menuItemId} · ${widget.roleLabel(l10n, it.role)}',
-                        ),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline_rounded),
-                          onPressed: () => widget.onRemoveItem(it.id),
-                        ),
-                      ),
+                    _PageItemsReorderSection(
+                      items: items,
+                      roles: roles,
+                      l10n: l10n,
+                      roleLabel: widget.roleLabel,
+                      onRemoveItem: widget.onRemoveItem,
+                      onReorderItems: widget.onReorderItems,
                     ),
                 ],
               ],
@@ -2007,6 +2348,387 @@ class _VideoBgPageEditorState extends State<_VideoBgPageEditor> {
             ],
           ),
         ],
+      ],
+    );
+  }
+}
+
+/// Список товаров на странице: перетаскивание внутри роли (≡ удерживать).
+class _PageItemsReorderSection extends StatelessWidget {
+  const _PageItemsReorderSection({
+    required this.items,
+    required this.roles,
+    required this.l10n,
+    required this.roleLabel,
+    required this.onRemoveItem,
+    required this.onReorderItems,
+  });
+
+  final List<ScreenPageItemRow> items;
+  final List<String> roles;
+  final AppLocalizations l10n;
+  final String Function(AppLocalizations l10n, String role) roleLabel;
+  final Future<void> Function(int itemRowId) onRemoveItem;
+  final Future<void> Function(String role, int oldIndex, int newIndex)
+      onReorderItems;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final byRole = <String, List<ScreenPageItemRow>>{};
+    for (final it in items) {
+      byRole.putIfAbsent(it.role, () => []).add(it);
+    }
+    for (final list in byRole.values) {
+      list.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+    }
+
+    final orderedRoles = [
+      for (final r in roles)
+        if ((byRole[r] ?? []).isNotEmpty) r,
+      for (final r in byRole.keys)
+        if (!roles.contains(r)) r,
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final role in orderedRoles) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 4, bottom: 4),
+            child: Text(
+              roleLabel(l10n, role),
+              style: theme.textTheme.labelLarge,
+            ),
+          ),
+          _RoleItemsList(
+            role: role,
+            items: byRole[role]!,
+            l10n: l10n,
+            onRemoveItem: onRemoveItem,
+            onReorderItems: onReorderItems,
+          ),
+          const SizedBox(height: 8),
+        ],
+      ],
+    );
+  }
+}
+
+class _RoleItemsList extends StatelessWidget {
+  const _RoleItemsList({
+    required this.role,
+    required this.items,
+    required this.l10n,
+    required this.onRemoveItem,
+    required this.onReorderItems,
+  });
+
+  final String role;
+  final List<ScreenPageItemRow> items;
+  final AppLocalizations l10n;
+  final Future<void> Function(int itemRowId) onRemoveItem;
+  final Future<void> Function(String role, int oldIndex, int newIndex)
+      onReorderItems;
+
+  @override
+  Widget build(BuildContext context) {
+    if (items.length < 2) {
+      final it = items.first;
+      return ListTile(
+        title: Text(it.name.ru),
+        subtitle: Text(it.menuItemId, maxLines: 1, overflow: TextOverflow.ellipsis),
+        trailing: IconButton(
+          icon: const Icon(Icons.delete_outline_rounded),
+          onPressed: () => onRemoveItem(it.id),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          l10n.adminTv2EditorItemsReorderHint,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 4),
+        ReorderableListView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          buildDefaultDragHandles: false,
+          itemCount: items.length,
+          onReorder: (oldIndex, newIndex) =>
+              onReorderItems(role, oldIndex, newIndex),
+          itemBuilder: (context, index) {
+            final it = items[index];
+            return ListTile(
+              key: ValueKey<int>(it.id),
+              leading: ReorderableDragStartListener(
+                index: index,
+                child: Icon(
+                  Icons.drag_handle_rounded,
+                  color: Theme.of(context).colorScheme.outline,
+                ),
+              ),
+              title: Text(it.name.ru, maxLines: 2, overflow: TextOverflow.ellipsis),
+              subtitle: Text(
+                it.menuItemId,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.delete_outline_rounded),
+                onPressed: () => onRemoveItem(it.id),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+/// Конструктор сетки `product_grid`: свайп влево/вправо меняет число колонок (2–5).
+class _ProductGridLayoutEditor extends StatefulWidget {
+  const _ProductGridLayoutEditor({
+    required this.l10n,
+    required this.config,
+    required this.itemCount,
+    required this.onPatch,
+  });
+
+  final AppLocalizations l10n;
+  final Map<String, dynamic>? config;
+  final int itemCount;
+  final Future<void> Function(Map<String, dynamic> patch) onPatch;
+
+  @override
+  State<_ProductGridLayoutEditor> createState() =>
+      _ProductGridLayoutEditorState();
+}
+
+class _ProductGridLayoutEditorState extends State<_ProductGridLayoutEditor> {
+  late int _cols;
+  late String _cardSize;
+  double _dragAccum = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _cols = _readProductGridColsFromCfg(widget.config);
+    _cardSize = _readProductGridCardSize(widget.config);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProductGridLayoutEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.config != widget.config) {
+      _cols = _readProductGridColsFromCfg(widget.config);
+      _cardSize = _readProductGridCardSize(widget.config);
+    }
+  }
+
+  int get _displayCols =>
+      _cols > 0 ? _cols : _previewProductGridCols(widget.config);
+
+  Future<void> _commitCols(int cols) async {
+    setState(() => _cols = cols);
+    if (cols >= 2 && cols <= 5) {
+      await widget.onPatch({'tv2ProductGridColumns': cols});
+    } else {
+      await widget.onPatch({'tv2ProductGridColumns': null});
+    }
+  }
+
+  void _bumpCols(int delta) {
+    var next = _cols <= 0 ? 3 : _cols;
+    next = (next + delta).clamp(2, 5);
+    unawaited(_commitCols(next));
+  }
+
+  Future<void> _commitCardSize(String size) async {
+    setState(() => _cardSize = size);
+    await widget.onPatch({'tv2ProductGridCardSize': size});
+  }
+
+  String _cardSizeLabel(AppLocalizations l10n, String size) {
+    return switch (size) {
+      'compact' => l10n.adminTv2ProductGridCardSizeCompact,
+      'large' => l10n.adminTv2ProductGridCardSizeLarge,
+      _ => l10n.adminTv2ProductGridCardSizeNormal,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = widget.l10n;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final cols = _displayCols;
+    final label = _cols <= 0
+        ? l10n.adminTv2ProductGridColsAuto(cols)
+        : l10n.adminTv2ProductGridColsFixed(cols);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          l10n.adminTv2ProductGridLayoutTitle,
+          style: theme.textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          l10n.adminTv2ProductGridDragHint,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          l10n.adminTv2ProductGridCardSizeLabel,
+          style: theme.textTheme.labelLarge,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          l10n.adminTv2ProductGridCardSizeHint,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 8),
+        SegmentedButton<String>(
+          segments: [
+            ButtonSegment(
+              value: 'compact',
+              label: Text(l10n.adminTv2ProductGridCardSizeCompact),
+            ),
+            ButtonSegment(
+              value: 'normal',
+              label: Text(l10n.adminTv2ProductGridCardSizeNormal),
+            ),
+            ButtonSegment(
+              value: 'large',
+              label: Text(l10n.adminTv2ProductGridCardSizeLarge),
+            ),
+          ],
+          selected: {_cardSize},
+          onSelectionChanged: (s) {
+            final v = s.first;
+            unawaited(_commitCardSize(v));
+          },
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            _cardSizeLabel(l10n, _cardSize),
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        GestureDetector(
+          onHorizontalDragUpdate: (d) {
+            _dragAccum += d.delta.dx;
+            if (_dragAccum.abs() < 28) return;
+            final step = _dragAccum > 0 ? 1 : -1;
+            _dragAccum = 0;
+            var base = _cols <= 0 ? 3 : _cols;
+            base = (base + step).clamp(2, 5);
+            setState(() => _cols = base);
+          },
+          onHorizontalDragEnd: (_) {
+            _dragAccum = 0;
+            final commit = _cols <= 0 ? 3 : _cols;
+            unawaited(_commitCols(commit));
+          },
+          child: AspectRatio(
+            aspectRatio: 16 / 9,
+            child: Container(
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerLow,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: scheme.primary.withValues(alpha: 0.45),
+                  width: 1.5,
+                ),
+              ),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 10, 10, 36),
+                    child: _productGridPreviewCells(
+                      context,
+                      const [],
+                      cols,
+                      pageConfig: {
+                        ...?widget.config,
+                        'tv2ProductGridCardSize': _cardSize,
+                      },
+                    ),
+                  ),
+                  Positioned(
+                    left: 8,
+                    right: 8,
+                    bottom: 8,
+                    child: Center(
+                      child: Material(
+                        color: scheme.primaryContainer,
+                        borderRadius: BorderRadius.circular(20),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.swipe_rounded,
+                                size: 18,
+                                color: scheme.onPrimaryContainer,
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                label,
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  color: scheme.onPrimaryContainer,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton(
+              tooltip: l10n.adminTv2ProductGridColsLess,
+              onPressed: () => _bumpCols(-1),
+              icon: const Icon(Icons.remove_rounded),
+            ),
+            Text(label, style: theme.textTheme.bodyMedium),
+            IconButton(
+              tooltip: l10n.adminTv2ProductGridColsMore,
+              onPressed: () => _bumpCols(1),
+              icon: const Icon(Icons.add_rounded),
+            ),
+            TextButton(
+              onPressed: () => unawaited(_commitCols(0)),
+              child: Text(l10n.adminScreenColsAuto),
+            ),
+          ],
+        ),
       ],
     );
   }

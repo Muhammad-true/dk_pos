@@ -324,6 +324,29 @@ class AppLocalizationsRu extends AppLocalizations {
   String get adminScreenTv2Columns => 'Колонок списка (ТВ2)';
 
   @override
+  String get adminScreenTv2ListMaxRows =>
+      'Строк на странице list (необязательно)';
+
+  @override
+  String get adminScreenTv2ListMaxRowsHint =>
+      'Пусто — авто по размеру шрифта и экрана. Умножается на число колонок.';
+
+  @override
+  String get adminScreenTv2ListMaxItems =>
+      'Макс. позиций на экран list (необязательно)';
+
+  @override
+  String get adminScreenTv2ListMaxItemsHint =>
+      'Жёсткий лимит; перекрывает «строк × колонки». Пусто — считается автоматически.';
+
+  @override
+  String get adminScreenTv2ListAutoSplit => 'Авто-страницы для list';
+
+  @override
+  String get adminScreenTv2ListAutoSplitHint =>
+      'Если позиций больше, чем помещается — создаётся вторая (третья…) страница в ротации.';
+
+  @override
   String get adminScreenTv2ShowTemplate => 'Шаблон показа ТВ2';
 
   @override
@@ -710,12 +733,19 @@ class AppLocalizationsRu extends AppLocalizations {
   String get adminTv2EditorListGridTitleRu => 'Заголовок сетки (рус.)';
 
   @override
+  String get adminTv2EditorProductGridTitleRu => 'Заголовок страницы (рус.)';
+
+  @override
   String get adminTv2EditorPageHintSplit =>
       'Две колонки справа (как бургеры / напитки).';
 
   @override
   String get adminTv2EditorPageHintList =>
       'Сетка товаров и крупная карточка справа.';
+
+  @override
+  String get adminTv2EditorPageHintProductGrid =>
+      'Сетка с фото на весь экран; лишние товары — на следующих страницах.';
 
   @override
   String get adminTv2EditorPageHintVideoBg =>
@@ -730,6 +760,9 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get adminTv2EditorRoleListGrid => 'В сетке';
+
+  @override
+  String get adminTv2EditorRoleProductGridItem => 'Товар в сетке';
 
   @override
   String get adminTv2EditorSaveTitles => 'Сохранить заголовки';
@@ -768,6 +801,65 @@ class AppLocalizationsRu extends AppLocalizations {
   @override
   String get adminTv2EditorLayoutListHint =>
       'Шаблон list — сетка карточек по всем позициям.';
+
+  @override
+  String get adminTv2EditorLayoutProductGridHint =>
+      'Шаблон product_grid — карточки с фото на весь экран.';
+
+  @override
+  String get adminTv2ProductGridLayoutTitle => 'Сетка на экране';
+
+  @override
+  String get adminTv2ProductGridDragHint =>
+      'Удерживайте превью и ведите влево/вправо — меняется число колонок (2–5).';
+
+  @override
+  String adminTv2ProductGridColsAuto(int cols) {
+    return 'Авто (~$cols кол.)';
+  }
+
+  @override
+  String adminTv2ProductGridColsFixed(int cols) {
+    return '$cols колонки';
+  }
+
+  @override
+  String get adminTv2ProductGridColsLess => 'Меньше колонок';
+
+  @override
+  String get adminTv2ProductGridColsMore => 'Больше колонок';
+
+  @override
+  String get adminTv2ProductGridCardSizeLabel =>
+      'Размер карточки (как на кассе)';
+
+  @override
+  String get adminTv2ProductGridCardSizeHint =>
+      'Компакт — больше карточек; крупный — крупнее фото и текст.';
+
+  @override
+  String get adminTv2ProductGridCardSizeCompact => 'Компакт';
+
+  @override
+  String get adminTv2ProductGridCardSizeNormal => 'Обычный';
+
+  @override
+  String get adminTv2ProductGridCardSizeLarge => 'Крупный';
+
+  @override
+  String get adminTv2PageTransitionPerPage =>
+      'Анимация перехода (эта страница)';
+
+  @override
+  String get adminTv2PageTransitionPerPageHint =>
+      'Пусто — как задано для всего экрана в настройках ТВ.';
+
+  @override
+  String get adminTv2PageTransitionInherit => 'Как у экрана';
+
+  @override
+  String get adminTv2EditorItemsReorderHint =>
+      'Удерживайте ≡ и перетащите для смены порядка.';
 
   @override
   String adminTv2EditorLayoutMore(int count) {
@@ -882,6 +974,9 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get adminTv2PageTypeList => 'Список (list)';
+
+  @override
+  String get adminTv2PageTypeProductGrid => 'Сетка товаров (product_grid)';
 
   @override
   String get adminTv2PageTypeVideoBg => 'Фон (видео)';

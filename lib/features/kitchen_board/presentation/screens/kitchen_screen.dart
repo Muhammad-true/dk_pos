@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:io';
 
 import 'package:auto_route/auto_route.dart';
@@ -16,6 +16,8 @@ import 'package:dk_pos/app/router/app_router.dart';
 import 'package:dk_pos/features/admin/data/local_audio_settings_repository.dart';
 import 'package:dk_pos/features/kitchen_board/audio/kitchen_order_alert.dart';
 import 'package:dk_pos/features/kitchen_board/presentation/kitchen_ui_preferences.dart';
+import 'package:dk_pos/features/kitchen_board/presentation/widgets/kitchen_active_order_card.dart';
+import 'package:dk_pos/features/kitchen_board/presentation/widgets/kitchen_order_number_badge.dart';
 import 'package:dk_pos/features/kitchen_board/presentation/widgets/kitchen_ui_settings_sheet.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/auth/bloc/auth_event.dart';
@@ -41,6 +43,107 @@ String _actorUiLabel(LocalKitchenActorProfile actor) {
   return '${username.substring(0, 10)}…';
 }
 
+class _KitchenOrderTrack {
+  const _KitchenOrderTrack({
+    required this.signature,
+    required this.totalQty,
+    required this.hadProgress,
+  });
+
+  final String signature;
+  final int totalQty;
+  final bool hadProgress;
+}
+
+enum _KitchenOrderLineChange { added, removed, replaced }
+
+class _KitchenOrderLineChangeEvent {
+  const _KitchenOrderLineChangeEvent({
+    required this.order,
+    required this.change,
+    required this.notifyWithSound,
+  });
+
+  final LocalKitchenQueueOrder order;
+  final _KitchenOrderLineChange change;
+  final bool notifyWithSound;
+}
+
+String _kitchenOrderItemsSignature(LocalKitchenQueueOrder order) {
+  final items = order.items;
+  if (items.length > 20) {
+    var pending = 0;
+    var accepted = 0;
+    var ready = 0;
+    var totalQty = 0;
+    for (final e in items) {
+      totalQty += e.quantity;
+      switch (e.kitchenLineStatus.trim().toLowerCase()) {
+        case 'pending':
+          pending += 1;
+        case 'accepted':
+          accepted += 1;
+        case 'ready':
+          ready += 1;
+      }
+    }
+    return 'bulk:$totalQty:$pending:$accepted:$ready:${items.length}';
+  }
+  final parts = items
+      .map(
+        (e) =>
+            '${e.menuItemId}:${e.quantity}:${e.kitchenLineStatus.trim().toLowerCase()}',
+      )
+      .toList(growable: false)
+    ..sort();
+  return parts.join(';');
+}
+
+int _kitchenOrderTotalQty(LocalKitchenQueueOrder order) {
+  var sum = 0;
+  for (final e in order.items) {
+    sum += e.quantity;
+  }
+  return sum;
+}
+
+bool _kitchenOrderHadProgress(LocalKitchenQueueOrder order) {
+  return order.items.any((e) {
+    final st = e.kitchenLineStatus.trim().toLowerCase();
+    return st == 'accepted' || st == 'ready';
+  });
+}
+
+String _kitchenOrderDisplayNumber(LocalKitchenQueueOrder order) {
+  final number = order.number.trim();
+  if (number.isEmpty) return number;
+  final low = (order.orderType ?? '').trim().toLowerCase();
+  if (low.contains('доставк') || low == 'delivery') return 'Д-$number';
+  if (low.contains('самовывоз') ||
+      low.contains('с собой') ||
+      low == 'pickup' ||
+      low == 'takeaway' ||
+      low == 'take_away' ||
+      low == 'to_go') {
+    return 'С-$number';
+  }
+  return number;
+}
+
+String? _kitchenOrderTypeBadgeRu(LocalKitchenQueueOrder order) {
+  final low = (order.orderType ?? '').trim().toLowerCase();
+  if (low.contains('доставк') || low == 'delivery') return 'Доставка';
+  if (low.contains('самовывоз') ||
+      low.contains('с собой') ||
+      low == 'pickup' ||
+      low == 'takeaway' ||
+      low == 'take_away' ||
+      low == 'to_go') {
+    return 'Самовывоз';
+  }
+  return null;
+}
+
 @RoutePage()
 class KitchenScreen extends StatefulWidget {
   const KitchenScreen({super.key});
@@ -62,12 +165,15 @@ class _KitchenScreenState extends State<KitchenScreen> {
   StreamSubscription<LocalOrdersRealtimeEvent>? _realtimeSub;
   bool _loading = true;
   bool _saving = false;
+  String? _busyOrderId;
+  bool _reloadInFlight = false;
   String? _error;
   Timer? _timer;
   Timer? _reloadDebounce;
   bool _realtimeConnected = false;
   bool _queueInitialized = false;
   Set<String> _knownPreparingOrderIds = <String>{};
+  Map<String, _KitchenOrderTrack> _knownOrderTracks = <String, _KitchenOrderTrack>{};
   bool _kitchenTtsEnabled = true;
   double _kitchenTtsRate = 0.48;
   String _kitchenTtsLocale = 'ru-RU';
@@ -82,6 +188,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
   String? _statsError;
   List<LocalKitchenActorProfile> _kitchenActors = const [];
   KitchenUiScale _uiScale = KitchenUiScale.standard;
+  KitchenFollowUpSettings _followUpSettings = KitchenFollowUpSettings.defaults;
   bool get _disableKitchenAudioStackOnWindows =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
 
@@ -128,18 +235,44 @@ class _KitchenScreenState extends State<KitchenScreen> {
   String get _branchId => AppConfig.storeBranchId;
 
   Future<void> _loadKitchenUiPreferences() async {
-    final scale = await KitchenUiPreferences.load();
+    final configured = await KitchenUiPreferences.isConfigured();
+    var scale = await KitchenUiPreferences.load();
+    var followUp = await KitchenFollowUpPreferences.load();
     if (!mounted) return;
-    setState(() => _uiScale = scale);
+    if (!configured) {
+      final side = MediaQuery.sizeOf(context).shortestSide;
+      scale = side >= 600 ? KitchenUiScale.tablet : KitchenUiScale.standard;
+      await KitchenUiPreferences.save(scale);
+    } else if (!await KitchenUiPreferences.hasOrderColumnsPreference()) {
+      final w = MediaQuery.sizeOf(context).width;
+      scale = KitchenUiScale(
+        buttonScale: scale.buttonScale,
+        buttonTextScale: scale.buttonTextScale,
+        itemTextScale: scale.itemTextScale,
+        orderColumns: w >= 720 ? 2 : 1,
+      );
+      await KitchenUiPreferences.save(scale);
+    }
+    if (!mounted) return;
+    setState(() {
+      _uiScale = scale;
+      _followUpSettings = followUp;
+    });
   }
 
   Future<void> _openKitchenUiSettings() async {
     final updated = await showKitchenUiSettingsSheet(
       context,
-      initial: _uiScale,
+      initial: KitchenScreenSettings(
+        uiScale: _uiScale,
+        followUp: _followUpSettings,
+      ),
     );
     if (updated == null || !mounted) return;
-    setState(() => _uiScale = updated);
+    setState(() {
+      _uiScale = updated.uiScale;
+      _followUpSettings = updated.followUp;
+    });
   }
 
   Future<void> _loadAudioSettings() async {
@@ -286,16 +419,19 @@ class _KitchenScreenState extends State<KitchenScreen> {
   }
 
   void _scheduleReload({bool silent = true}) {
+    if (_busyOrderId != null) return;
     _reloadDebounce?.cancel();
     _reloadDebounce = Timer(const Duration(milliseconds: 180), () {
-      if (mounted) {
+      if (mounted && _busyOrderId == null) {
         unawaited(_reload(silent: silent));
       }
     });
   }
 
-  Future<void> _reload({bool silent = false}) async {
+  Future<void> _reload({bool silent = false, bool skipAnnounce = false}) async {
     if (!mounted) return;
+    if (_reloadInFlight) return;
+    _reloadInFlight = true;
     final currentUserId = context.read<AuthBloc>().state.user?.id;
     if (!silent) {
       setState(() {
@@ -308,7 +444,10 @@ class _KitchenScreenState extends State<KitchenScreen> {
     try {
       final repo = context.read<LocalOrdersRepository>();
       final snap = await repo.fetchKitchenQueueMy();
-      final stats = await repo.fetchKitchenMyTodayStats(branchId: _branchId);
+      LocalKitchenTodayStats stats = _todayStats;
+      if (!silent) {
+        stats = await repo.fetchKitchenMyTodayStats(branchId: _branchId);
+      }
       List<LocalKitchenActorProfile> actors = _kitchenActors;
       try {
         actors = await repo.fetchKitchenTeamMyStation();
@@ -323,21 +462,29 @@ class _KitchenScreenState extends State<KitchenScreen> {
       if (!mounted) return;
       setState(() {
         _snapshot = snap;
-        _todayStats = stats;
+        if (!silent) {
+          _todayStats = stats;
+          _statsLoading = false;
+          _statsError = null;
+        }
         _kitchenActors = actors;
-        _statsLoading = false;
-        _statsError = null;
         _loading = false;
       });
-      await _announceNewKitchenOrders(snap);
+      if (!skipAnnounce) {
+        await _announceKitchenQueueChanges(snap);
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _statsLoading = false;
-        _statsError = e.toString();
+        if (!silent) {
+          _statsLoading = false;
+          _statsError = e.toString();
+        }
         _loading = false;
         _error = e.toString();
       });
+    } finally {
+      _reloadInFlight = false;
     }
   }
 
@@ -347,54 +494,241 @@ class _KitchenScreenState extends State<KitchenScreen> {
     return '$hч $mм';
   }
 
-  Future<void> _announceNewKitchenOrders(LocalKitchenQueueSnapshot snap) async {
-    // На Windows desktop вызовы TTS/Audio иногда приводят к нативному падению
-    // при приходе нового заказа. Оставляем мгновенное обновление списка заказов,
-    // но отключаем озвучку ради стабильности кухни.
-    if (_disableKitchenAudioStackOnWindows) {
-      return;
-    }
+  Future<void> _announceKitchenQueueChanges(LocalKitchenQueueSnapshot snap) async {
     final currentIds = snap.preparing.map((e) => e.id).toSet();
     if (!_queueInitialized) {
       _queueInitialized = true;
       _knownPreparingOrderIds = currentIds;
+      _knownOrderTracks = _buildKitchenOrderTracks(snap.preparing);
       return;
     }
+
     final newOrders = snap.preparing
         .where((o) => !_knownPreparingOrderIds.contains(o.id))
         .toList(growable: false);
+    final lineChanges = _detectKitchenOrderLineChanges(snap.preparing);
+
     _knownPreparingOrderIds = currentIds;
-    if (newOrders.isEmpty) return;
+    _knownOrderTracks = _buildKitchenOrderTracks(snap.preparing);
+
+    if (newOrders.isEmpty && lineChanges.isEmpty) return;
 
     try {
       await _loadAudioSettings();
     } catch (_) {}
 
     for (final order in newOrders) {
-      try {
-        final player = _audioPlayer;
-        if (player != null) {
-          await KitchenOrderAlert.play(
-            player,
-            customUploadPath: _kitchenSoundPath,
-          );
-          await Future<void>.delayed(const Duration(milliseconds: 450));
-        }
-        if (!_kitchenTtsEnabled) continue;
-        final tts = _tts;
-        final text = _kitchenSpeakText(order);
-        if (tts == null || text.isEmpty) continue;
-        await tts.stop();
-        await tts.speak(text);
-      } catch (_) {
-        // noop
-      }
+      await _notifyKitchenNewOrder(order);
+    }
+    for (final change in lineChanges) {
+      await _notifyKitchenOrderLineChange(change);
     }
   }
 
+  Future<void> _notifyKitchenNewOrder(LocalKitchenQueueOrder order) async {
+    if (!_disableKitchenAudioStackOnWindows) {
+      try {
+        await _playKitchenAlertSound();
+        if (_kitchenTtsEnabled) {
+          final tts = _tts;
+          final text = _kitchenSpeakText(order);
+          if (tts != null && text.isNotEmpty) {
+            await tts.stop();
+            await tts.speak(text);
+          }
+        }
+      } catch (_) {}
+    }
+    if (!mounted) return;
+    _showKitchenSnack(
+      _kitchenNewOrderSnackText(order),
+      background: Theme.of(context).colorScheme.primaryContainer,
+    );
+  }
+
+  Future<void> _notifyKitchenOrderLineChange(_KitchenOrderLineChangeEvent change) async {
+    if (!change.notifyWithSound) {
+      // До «Принять» позиции просто появляются в списке без оповещения.
+      return;
+    }
+
+    final isFollowUpChange = _followUpSettings.enabled &&
+        (change.change == _KitchenOrderLineChange.added ||
+            change.change == _KitchenOrderLineChange.replaced);
+    final playSound = !isFollowUpChange || _followUpSettings.notifySound;
+    final speakTts =
+        _kitchenTtsEnabled && (!isFollowUpChange || _followUpSettings.notifyTts);
+    final showSnack = !isFollowUpChange || _followUpSettings.notifySnack;
+
+    if (!playSound && !speakTts && !showSnack) return;
+
+    if (playSound && !_disableKitchenAudioStackOnWindows) {
+      try {
+        await HapticFeedback.mediumImpact();
+        await _playKitchenAlertSound();
+        if (speakTts) {
+          final tts = _tts;
+          final text = _kitchenLineChangeSpeakText(change);
+          if (tts != null && text.isNotEmpty) {
+            await tts.stop();
+            await tts.speak(text);
+          }
+        }
+      } catch (_) {}
+    } else if (playSound) {
+      await HapticFeedback.lightImpact();
+    } else if (speakTts && !_disableKitchenAudioStackOnWindows) {
+      try {
+        final tts = _tts;
+        final text = _kitchenLineChangeSpeakText(change);
+        if (tts != null && text.isNotEmpty) {
+          await tts.stop();
+          await tts.speak(text);
+        }
+      } catch (_) {}
+    }
+
+    if (!mounted || !showSnack) return;
+    final scheme = Theme.of(context).colorScheme;
+    _showKitchenSnack(
+      _kitchenLineChangeSnackText(change),
+      background: change.change == _KitchenOrderLineChange.removed
+          ? scheme.errorContainer
+          : scheme.tertiaryContainer,
+    );
+  }
+
+  Future<void> _playKitchenAlertSound() async {
+    final player = _audioPlayer;
+    if (player == null) return;
+    await KitchenOrderAlert.play(
+      player,
+      customUploadPath: _kitchenSoundPath,
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 450));
+  }
+
+  void _showKitchenSnack(String message, {Color? background}) {
+    if (!mounted || message.trim().isEmpty) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 4),
+        backgroundColor: background,
+        content: Text(message),
+      ),
+    );
+  }
+
+  String _kitchenNewOrderSnackText(LocalKitchenQueueOrder order) {
+    final no = _kitchenOrderDisplayNumber(order);
+    if (no.isNotEmpty) return 'Новый заказ №$no';
+    return 'Новый заказ';
+  }
+
+  String _kitchenLineChangeSpeakText(_KitchenOrderLineChangeEvent change) {
+    final number = _speakableOrderNumber(_kitchenOrderDisplayNumber(change.order));
+    final useDetailedFollowUp =
+        _followUpSettings.enabled && _followUpSettings.notifyTts;
+    final toCook =
+        useDetailedFollowUp ? _kitchenActiveItemsSummaryRu(change.order.items) : '';
+    return switch (change.change) {
+      _KitchenOrderLineChange.added when toCook.isNotEmpty =>
+        number.isNotEmpty
+            ? 'Дозаказ номер $number. Приготовить только: $toCook.'
+            : 'Дозаказ. Приготовить только: $toCook.',
+      _KitchenOrderLineChange.added =>
+        number.isNotEmpty
+            ? 'В заказе номер $number добавили блюда. Проверьте список.'
+            : 'В заказ добавили блюда. Проверьте список.',
+      _KitchenOrderLineChange.removed =>
+        number.isNotEmpty
+            ? 'РР· заказа номер $number убрали позиции.'
+            : 'РР· заказа убрали позиции.',
+      _KitchenOrderLineChange.replaced when toCook.isNotEmpty =>
+        number.isNotEmpty
+            ? 'Заказ номер $number изменён. Приготовить: $toCook.'
+            : 'Состав заказа изменён. Приготовить: $toCook.',
+      _KitchenOrderLineChange.replaced =>
+        number.isNotEmpty
+            ? 'Заказ номер $number изменён. Проверьте состав.'
+            : 'Состав заказа изменён. Проверьте список.',
+    };
+  }
+
+  String _kitchenLineChangeSnackText(_KitchenOrderLineChangeEvent change) {
+    final no = _kitchenOrderDisplayNumber(change.order);
+    final prefix = no.isNotEmpty ? 'Заказ №$no: ' : '';
+    final toCook = _followUpSettings.enabled
+        ? _kitchenActiveItemsSummaryRu(change.order.items)
+        : '';
+    return switch (change.change) {
+      _KitchenOrderLineChange.added when toCook.isNotEmpty =>
+        '${prefix}дозаказ — готовить: $toCook',
+      _KitchenOrderLineChange.added => '${prefix}добавили позиции',
+      _KitchenOrderLineChange.removed => '${prefix}убрали позиции',
+      _KitchenOrderLineChange.replaced when toCook.isNotEmpty =>
+        '${prefix}изменён состав — готовить: $toCook',
+      _KitchenOrderLineChange.replaced => '${prefix}изменили состав',
+    };
+  }
+
+  Map<String, _KitchenOrderTrack> _buildKitchenOrderTracks(
+    List<LocalKitchenQueueOrder> orders,
+  ) {
+    return {
+      for (final o in orders)
+        o.id: _KitchenOrderTrack(
+          signature: _kitchenOrderItemsSignature(o),
+          totalQty: _kitchenOrderTotalQty(o),
+          hadProgress: _kitchenOrderHadProgress(o),
+        ),
+    };
+  }
+
+  List<_KitchenOrderLineChangeEvent> _detectKitchenOrderLineChanges(
+    List<LocalKitchenQueueOrder> preparing,
+  ) {
+    final out = <_KitchenOrderLineChangeEvent>[];
+    for (final order in preparing) {
+      final prev = _knownOrderTracks[order.id];
+      if (prev == null) continue;
+      final signature = _kitchenOrderItemsSignature(order);
+      if (signature == prev.signature) continue;
+
+      final qty = _kitchenOrderTotalQty(order);
+      late final _KitchenOrderLineChange change;
+      if (qty > prev.totalQty) {
+        change = _KitchenOrderLineChange.added;
+      } else if (qty < prev.totalQty) {
+        change = _KitchenOrderLineChange.removed;
+      } else {
+        change = _KitchenOrderLineChange.replaced;
+      }
+
+      final notifyWithSound = switch (change) {
+        _KitchenOrderLineChange.removed => true,
+        _KitchenOrderLineChange.replaced => prev.hadProgress,
+        _KitchenOrderLineChange.added => prev.hadProgress,
+      };
+
+      out.add(
+        _KitchenOrderLineChangeEvent(
+          order: order,
+          change: change,
+          notifyWithSound: notifyWithSound,
+        ),
+      );
+    }
+    return out;
+  }
+
   String _kitchenSpeakText(LocalKitchenQueueOrder order) {
-    final number = _speakableOrderNumber(order.number);
+    final number = _speakableOrderNumber(_kitchenOrderDisplayNumber(order));
+    final typeBadge = _kitchenOrderTypeBadgeRu(order);
     if (number.isNotEmpty) {
+      if (typeBadge != null) {
+        return 'Новый заказ. $typeBadge. Номер $number. Удачной смены!';
+      }
       return 'Новый заказ. Номер $number. Удачной смены!';
     }
     return 'Новый заказ. Удачной смены!';
@@ -426,34 +760,38 @@ class _KitchenScreenState extends State<KitchenScreen> {
 
   Future<void> _kitchenAction({
     required LocalKitchenQueueOrder order,
-    required LocalKitchenQueueItem item,
     required LocalKitchenActorProfile actor,
     required String action,
   }) async {
-    setState(() => _saving = true);
+    if (_busyOrderId != null) return;
+    setState(() => _busyOrderId = order.id);
     final messenger = ScaffoldMessenger.of(context);
     try {
       await context.read<LocalOrdersRepository>().updateKitchenProgress(
             orderId: order.id,
             action: action,
             actorUserId: actor.id,
-            menuItemId: item.menuItemId,
           );
       await HapticFeedback.lightImpact();
       final actorLabel = _actorUiLabel(actor);
       final actionLabel = action == 'ready' ? 'Готово' : 'Принять';
+      final orderNo = _kitchenOrderDisplayNumber(order);
       messenger.showSnackBar(
         SnackBar(
           duration: const Duration(milliseconds: 900),
-          content: Text('${item.name}: $actorLabel · $actionLabel'),
+          content: Text(
+            orderNo.isNotEmpty
+                ? 'Заказ $orderNo: $actorLabel · $actionLabel'
+                : '$actorLabel · $actionLabel',
+          ),
         ),
       );
-      await _reload(silent: true);
+      await _reload(silent: true, skipAnnounce: true);
     } catch (e) {
       await HapticFeedback.mediumImpact();
       messenger.showSnackBar(SnackBar(content: Text(e.toString())));
     } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) setState(() => _busyOrderId = null);
     }
   }
 
@@ -499,6 +837,92 @@ class _KitchenScreenState extends State<KitchenScreen> {
   Color _actorReadyColor(LocalKitchenActorProfile actor) =>
       _resolveReadyButtonColor(_actorAcceptColor(actor));
 
+  Future<void> _openWaitingOthersSheet() async {
+    if (!mounted) return;
+    final l10n = context.appL10n;
+    final orders = _snapshot.waitingOthers;
+    final columns = _uiScale.orderColumns;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder: (sheetContext) {
+        final theme = Theme.of(sheetContext);
+        final maxHeight = MediaQuery.sizeOf(sheetContext).height * 0.88;
+
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxHeight),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.hourglass_top_rounded, color: _kToneWaiting),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        l10n.kitchenSectionWaitingOthers,
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                    if (orders.isNotEmpty)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.surfaceContainerHighest,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          '${orders.length}',
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: orders.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              l10n.kitchenEmptyWaiting,
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.bodyLarge,
+                            ),
+                          ),
+                        )
+                      : ListView(
+                          padding: EdgeInsets.zero,
+                          children: [
+                            _KitchenOrderCardsLayout(
+                              columns: columns,
+                              orders: orders,
+                              cardBuilder: (order) => _KitchenWaitingPanel(
+                                order: order,
+                                tone: _kToneWaiting,
+                                l10n: l10n,
+                              ),
+                            ),
+                          ],
+                        ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<void> _requestLogoutWithConfirm() async {
     if (!mounted) return;
     final role = context.read<AuthBloc>().state.user?.role ?? '';
@@ -535,7 +959,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
               const SizedBox(height: 12),
               ListTile(
                 leading: const Icon(Icons.format_size_rounded),
-                title: const Text('Размер кнопок и текста'),
+                title: const Text('Настройки экрана'),
                 subtitle: Text(
                   'Кнопки ${(_uiScale.buttonScale * 100).round()}% · '
                   'текст ${(_uiScale.buttonTextScale * 100).round()}% · '
@@ -595,8 +1019,8 @@ class _KitchenScreenState extends State<KitchenScreen> {
             Text(stationName),
             Text(
               _realtimeConnected
-                  ? '$stationType · онлайн'
-                  : '$stationType · обновление по сети…',
+                  ? '$stationType · онлайн · ${_snapshot.preparing.length} в работе'
+                  : '$stationType · обновление… · ${_snapshot.preparing.length} в работе',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: _realtimeConnected
                         ? theme.colorScheme.primary
@@ -607,7 +1031,16 @@ class _KitchenScreenState extends State<KitchenScreen> {
         ),
         actions: [
           IconButton(
-            tooltip: 'Размер кнопок и текста',
+            tooltip: l10n.kitchenSectionWaitingOthers,
+            onPressed: _loading ? null : _openWaitingOthersSheet,
+            icon: Badge(
+              isLabelVisible: _snapshot.waitingOthers.isNotEmpty,
+              label: Text('${_snapshot.waitingOthers.length}'),
+              child: const Icon(Icons.hourglass_top_rounded),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Настройки экрана',
             onPressed: _openKitchenUiSettings,
             icon: const Icon(Icons.format_size_rounded),
           ),
@@ -623,7 +1056,7 @@ class _KitchenScreenState extends State<KitchenScreen> {
             icon: const Icon(Icons.refresh_rounded),
           ),
           TextButton.icon(
-            onPressed: _saving
+            onPressed: (_saving || _busyOrderId != null)
                 ? null
                 : _requestLogoutWithConfirm,
             icon: const Icon(Icons.logout_rounded),
@@ -650,14 +1083,6 @@ class _KitchenScreenState extends State<KitchenScreen> {
                         PosQueueLayout.listPadding(context, embedded: false),
                       ),
                       children: [
-                        _KitchenActionLegend(
-                          actors: _kitchenActors,
-                          acceptColorOf: _actorAcceptColor,
-                          readyColorOf: _actorReadyColor,
-                          onColorOf: _buttonOnColor,
-                          l10n: l10n,
-                        ),
-                        const SizedBox(height: 12),
                         _KitchenSectionRow(
                           label: PosQueueSectionLabel(
                             label: l10n.kitchenSectionCooking,
@@ -667,47 +1092,35 @@ class _KitchenScreenState extends State<KitchenScreen> {
                         ),
                         const SizedBox(height: 10),
                         if (_snapshot.preparing.isEmpty)
-                          _KitchenEmptyPanel(text: l10n.kitchenEmptyCooking),
-                        for (final order in _snapshot.preparing) ...[
-                          _KitchenActiveCard(
-                            order: order,
-                            tone: _kToneCooking,
-                            busy: _saving,
-                            l10n: l10n,
-                            actors: _kitchenActors,
-                            acceptColorOf: _actorAcceptColor,
-                            readyColorOf: _actorReadyColor,
-                            onColorOf: _buttonOnColor,
-                            uiScale: _uiScale,
-                            onAction: ({required item, required actor, required action}) =>
-                                _kitchenAction(
-                                  order: order,
-                                  item: item,
-                                  actor: actor,
-                                  action: action,
-                                ),
+                          _KitchenEmptyPanel(text: l10n.kitchenEmptyCooking)
+                        else
+                          _KitchenOrderCardsLayout(
+                            columns: _uiScale.orderColumns,
+                            orders: _snapshot.preparing,
+                            cardBuilder: (order) => RepaintBoundary(
+                              child: KitchenActiveOrderCard(
+                                key: ValueKey(order.id),
+                                order: order,
+                                tone: _kToneCooking,
+                                busy: _busyOrderId == order.id,
+                                l10n: l10n,
+                                actors: _kitchenActors,
+                                acceptColorOf: _actorAcceptColor,
+                                readyColorOf: _actorReadyColor,
+                                onColorOf: _buttonOnColor,
+                                uiScale: _uiScale,
+                                followUpSettings: _followUpSettings,
+                                displayNumber: _kitchenOrderDisplayNumber(order),
+                                orderTypeBadge: _kitchenOrderTypeBadgeRu(order),
+                                onOrderAction: ({required actor, required action}) =>
+                                    _kitchenAction(
+                                      order: order,
+                                      actor: actor,
+                                      action: action,
+                                    ),
+                              ),
+                            ),
                           ),
-                          const SizedBox(height: 10),
-                        ],
-                        const SizedBox(height: 8),
-                        _KitchenSectionRow(
-                          label: PosQueueSectionLabel(
-                            label: l10n.kitchenSectionWaitingOthers,
-                            tone: _kToneWaiting,
-                          ),
-                          count: _snapshot.waitingOthers.length,
-                        ),
-                        const SizedBox(height: 10),
-                        if (_snapshot.waitingOthers.isEmpty)
-                          _KitchenEmptyPanel(text: l10n.kitchenEmptyWaiting),
-                        for (final order in _snapshot.waitingOthers) ...[
-                          _KitchenWaitingPanel(
-                            order: order,
-                            tone: _kToneWaiting,
-                            l10n: l10n,
-                          ),
-                          const SizedBox(height: 10),
-                        ],
                       ],
                     ),
                   ),
@@ -716,29 +1129,77 @@ class _KitchenScreenState extends State<KitchenScreen> {
   }
 }
 
-String _kitchenStationGroupLabel(LocalKitchenQueueItem item) {
-  final name = (item.kitchenStationName ?? '').trim();
-  if (name.isNotEmpty) return name;
-  final id = item.kitchenStationId;
-  if (id != null) return 'Станция $id';
-  return 'Без кухни';
+List<LocalKitchenQueueItem> _kitchenOrderActiveItems(List<LocalKitchenQueueItem> items) {
+  final active = items.where((e) {
+    final st = e.kitchenLineStatus.toLowerCase();
+    return st == 'pending' || st == 'accepted';
+  }).toList(growable: false);
+  active.sort((a, b) {
+    final aPending = a.kitchenLineStatus.toLowerCase() == 'pending' ? 0 : 1;
+    final bPending = b.kitchenLineStatus.toLowerCase() == 'pending' ? 0 : 1;
+    return aPending.compareTo(bPending);
+  });
+  return active;
 }
 
-List<MapEntry<String, List<LocalKitchenQueueItem>>> _groupKitchenItemsByStation(
-  List<LocalKitchenQueueItem> items,
-) {
-  final map = <String, List<LocalKitchenQueueItem>>{};
-  for (final item in items) {
-    final key = _kitchenStationGroupLabel(item);
-    map.putIfAbsent(key, () => []).add(item);
+String _kitchenActiveItemsSummaryRu(
+  List<LocalKitchenQueueItem> items, {
+  int maxParts = 4,
+}) {
+  final active = _kitchenOrderActiveItems(items);
+  if (active.isEmpty) return '';
+  final parts = active
+      .map((e) => e.quantity > 1 ? '${e.quantity}× ${e.name}' : e.name)
+      .toList(growable: false);
+  if (parts.length <= maxParts) return parts.join(', ');
+  final head = parts.take(maxParts).join(', ');
+  return '$head и ещё ${parts.length - maxParts}';
+}
+
+class _KitchenOrderCardsLayout extends StatelessWidget {
+  const _KitchenOrderCardsLayout({
+    required this.columns,
+    required this.orders,
+    required this.cardBuilder,
+  });
+
+  final int columns;
+  final List<LocalKitchenQueueOrder> orders;
+  final Widget Function(LocalKitchenQueueOrder order) cardBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    if (orders.isEmpty) return const SizedBox.shrink();
+
+    final cols = columns.clamp(1, 2);
+    if (cols <= 1) {
+      return Column(
+        children: [
+          for (var i = 0; i < orders.length; i++) ...[
+            if (i > 0) const SizedBox(height: 10),
+            cardBuilder(orders[i]),
+          ],
+        ],
+      );
+    }
+
+    final pad = PosQueueLayout.listPadding(context, embedded: false);
+    final width = MediaQuery.sizeOf(context).width;
+    const gap = 12.0;
+    final cardWidth = (width - pad * 2 - gap * (cols - 1)) / cols;
+
+    return Wrap(
+      spacing: gap,
+      runSpacing: gap,
+      children: [
+        for (final order in orders)
+          SizedBox(
+            width: cardWidth,
+            child: cardBuilder(order),
+          ),
+      ],
+    );
   }
-  final keys = map.keys.toList()
-    ..sort((a, b) {
-      if (a == 'Без кухни') return 1;
-      if (b == 'Без кухни') return -1;
-      return a.compareTo(b);
-    });
-  return [for (final k in keys) MapEntry(k, map[k]!)];
 }
 
 class _KitchenSectionRow extends StatelessWidget {
@@ -768,97 +1229,6 @@ class _KitchenSectionRow extends StatelessWidget {
   }
 }
 
-class _KitchenActionLegend extends StatelessWidget {
-  const _KitchenActionLegend({
-    required this.actors,
-    required this.acceptColorOf,
-    required this.readyColorOf,
-    required this.onColorOf,
-    required this.l10n,
-  });
-
-  final List<LocalKitchenActorProfile> actors;
-  final Color Function(LocalKitchenActorProfile actor) acceptColorOf;
-  final Color Function(LocalKitchenActorProfile actor) readyColorOf;
-  final Color Function(Color background) onColorOf;
-  final AppLocalizations l10n;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: theme.colorScheme.outlineVariant.withValues(alpha: 0.7)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Повара этой кухни',
-            style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 8),
-          if (actors.isEmpty)
-            Text(
-              'Не найдено ни одного повара для этой кухни',
-              style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error),
-            )
-          else
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: actors.map((actor) {
-                final acceptColor = acceptColorOf(actor);
-                return Chip(
-                  avatar: CircleAvatar(
-                    backgroundColor: acceptColor,
-                    child: Icon(
-                      Icons.person_rounded,
-                      color: onColorOf(acceptColor),
-                      size: 15,
-                    ),
-                  ),
-                  label: Text(
-                    _actorUiLabel(actor),
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                );
-              }).toList(growable: false),
-            ),
-          const SizedBox(height: 6),
-          Text(
-            'Нажмите цвет повара на позиции: сначала Принять, потом Готово.',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              Chip(
-                avatar: const Icon(Icons.pan_tool_alt_rounded, size: 16),
-                label: const Text('Принять'),
-              ),
-              Chip(
-                avatar: const Icon(Icons.check_circle_rounded, size: 16),
-                label: const Text('Готово'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _KitchenEmptyPanel extends StatelessWidget {
   const _KitchenEmptyPanel({required this.text});
 
@@ -880,341 +1250,6 @@ class _KitchenEmptyPanel extends StatelessWidget {
         style: Theme.of(context).textTheme.bodyLarge?.copyWith(
               fontSize: PosQueueLayout.shortestSide(context) < 600 ? 15 : 16,
             ),
-      ),
-    );
-  }
-}
-
-class _KitchenActiveCard extends StatelessWidget {
-  const _KitchenActiveCard({
-    required this.order,
-    required this.tone,
-    required this.busy,
-    required this.l10n,
-    required this.actors,
-    required this.acceptColorOf,
-    required this.readyColorOf,
-    required this.onColorOf,
-    required this.uiScale,
-    required this.onAction,
-  });
-
-  final LocalKitchenQueueOrder order;
-  final Color tone;
-  final bool busy;
-  final AppLocalizations l10n;
-  final List<LocalKitchenActorProfile> actors;
-  final Color Function(LocalKitchenActorProfile actor) acceptColorOf;
-  final Color Function(LocalKitchenActorProfile actor) readyColorOf;
-  final Color Function(Color background) onColorOf;
-  final KitchenUiScale uiScale;
-  final Future<void> Function({
-    required LocalKitchenQueueItem item,
-    required LocalKitchenActorProfile actor,
-    required String action,
-  }) onAction;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final compact = PosQueueLayout.shortestSide(context) < 600;
-    final baseMinHeight = compact ? 46.0 : 52.0;
-    final baseFontSize = compact ? 14.0 : 15.0;
-    final actionMinHeight = baseMinHeight * uiScale.buttonScale;
-    final actionFontSize = baseFontSize * uiScale.buttonTextScale;
-    final actionIconSize = 16.0 * uiScale.buttonTextScale;
-    final actionButtonVerticalPadding =
-        (PosQueueLayout.buttonVerticalPadding(context) + 4) * uiScale.buttonScale;
-
-    Widget buildKitchenItemLine(LocalKitchenQueueItem e) {
-      final st = e.kitchenLineStatus.toLowerCase();
-      final icon = st == 'ready'
-          ? Icons.check_circle_rounded
-          : st == 'accepted'
-              ? Icons.play_circle_outline_rounded
-              : Icons.pending_outlined;
-      final lineColor = st == 'ready' ? Colors.green.shade600 : tone;
-      final qty = e.assemblyTitleWithStation();
-      final acceptedById = e.kitchenAcceptedByUserId;
-      final acceptedByName = (e.kitchenAcceptedByUsername ?? '').trim();
-      final readyByName = (e.kitchenReadyByUsername ?? '').trim();
-      LocalKitchenActorProfile? acceptedActor;
-      if (acceptedById != null) {
-        for (final actor in actors) {
-          if (actor.id == acceptedById) {
-            acceptedActor = actor;
-            break;
-          }
-        }
-      }
-
-      Widget buildAcceptButton(LocalKitchenActorProfile actor) {
-        final color = acceptColorOf(actor);
-        final on = onColorOf(color);
-        return SizedBox(
-          height: actionMinHeight,
-          child: FilledButton.icon(
-          onPressed: busy
-              ? null
-              : () {
-                  unawaited(onAction(item: e, actor: actor, action: 'accept'));
-                },
-          icon: Icon(Icons.pan_tool_alt_rounded, size: actionIconSize),
-          style: FilledButton.styleFrom(
-            backgroundColor: color,
-            foregroundColor: on,
-            minimumSize: Size(0, actionMinHeight),
-            padding: EdgeInsets.symmetric(
-              horizontal: compact ? 8 : 10,
-              vertical: actionButtonVerticalPadding,
-            ),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-          label: Text(
-            '${_actorUiLabel(actor)} · Принять',
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: on,
-              fontWeight: FontWeight.w800,
-              fontSize: actionFontSize,
-            ),
-          ),
-          ),
-        );
-      }
-
-      Widget buildReadyButton(LocalKitchenActorProfile actor) {
-        final color = readyColorOf(actor);
-        final on = onColorOf(color);
-        return SizedBox(
-          height: actionMinHeight,
-          child: FilledButton.icon(
-          onPressed: busy
-              ? null
-              : () {
-                  unawaited(onAction(item: e, actor: actor, action: 'ready'));
-                },
-          icon: Icon(Icons.check_circle_rounded, size: actionIconSize),
-          style: FilledButton.styleFrom(
-            backgroundColor: color,
-            foregroundColor: on,
-            minimumSize: Size(0, actionMinHeight),
-            padding: EdgeInsets.symmetric(
-              horizontal: compact ? 8 : 10,
-              vertical: actionButtonVerticalPadding,
-            ),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-          label: Text(
-            '${_actorUiLabel(actor)} · Готово',
-            style: theme.textTheme.labelLarge?.copyWith(
-              color: on,
-              fontWeight: FontWeight.w800,
-              fontSize: actionFontSize,
-            ),
-          ),
-          ),
-        );
-      }
-
-      final controls = <Widget>[];
-      if (st == 'pending') {
-        controls.addAll(actors.map(buildAcceptButton));
-      } else if (st == 'accepted') {
-        if (acceptedActor != null) {
-          controls.add(buildReadyButton(acceptedActor));
-        } else {
-          controls.addAll(actors.map(buildAcceptButton));
-        }
-      }
-
-      return Padding(
-        padding: EdgeInsets.only(bottom: PosQueueLayout.itemRowSpacing(context)),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: EdgeInsets.only(top: PosQueueLayout.shortestSide(context) < 600 ? 3 : 4),
-                  child: Icon(
-                    icon,
-                    size: PosQueueLayout.kitchenStatusIcon(context),
-                    color: lineColor,
-                  ),
-                ),
-                SizedBox(width: PosQueueLayout.rowGutter(context)),
-                Expanded(
-                  child: Text(
-                    qty,
-                    style: theme.textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      height: 1.25,
-                      fontSize: PosQueueLayout.itemLine(context) * uiScale.itemTextScale,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            if (acceptedByName.isNotEmpty || readyByName.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                readyByName.isNotEmpty
-                    ? 'Готово: $readyByName'
-                    : 'Принял: $acceptedByName',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ],
-            if (controls.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              controls.length == 1
-                  ? SizedBox(width: double.infinity, child: controls.first)
-                  : controls.length == 2
-                  ? Row(
-                      children: [
-                        Expanded(child: controls[0]),
-                        const SizedBox(width: 10),
-                        Expanded(child: controls[1]),
-                      ],
-                    )
-                  : Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: controls,
-                    ),
-            ] else if (st == 'ready') ...[
-              const SizedBox(height: 8),
-              Chip(
-                avatar: const Icon(Icons.check_circle_rounded, size: 16),
-                label: const Text('Позиция готова'),
-                backgroundColor: Colors.green.shade100,
-                labelStyle: theme.textTheme.labelLarge?.copyWith(
-                  color: Colors.green.shade800,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
-          ],
-        ),
-      );
-    }
-
-    final itemLines = <Widget>[];
-    final stationGroups = _groupKitchenItemsByStation(order.items);
-    final showStationHeaders = stationGroups.length > 1;
-    for (var gi = 0; gi < stationGroups.length; gi++) {
-      final group = stationGroups[gi];
-      if (showStationHeaders) {
-        itemLines.add(
-          Padding(
-            padding: EdgeInsets.only(top: gi > 0 ? 14 : 0, bottom: 8),
-            child: Row(
-              children: [
-                Icon(Icons.local_dining_rounded, size: 20, color: tone),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    group.key,
-                    style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      color: tone,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      }
-      for (final e in group.value) {
-        itemLines.add(buildKitchenItemLine(e));
-      }
-    }
-
-    return Container(
-      decoration: BoxDecoration(
-        color: tone.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: tone.withValues(alpha: 0.20)),
-      ),
-      padding: PosQueueLayout.cardOuterPadding(context),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: PosQueueLayout.iconBox(context),
-                height: PosQueueLayout.iconBox(context),
-                decoration: BoxDecoration(
-                  color: tone.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(PosQueueLayout.iconRadius(context)),
-                ),
-                child: Icon(
-                  Icons.restaurant_rounded,
-                  color: tone,
-                  size: PosQueueLayout.iconInner(context),
-                ),
-              ),
-              SizedBox(width: PosQueueLayout.rowGutter(context)),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      l10n.kitchenOrderNumber(order.number),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.w900,
-                        color: tone,
-                        letterSpacing: -0.5,
-                        height: 1.05,
-                        fontSize: PosQueueLayout.orderTitleKitchen(context) * uiScale.itemTextScale,
-                      ),
-                    ),
-                    SizedBox(height: PosQueueLayout.shortestSide(context) < 600 ? 6 : 8),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.check_circle_rounded,
-                          size: PosQueueLayout.metaIcon(context),
-                          color: Colors.green.shade600,
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            l10n.expeditorItemsLine(order.items.length),
-                            style: theme.textTheme.titleSmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                              fontWeight: FontWeight.w700,
-                              fontSize: PosQueueLayout.shortestSide(context) < 600 ? 13 : null,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          SizedBox(height: PosQueueLayout.shortestSide(context) < 600 ? 12 : 14),
-          ...itemLines,
-          if (actors.isEmpty)
-            Text(
-              'Добавьте поваров в эту кухню через админку',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: scheme.error,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-        ],
       ),
     );
   }
@@ -1263,17 +1298,9 @@ class _KitchenWaitingPanel extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  l10n.kitchenOrderNumber(order.number),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w900,
-                    color: tone,
-                    letterSpacing: -0.5,
-                    height: 1.05,
-                    fontSize: PosQueueLayout.orderTitleKitchen(context),
-                  ),
+                KitchenOrderNumberBadge(
+                  displayNumber: _kitchenOrderDisplayNumber(order),
+                  tone: tone,
                 ),
                 SizedBox(height: PosQueueLayout.shortestSide(context) < 600 ? 8 : 10),
                 Row(
@@ -1297,32 +1324,65 @@ class _KitchenWaitingPanel extends StatelessWidget {
                     ),
                   ],
                 ),
+                if (_kitchenOrderTypeBadgeRu(order) != null) ...[
+                  const SizedBox(height: 8),
+                  Chip(
+                    visualDensity: VisualDensity.compact,
+                    label: Text(_kitchenOrderTypeBadgeRu(order)!),
+                    avatar: Icon(
+                      _kitchenOrderTypeBadgeRu(order) == 'Доставка'
+                          ? Icons.delivery_dining_rounded
+                          : Icons.shopping_bag_outlined,
+                      size: 16,
+                      color: tone,
+                    ),
+                  ),
+                ],
                 if (order.items.isNotEmpty) ...[
                   const SizedBox(height: 12),
-                  ..._groupKitchenItemsByStation(order.items).expand((group) {
-                    return [
-                      Text(
-                        group.key,
-                        style: theme.textTheme.labelLarge?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          color: tone,
+                  Text(
+                    '${order.items.length} поз.',
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: tone,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  if (order.items.length > kKitchenLargeOrderItemThreshold)
+                    SizedBox(
+                      height: 180,
+                      child: Scrollbar(
+                        thumbVisibility: true,
+                        child: ListView.builder(
+                          primary: false,
+                          itemCount: order.items.length,
+                          itemBuilder: (context, index) {
+                            final e = order.items[index];
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Text(
+                                e.assemblyTitleWithStation(),
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            );
+                          },
                         ),
                       ),
-                      const SizedBox(height: 6),
-                      ...group.value.map(
-                        (e) => Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(
-                            e.assemblyTitleWithStation(),
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                            ),
+                    )
+                  else
+                    ...order.items.map(
+                      (e) => Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text(
+                          e.assemblyTitleWithStation(),
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ),
-                      const SizedBox(height: 8),
-                    ];
-                  }),
+                    ),
                 ],
               ],
             ),

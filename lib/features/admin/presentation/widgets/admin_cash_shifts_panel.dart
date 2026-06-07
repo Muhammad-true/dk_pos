@@ -1,5 +1,6 @@
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/formatting/money_format.dart';
+import 'package:dk_pos/features/admin/data/admin_reports_repository.dart';
 import 'package:dk_pos/features/cash/data/local_cash_repository.dart';
 import 'package:dk_pos/features/cash/presentation/cash_shift_report_dialog.dart';
 import 'package:flutter/material.dart';
@@ -13,29 +14,27 @@ class AdminCashShiftsPanel extends StatefulWidget {
   final double maxBodyWidth;
 
   @override
-  State<AdminCashShiftsPanel> createState() => _AdminCashShiftsPanelState();
+  AdminCashShiftsPanelState createState() => AdminCashShiftsPanelState();
 }
 
-class _AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
-  late DateTime _dateFrom;
-  late DateTime _dateTo;
+/// Публичный state — [AdminOrdersHub] вызывает [reload] при переходе на вкладку.
+class AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
   List<CashShiftListItem> _items = [];
+  CashEncashmentAlert? _encashmentAlert;
   bool _loading = false;
   String? _error;
+  bool _newestFirst = true;
 
   String get _branchId => AppConfig.storeBranchId;
 
   @override
   void initState() {
     super.initState();
-    final now = DateTime.now();
-    _dateTo = DateTime(now.year, now.month, now.day);
-    _dateFrom = _dateTo.subtract(const Duration(days: 30));
     WidgetsBinding.instance.addPostFrameCallback((_) => _load());
   }
 
-  String _isoDate(DateTime d) =>
-      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  /// Обновить список (после закрытия смены на кассе или смены вкладки).
+  Future<void> reload() => _load();
 
   String _fmtDateTime(String? iso) {
     if (iso == null || iso.isEmpty) return '—';
@@ -51,14 +50,14 @@ class _AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
     });
     try {
       final repo = context.read<LocalCashRepository>();
-      final items = await repo.fetchClosedShifts(
+      final result = await repo.fetchClosedShifts(
         branchId: _branchId,
-        from: _isoDate(_dateFrom),
-        to: _isoDate(_dateTo),
+        sort: _newestFirst ? 'desc' : 'asc',
       );
       if (!mounted) return;
       setState(() {
-        _items = items;
+        _items = result.items;
+        _encashmentAlert = result.encashmentAlert;
         _loading = false;
       });
     } catch (e) {
@@ -71,24 +70,9 @@ class _AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
     }
   }
 
-  Future<void> _pickDate({required bool isFrom}) async {
-    final initial = isFrom ? _dateFrom : _dateTo;
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 365)),
-    );
-    if (picked == null || !mounted) return;
-    setState(() {
-      if (isFrom) {
-        _dateFrom = picked;
-        if (_dateFrom.isAfter(_dateTo)) _dateTo = _dateFrom;
-      } else {
-        _dateTo = picked;
-        if (_dateTo.isBefore(_dateFrom)) _dateFrom = _dateTo;
-      }
-    });
+  Future<void> _toggleSort(bool newestFirst) async {
+    if (_newestFirst == newestFirst) return;
+    setState(() => _newestFirst = newestFirst);
     await _load();
   }
 
@@ -102,7 +86,10 @@ class _AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
       if (!mounted) return;
       await showDialog<void>(
         context: context,
-        builder: (ctx) => CashShiftReportDialog(report: report),
+        builder: (ctx) => CashShiftReportDialog(
+          report: report,
+          globalSync: item.globalSync,
+        ),
       );
     } catch (e) {
       if (!mounted) return;
@@ -110,6 +97,53 @@ class _AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
         SnackBar(content: Text(e.toString())),
       );
     }
+  }
+
+  Future<void> _retryGlobalSync() async {
+    try {
+      final result = await context.read<AdminReportsRepository>().triggerPushNow(
+        branchId: _branchId,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.message)),
+      );
+      await _load();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString())),
+      );
+    }
+  }
+
+  Widget _syncCell(CashShiftGlobalSync? sync, ThemeData theme) {
+    if (sync == null) {
+      return const Text('—');
+    }
+    final ok = sync.ok || sync.status == 'sent';
+    final color = ok
+        ? theme.colorScheme.primary
+        : sync.status == 'pending'
+        ? theme.colorScheme.tertiary
+        : theme.colorScheme.error;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          sync.shortLabel,
+          style: TextStyle(color: color, fontWeight: FontWeight.w600),
+        ),
+        if (sync.message != null && sync.message!.isNotEmpty)
+          Text(
+            sync.message!,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+      ],
+    );
   }
 
   @override
@@ -131,7 +165,8 @@ class _AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
             ),
             const SizedBox(height: 4),
             Text(
-              'Закрытые смены и все движения по кассе. Доступно только администратору.',
+              'Все закрытые смены. Видно: была ли инкассация, сколько нал осталось в ящике после закрытия. '
+              'Полный отчёт — «Отчёт». На global admin — через 1–2 мин после синка.',
               style: theme.textTheme.bodyMedium?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -142,15 +177,21 @@ class _AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
               runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                OutlinedButton.icon(
-                  onPressed: () => _pickDate(isFrom: true),
-                  icon: const Icon(Icons.calendar_today_outlined, size: 18),
-                  label: Text('С ${_isoDate(_dateFrom)}'),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () => _pickDate(isFrom: false),
-                  icon: const Icon(Icons.calendar_today_outlined, size: 18),
-                  label: Text('По ${_isoDate(_dateTo)}'),
+                SegmentedButton<bool>(
+                  segments: const [
+                    ButtonSegment(
+                      value: true,
+                      label: Text('Сначала новые'),
+                      icon: Icon(Icons.arrow_downward_rounded, size: 18),
+                    ),
+                    ButtonSegment(
+                      value: false,
+                      label: Text('Сначала старые'),
+                      icon: Icon(Icons.arrow_upward_rounded, size: 18),
+                    ),
+                  ],
+                  selected: {_newestFirst},
+                  onSelectionChanged: (s) => _toggleSort(s.first),
                 ),
                 FilledButton.icon(
                   onPressed: _loading ? null : _load,
@@ -163,9 +204,47 @@ class _AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
                       : const Icon(Icons.refresh_rounded, size: 18),
                   label: const Text('Обновить'),
                 ),
+                OutlinedButton.icon(
+                  onPressed: _loading ? null : _retryGlobalSync,
+                  icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+                  label: const Text('Отправить в global'),
+                ),
               ],
             ),
             const SizedBox(height: 16),
+            if (_encashmentAlert != null && _encashmentAlert!.message.isNotEmpty)
+              Card(
+                color: _encashmentAlert!.shiftsWithoutEncashment >= 2
+                    ? theme.colorScheme.errorContainer
+                    : theme.colorScheme.tertiaryContainer,
+                margin: const EdgeInsets.only(bottom: 12),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _encashmentAlert!.shiftsWithoutEncashment >= 2
+                            ? 'Инкассация давно не делалась'
+                            : 'Инкассации не было',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(_encashmentAlert!.message),
+                      if (_encashmentAlert!.daysSinceEncashment != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            'Дней с последней инкассации: ${_encashmentAlert!.daysSinceEncashment}',
+                            style: theme.textTheme.bodySmall,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
             if (_error != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 12),
@@ -180,7 +259,7 @@ class _AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
                   : _items.isEmpty
                   ? Center(
                       child: Text(
-                        'За выбранный период закрытых смен нет',
+                        'Закрытых смен пока нет',
                         style: theme.textTheme.bodyLarge?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -194,25 +273,50 @@ class _AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
                           columns: const [
                             DataColumn(label: Text('Закрыта')),
                             DataColumn(label: Text('Касса')),
-                            DataColumn(label: Text('Открыл')),
-                            DataColumn(label: Text('Закрыл')),
-                            DataColumn(label: Text('По расчёту'), numeric: true),
-                            DataColumn(label: Text('Факт'), numeric: true),
+                            DataColumn(label: Text('Выручка'), numeric: true),
+                            DataColumn(label: Text('Безнал'), numeric: true),
+                            DataColumn(label: Text('Инкассация'), numeric: true),
+                            DataColumn(label: Text('В кассе после закр.'), numeric: true),
                             DataColumn(label: Text('Разница'), numeric: true),
+                            DataColumn(label: Text('Global')),
                             DataColumn(label: Text('')),
                           ],
                           rows: _items.map((s) {
                             final variance = s.variance;
+                            final p = s.preview;
+                            final noEnc = p != null && !p.encashmentDone;
                             return DataRow(
+                              color: noEnc
+                                  ? WidgetStatePropertyAll(
+                                      theme.colorScheme.errorContainer.withValues(alpha: 0.35),
+                                    )
+                                  : null,
                               cells: [
                                 DataCell(Text(_fmtDateTime(s.closedAt))),
                                 DataCell(Text(s.terminalId ?? '—')),
-                                DataCell(Text(s.openedByUsername ?? '—')),
-                                DataCell(Text(s.closedByUsername ?? '—')),
                                 DataCell(Text(
-                                  s.closingExpected != null
-                                      ? formatSomoni(s.closingExpected!)
+                                  p != null && p.totalSalesNet > 0
+                                      ? formatSomoni(p.totalSalesNet)
                                       : '—',
+                                )),
+                                DataCell(Tooltip(
+                                  message: p?.nonCashBrief ?? '',
+                                  child: Text(
+                                    p != null && p.nonCashNet > 0.009
+                                        ? formatSomoni(p.nonCashNet)
+                                        : '—',
+                                  ),
+                                )),
+                                DataCell(Text(
+                                  p != null && p.encashmentDone
+                                      ? formatSomoni(p.encashmentTotal)
+                                      : 'не было',
+                                  style: noEnc
+                                      ? TextStyle(
+                                          color: theme.colorScheme.error,
+                                          fontWeight: FontWeight.w600,
+                                        )
+                                      : null,
                                 )),
                                 DataCell(Text(
                                   s.closingActual != null
@@ -228,8 +332,9 @@ class _AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
                                       ? TextStyle(color: theme.colorScheme.error)
                                       : null,
                                 )),
+                                DataCell(_syncCell(s.globalSync, theme)),
                                 DataCell(
-                                  TextButton(
+                                  FilledButton.tonal(
                                     onPressed: () => _openReport(s),
                                     child: const Text('Отчёт'),
                                   ),

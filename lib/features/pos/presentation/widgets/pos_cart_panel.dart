@@ -302,7 +302,11 @@ class PosCartPanel extends StatelessWidget {
                                         onPressed: kitchenLocked
                                             ? null
                                             : () => context.read<CartBloc>().add(
-                                                  CartItemAdded(line.item),
+                                                  CartItemAdded(
+                                                    line.item,
+                                                    unitPrice: line.item.price,
+                                                    modifiers: line.modifiers,
+                                                  ),
                                                 ),
                                       ),
                                     ],
@@ -771,7 +775,7 @@ class _OrderTypeAndTotalPanel extends StatelessWidget {
                       onPressed: cart.isEmpty || selectedType == null
                           ? null
                           : () => _runCheckoutFromCart(
-                                cart: cart,
+                                cart: context.read<CartBloc>().state,
                                 orderType: selectedType,
                                 waiterMode: waiterMode,
                                 sheetContext: context,

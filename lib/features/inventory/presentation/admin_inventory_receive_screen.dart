@@ -16,10 +16,7 @@ class _AdminInventoryReceiveScreenState extends State<AdminInventoryReceiveScree
   bool _enabled = true;
   String? _error;
   List<InventoryTransferSummary> _items = const [];
-  int? _expandedId;
-  InventoryTransferDocument? _detail;
-  bool _detailLoading = false;
-  bool _receiving = false;
+  int? _receivingId;
 
   @override
   void initState() {
@@ -50,47 +47,23 @@ class _AdminInventoryReceiveScreenState extends State<AdminInventoryReceiveScree
     }
   }
 
-  Future<void> _loadDetail(int id) async {
-    setState(() {
-      _expandedId = id;
-      _detailLoading = true;
-      _detail = null;
-    });
-    try {
-      final doc = await context.read<LocalInventoryRepository>().fetchTransfer(id);
-      if (!mounted) return;
-      setState(() {
-        _detail = doc;
-        _detailLoading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _detailLoading = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
-    }
-  }
+  static String _fmtSom(double v) => '${v.round()} сомони';
 
-  static String _fmtSom(double v) => '${v.round()} сом.';
-
-  Future<void> _receive(int id) async {
-    if (_receiving) return;
-    setState(() => _receiving = true);
+  Future<void> _receive(int id, String docNumber) async {
+    if (_receivingId != null) return;
+    setState(() => _receivingId = id);
     try {
       await context.read<LocalInventoryRepository>().receiveTransfer(id);
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Накладная принята — остатки на точке обновлены')),
+        SnackBar(content: Text('Накладная $docNumber принята')),
       );
-      setState(() {
-        _expandedId = null;
-        _detail = null;
-      });
       await _load();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
     } finally {
-      if (mounted) setState(() => _receiving = false);
+      if (mounted) setState(() => _receivingId = null);
     }
   }
 
@@ -101,7 +74,7 @@ class _AdminInventoryReceiveScreenState extends State<AdminInventoryReceiveScree
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Приём со склада'),
+        title: const Text('Приём накладных'),
         actions: [
           IconButton(
             onPressed: _loading ? null : _load,
@@ -123,8 +96,8 @@ class _AdminInventoryReceiveScreenState extends State<AdminInventoryReceiveScree
                     child: Padding(
                       padding: const EdgeInsets.all(14),
                       child: Text(
-                        'Центр отправляет накладную из админки → здесь подтверждаете приём. '
-                        'После приёма сырьё появится на складе точки и касса сможет списывать при продаже.',
+                        'Центр отправил накладную из админки. Нажмите «Принять» — '
+                        'состав уже в документе, ничего вводить не нужно.',
                         style: textTheme.bodyMedium?.copyWith(height: 1.4),
                       ),
                     ),
@@ -150,90 +123,36 @@ class _AdminInventoryReceiveScreenState extends State<AdminInventoryReceiveScree
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 24),
                       child: Text(
-                        'Нет накладных в пути. Отправку делаете в admin.donerkebab.tj → Склад → Отправка.',
+                        'Нет накладных в пути. Отправку делаете в admin → Склад → Отправка (из прихода).',
                         style: textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
                       ),
                     ),
                   ..._items.map((item) {
-                    final expanded = _expandedId == item.id;
+                    final busy = _receivingId == item.id;
                     return Card(
                       margin: const EdgeInsets.only(bottom: 10),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          ListTile(
-                            title: Text(item.docNumber, style: const TextStyle(fontWeight: FontWeight.w600)),
-                            subtitle: Text(
-                              '${item.lineCount} поз. · ${item.docDate ?? "—"}'
-                              '${item.totalAmount != null ? " · ${_fmtSom(item.totalAmount!)}" : ""}'
-                              '${item.toLocationName != null ? " · ${item.toLocationName}" : ""}',
-                            ),
-                            trailing: Icon(
-                              expanded ? Icons.expand_less : Icons.expand_more,
-                            ),
-                            onTap: () {
-                              if (expanded) {
-                                setState(() {
-                                  _expandedId = null;
-                                  _detail = null;
-                                });
-                              } else {
-                                _loadDetail(item.id);
-                              }
-                            },
-                          ),
-                          if (expanded) ...[
-                            const Divider(height: 1),
-                            if (_detailLoading)
-                              const Padding(
-                                padding: EdgeInsets.all(20),
-                                child: Center(child: CircularProgressIndicator()),
-                              )
-                            else if (_detail != null) ...[
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                                child: Text(
-                                  'Итого: ${_fmtSom(_detail!.totalAmount)}',
-                                  style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
-                                ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: _detail!.lines
-                                      .map(
-                                        (ln) => Padding(
-                                          padding: const EdgeInsets.only(bottom: 6),
-                                          child: Text(
-                                            ln.sku != null && ln.sku!.isNotEmpty
-                                                ? '• [${ln.sku}] ${ln.ingredientName}: ${ln.qty} ${ln.unit}'
-                                                    '${ln.unitCost != null ? " · ${_fmtSom(ln.lineSum)}" : ""}'
-                                                : '• ${ln.ingredientName}: ${ln.qty} ${ln.unit}'
-                                                    '${ln.unitCost != null ? " · ${_fmtSom(ln.lineSum)}" : ""}',
-                                          ),
-                                        ),
-                                      )
-                                      .toList(),
-                                ),
-                              ),
-                              Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: FilledButton.icon(
-                                  onPressed: _receiving ? null : () => _receive(item.id),
-                                  icon: _receiving
-                                      ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(strokeWidth: 2),
-                                        )
-                                      : const Icon(Icons.inventory_2_outlined),
-                                  label: const Text('Принять накладную'),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ],
+                      child: ListTile(
+                        contentPadding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+                        title: Text(
+                          item.docNumber,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                        subtitle: Text(
+                          '${item.lineCount} поз. · ${item.docDate ?? "—"}'
+                          '${item.totalAmount != null ? " · ${_fmtSom(item.totalAmount!)}" : ""}'
+                          '${item.toLocationName != null ? "\n${item.toLocationName}" : ""}',
+                        ),
+                        isThreeLine: item.toLocationName != null,
+                        trailing: FilledButton(
+                          onPressed: busy || !_enabled ? null : () => _receive(item.id, item.docNumber),
+                          child: busy
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Text('Принять'),
+                        ),
                       ),
                     );
                   }),

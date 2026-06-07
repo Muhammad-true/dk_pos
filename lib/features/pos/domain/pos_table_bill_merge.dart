@@ -17,6 +17,7 @@ List<PosTableBillLine> mergePosTableBillLines(
         quantity: prev.quantity + l.quantity,
         lineTotal: prev.lineTotal + l.lineTotal,
         menuItemId: prev.menuItemId ?? l.menuItemId,
+        lineKey: prev.lineKey ?? l.lineKey,
         unitPrice: prev.unitPrice ?? l.unitPrice,
         kitchenLineStatus: prev.kitchenLineStatus ?? l.kitchenLineStatus,
         kitchenStationId: prev.kitchenStationId ?? l.kitchenStationId,

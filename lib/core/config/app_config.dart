@@ -7,11 +7,11 @@ class AppConfig {
   static String? _apiOriginOverride;
   static int? _defaultStoreBranchFranchiseId;
 
-  /// Runtime-источник `branchId`: franchiseId из локальной лицензии
-  /// (как на backend: `branch_id` в заказах/оплатах — локальный код точки; для одной точки = id франшизы).
-  static void setDefaultStoreBranchIdFromFranchise(int? franchiseId) {
-    if (franchiseId != null && franchiseId > 0) {
-      _defaultStoreBranchFranchiseId = franchiseId;
+  /// Runtime ID точки: `default_location_id` из лицензии, иначе `franchise_id`
+  /// (как backend getDefaultStoreBranchId).
+  static void setDefaultStoreBranchIdFromFranchise(int? branchId) {
+    if (branchId != null && branchId > 0) {
+      _defaultStoreBranchFranchiseId = branchId;
     } else {
       _defaultStoreBranchFranchiseId = null;
     }
@@ -21,12 +21,12 @@ class AppConfig {
     _defaultStoreBranchFranchiseId = null;
   }
 
-  /// Локальный `branchId` для orders/payments/смена (не путать с `franchise_id` в меню).
+  /// Локальный `branch_id` для orders/payments/смена (совпадает с backend getDefaultStoreBranchId).
   static String get storeBranchId {
     final f = _defaultStoreBranchFranchiseId;
     if (f != null && f > 0) return f.toString();
     throw StateError(
-      'STORE_BRANCH_ID_UNRESOLVED: franchise_id не получен из локальной лицензии.',
+      'STORE_BRANCH_ID_UNRESOLVED: default_location_id / franchise_id не получен из локальной лицензии.',
     );
   }
 
@@ -157,11 +157,31 @@ class AppConfig {
 
   static String mediaUrl(String? path) {
     if (path == null || path.isEmpty) return '';
-    if (path.startsWith('http://') || path.startsWith('https://')) return path;
+    if (path.startsWith('http://') || path.startsWith('https://')) {
+      final uploadsPath = _extractUploadsRelativePath(path);
+      if (uploadsPath != null) {
+        return '${apiOrigin}/$uploadsPath';
+      }
+      return path;
+    }
     final p = path.replaceFirst(RegExp(r'^/+'), '');
     final origin = apiOrigin;
     if (p.startsWith('uploads/')) return '$origin/$p';
     return '$origin/uploads/$p';
+  }
+
+  /// Поддержка legacy-конфигов: ранее в screen config могли сохраниться
+  /// абсолютные URL с прошлым IP сервера. Если ссылка указывает на uploads,
+  /// возвращаем относительный путь uploads/... для склейки с актуальным apiOrigin.
+  static String? _extractUploadsRelativePath(String rawUrl) {
+    final uri = Uri.tryParse(rawUrl.trim());
+    if (uri == null) return null;
+    final segments = uri.pathSegments;
+    final idx = segments.indexOf('uploads');
+    if (idx < 0) return null;
+    final tail = segments.sublist(idx).join('/');
+    if (tail.isEmpty) return null;
+    return tail;
   }
 
   static String _normalize(String raw) {

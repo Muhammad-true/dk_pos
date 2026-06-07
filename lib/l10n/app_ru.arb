@@ -121,6 +121,12 @@
   "adminScreenColsAuto": "Авто (по ширине экрана)",
   "adminScreenTv1Columns": "Колонок категорий (ТВ1)",
   "adminScreenTv2Columns": "Колонок списка (ТВ2)",
+  "adminScreenTv2ListMaxRows": "Строк на странице list (необязательно)",
+  "adminScreenTv2ListMaxRowsHint": "Пусто — авто по размеру шрифта и экрана. Умножается на число колонок.",
+  "adminScreenTv2ListMaxItems": "Макс. позиций на экран list (необязательно)",
+  "adminScreenTv2ListMaxItemsHint": "Жёсткий лимит; перекрывает «строк × колонки». Пусто — считается автоматически.",
+  "adminScreenTv2ListAutoSplit": "Авто-страницы для list",
+  "adminScreenTv2ListAutoSplitHint": "Если позиций больше, чем помещается — создаётся вторая (третья…) страница в ротации.",
   "adminScreenTv2ShowTemplate": "Шаблон показа ТВ2",
   "adminScreenTv2ShowTemplateClassic": "Классический список",
   "adminScreenTv2ShowTemplateVideoPromo": "Видеофон + товар или комбо",
@@ -261,12 +267,15 @@
   "adminTv2EditorListTitleRu": "Заголовок первой колонки (рус.)",
   "adminTv2EditorSecondTitleRu": "Заголовок второй колонки (рус.)",
   "adminTv2EditorListGridTitleRu": "Заголовок сетки (рус.)",
+  "adminTv2EditorProductGridTitleRu": "Заголовок страницы (рус.)",
   "adminTv2EditorPageHintSplit": "Две колонки справа (как бургеры / напитки).",
   "adminTv2EditorPageHintList": "Сетка товаров и крупная карточка справа.",
+  "adminTv2EditorPageHintProductGrid": "Сетка с фото на весь экран; лишние товары — на следующих страницах.",
   "adminTv2EditorPageHintVideoBg": "Видео на фоне, оффер и при необходимости полосы товаров.",
   "adminTv2EditorVideoBgComboNoMenuItems": "Режим «комбо»: состав задаётся в комбо, позиции из меню сюда не добавляются.",
   "adminTv2EditorRoleHeroCardList": "Карточка справа",
   "adminTv2EditorRoleListGrid": "В сетке",
+  "adminTv2EditorRoleProductGridItem": "Товар в сетке",
   "adminTv2EditorSaveTitles": "Сохранить заголовки",
   "adminTv2EditorItemsSection": "Товары на странице",
   "adminTv2EditorAddAsRole": "Добавить как",
@@ -279,6 +288,32 @@
   "adminTv2EditorLayoutTitlePlaceholder": "Заголовок",
   "adminTv2EditorLayoutHeroEmpty": "Нет героя",
   "adminTv2EditorLayoutListHint": "Шаблон list — сетка карточек по всем позициям.",
+  "adminTv2EditorLayoutProductGridHint": "Шаблон product_grid — карточки с фото на весь экран.",
+  "adminTv2ProductGridLayoutTitle": "Сетка на экране",
+  "adminTv2ProductGridDragHint": "Удерживайте превью и ведите влево/вправо — меняется число колонок (2–5).",
+  "adminTv2ProductGridColsAuto": "Авто (~{cols} кол.)",
+  "@adminTv2ProductGridColsAuto": {
+    "placeholders": {
+      "cols": { "type": "int" }
+    }
+  },
+  "adminTv2ProductGridColsFixed": "{cols} колонки",
+  "@adminTv2ProductGridColsFixed": {
+    "placeholders": {
+      "cols": { "type": "int" }
+    }
+  },
+  "adminTv2ProductGridColsLess": "Меньше колонок",
+  "adminTv2ProductGridColsMore": "Больше колонок",
+  "adminTv2ProductGridCardSizeLabel": "Размер карточки (как на кассе)",
+  "adminTv2ProductGridCardSizeHint": "Компакт — больше карточек; крупный — крупнее фото и текст.",
+  "adminTv2ProductGridCardSizeCompact": "Компакт",
+  "adminTv2ProductGridCardSizeNormal": "Обычный",
+  "adminTv2ProductGridCardSizeLarge": "Крупный",
+  "adminTv2PageTransitionPerPage": "Анимация перехода (эта страница)",
+  "adminTv2PageTransitionPerPageHint": "Пусто — как задано для всего экрана в настройках ТВ.",
+  "adminTv2PageTransitionInherit": "Как у экрана",
+  "adminTv2EditorItemsReorderHint": "Удерживайте ≡ и перетащите для смены порядка.",
   "adminTv2EditorLayoutMore": "+{count} ещё",
   "@adminTv2EditorLayoutMore": {
     "placeholders": {
@@ -339,6 +374,7 @@
   "adminTv2PageTypeDrinks": "Напитки (drinks)",
   "adminTv2PageTypeCarousel": "Карусель (carousel)",
   "adminTv2PageTypeList": "Список (list)",
+  "adminTv2PageTypeProductGrid": "Сетка товаров (product_grid)",
   "adminTv2PageTypeVideoBg": "Фон (видео)",
   "adminTv2OptionalVideoTitle": "Видео под макетом (опционально)",
   "adminTv2OptionalVideoHint": "Для split, list, drinks и carousel: ролик показывается за колонкой или сеткой, как на ТВ. Такие страницы можно чередовать со страницей «Фон (видео)» в одной ротации.",

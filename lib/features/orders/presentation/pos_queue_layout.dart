@@ -136,4 +136,14 @@ abstract final class PosQueueLayout {
     if (s < 900) return 15;
     return 16;
   }
+
+  static bool isTablet(BuildContext context) => shortestSide(context) >= 600;
+
+  /// 1 / 2 / 3 колонки карточек заказов на кухне.
+  static int kitchenGridColumns(BuildContext context) {
+    final w = MediaQuery.sizeOf(context).width;
+    if (w >= 1180) return 3;
+    if (w >= 720) return 2;
+    return 1;
+  }
 }

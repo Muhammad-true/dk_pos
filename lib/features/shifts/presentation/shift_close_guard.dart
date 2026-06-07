@@ -1,4 +1,9 @@
+import 'package:dk_pos/core/cache/pos_local_cache_cleanup.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
+import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
+import 'package:dk_pos/features/auth/bloc/auth_event.dart';
+import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
+import 'package:dk_pos/features/cart/bloc/cart_event.dart';
 import 'package:dk_pos/features/cash/data/local_cash_repository.dart';
 import 'package:dk_pos/features/shifts/data/shift_close_preflight.dart';
 import 'package:flutter/material.dart';
@@ -161,7 +166,34 @@ Future<void> showOpenOrdersBlockingDialog(
   );
 }
 
-/// Выход: смена сотрудника + проверки по роли.
+/// Выход из панели настроек (админка, учёт персонала): без закрытия смены и кассы.
+///
+/// Кассовые смены на кассах остаются открытыми — их закрывают на соответствующей кассе.
+Future<bool> confirmSettingsPanelLogout(BuildContext context) async {
+  final wantsLogout = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Выйти?'),
+      content: const Text(
+        'Вы выйдете из программы. Открытые кассовые смены на кассах '
+        'не закрываются — их закрывают кассиры на своих рабочих местах.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('Остаться'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text('Выход'),
+        ),
+      ],
+    ),
+  );
+  return wantsLogout == true;
+}
+
+/// Выход: смена сотрудника + проверки по роли (касса, кухня и т.д.).
 Future<bool> confirmLogoutWithShiftChecks(
   BuildContext context, {
   required String role,
@@ -177,4 +209,48 @@ Future<bool> confirmLogoutWithShiftChecks(
     strictOrders: isCashRole,
     checkOpenCashShift: isCashRole,
   );
+}
+
+/// Выход из POS-сессии (касса, смена сотрудника, экран входа).
+///
+/// [cashShiftNeverOpened] — пользователь не открывал кассовую смену (экран «Открыть смену»):
+/// короткое подтверждение без «Закрыть смену».
+Future<bool> performPosSessionLogout(
+  BuildContext context, {
+  bool cashShiftNeverOpened = false,
+}) async {
+  if (!context.mounted) return false;
+
+  if (cashShiftNeverOpened) {
+    final wantsLogout = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Выйти?'),
+        content: const Text(
+          'Кассовая смена не открыта. Выйти и войти под другим пользователем?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Остаться'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Выход'),
+          ),
+        ],
+      ),
+    );
+    if (wantsLogout != true || !context.mounted) return false;
+  } else {
+    final role = context.read<AuthBloc>().state.user?.role ?? '';
+    final ok = await confirmLogoutWithShiftChecks(context, role: role);
+    if (!ok || !context.mounted) return false;
+  }
+
+  await clearPosLocalCaches();
+  if (!context.mounted) return false;
+  context.read<CartBloc>().add(const CartResetAll());
+  context.read<AuthBloc>().add(const AuthLogoutRequested());
+  return true;
 }

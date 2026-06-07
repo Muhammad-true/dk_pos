@@ -100,4 +100,11 @@ class ScreensAdminRepository {
 
   Future<void> deleteScreenPageItem(int screenId, int pageId, int itemRowId) =>
       _remote.deleteScreenPageItem(screenId, pageId, itemRowId);
+
+  Future<void> reorderScreenPageItems(
+    int screenId,
+    int pageId,
+    List<Map<String, dynamic>> items,
+  ) =>
+      _remote.reorderScreenPageItems(screenId, pageId, items);
 }

@@ -325,6 +325,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get adminScreenTv2Columns => 'List columns (TV2)';
 
   @override
+  String get adminScreenTv2ListMaxRows => 'Rows per list page (optional)';
+
+  @override
+  String get adminScreenTv2ListMaxRowsHint =>
+      'Empty — auto from font size and screen. Multiplied by column count.';
+
+  @override
+  String get adminScreenTv2ListMaxItems =>
+      'Max items per list screen (optional)';
+
+  @override
+  String get adminScreenTv2ListMaxItemsHint =>
+      'Hard cap; overrides rows × columns. Empty — calculated automatically.';
+
+  @override
+  String get adminScreenTv2ListAutoSplit => 'Auto-split list pages';
+
+  @override
+  String get adminScreenTv2ListAutoSplitHint =>
+      'When items do not fit, extra pages are added to rotation.';
+
+  @override
   String get adminScreenTv2ShowTemplate => 'TV2 display template';
 
   @override
@@ -709,12 +731,19 @@ class AppLocalizationsEn extends AppLocalizations {
   String get adminTv2EditorListGridTitleRu => 'Grid title (Russian)';
 
   @override
+  String get adminTv2EditorProductGridTitleRu => 'Page title (Russian)';
+
+  @override
   String get adminTv2EditorPageHintSplit =>
       'Two columns on the right (burgers / drinks style).';
 
   @override
   String get adminTv2EditorPageHintList =>
       'Product grid and a large card on the right.';
+
+  @override
+  String get adminTv2EditorPageHintProductGrid =>
+      'Full-screen photo grid; overflow splits into extra pages automatically.';
 
   @override
   String get adminTv2EditorPageHintVideoBg =>
@@ -729,6 +758,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get adminTv2EditorRoleListGrid => 'In grid';
+
+  @override
+  String get adminTv2EditorRoleProductGridItem => 'Grid item';
 
   @override
   String get adminTv2EditorSaveTitles => 'Save titles';
@@ -766,6 +798,63 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get adminTv2EditorLayoutListHint =>
       'List template: grid of all items.';
+
+  @override
+  String get adminTv2EditorLayoutProductGridHint =>
+      'Product grid template: photo cards filling the screen.';
+
+  @override
+  String get adminTv2ProductGridLayoutTitle => 'On-screen grid';
+
+  @override
+  String get adminTv2ProductGridDragHint =>
+      'Hold the preview and swipe left/right to change columns (2–5).';
+
+  @override
+  String adminTv2ProductGridColsAuto(int cols) {
+    return 'Auto (~$cols cols)';
+  }
+
+  @override
+  String adminTv2ProductGridColsFixed(int cols) {
+    return '$cols columns';
+  }
+
+  @override
+  String get adminTv2ProductGridColsLess => 'Fewer columns';
+
+  @override
+  String get adminTv2ProductGridColsMore => 'More columns';
+
+  @override
+  String get adminTv2ProductGridCardSizeLabel => 'Card size (like POS)';
+
+  @override
+  String get adminTv2ProductGridCardSizeHint =>
+      'Compact — more cards; large — bigger photo and text.';
+
+  @override
+  String get adminTv2ProductGridCardSizeCompact => 'Compact';
+
+  @override
+  String get adminTv2ProductGridCardSizeNormal => 'Normal';
+
+  @override
+  String get adminTv2ProductGridCardSizeLarge => 'Large';
+
+  @override
+  String get adminTv2PageTransitionPerPage => 'Page transition animation';
+
+  @override
+  String get adminTv2PageTransitionPerPageHint =>
+      'Empty — use the TV screen default from settings.';
+
+  @override
+  String get adminTv2PageTransitionInherit => 'Same as screen';
+
+  @override
+  String get adminTv2EditorItemsReorderHint =>
+      'Hold ≡ and drag to reorder items.';
 
   @override
   String adminTv2EditorLayoutMore(int count) {
@@ -879,6 +968,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get adminTv2PageTypeList => 'List (list)';
+
+  @override
+  String get adminTv2PageTypeProductGrid => 'Product grid (product_grid)';
 
   @override
   String get adminTv2PageTypeVideoBg => 'Video background';

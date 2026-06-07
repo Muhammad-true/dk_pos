@@ -11,6 +11,8 @@ import 'package:dk_pos/features/cart/bloc/cart_state.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_content_config.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_customer_display_panel.dart';
 
+enum CustomerDisplayOpenResult { opened, alreadyOpen, failed }
+
 class CustomerDisplayWindowService {
   CustomerDisplayWindowService._();
 
@@ -22,6 +24,9 @@ class CustomerDisplayWindowService {
 
   /// Синхронизация с файлом / вторым окном только после явного «Экран для клиента».
   bool _sessionActive = false;
+  final ValueNotifier<bool> openNotifier = ValueNotifier(false);
+
+  bool get isOpen => _sessionActive && _window != null;
   CustomerDisplayContentConfig? _displayContentConfig;
   final File _syncFile = File(
     '${Directory.systemTemp.path}${Platform.pathSeparator}dk_pos_customer_display${Platform.pathSeparator}cart.json',
@@ -71,7 +76,9 @@ class CustomerDisplayWindowService {
         if (displays.length < 2) {
           if (!allowSingleDisplayPreview) {
             if (_singleDisplayPreviewMode && _window != null) {
-              await _window!.show();
+              if (!await _tryShowExistingWindow()) {
+                continue;
+              }
               return true;
             }
             await close();
@@ -79,13 +86,16 @@ class CustomerDisplayWindowService {
           }
           if (_window != null) {
             _singleDisplayPreviewMode = true;
-            await _window!.show();
+            if (!await _tryShowExistingWindow()) {
+              continue;
+            }
             return true;
           }
           final payload = {
             'type': 'customer_display',
             'syncFilePath': _syncFile.path,
             'fullscreen': false,
+            'apiOrigin': AppConfig.apiOrigin,
           };
           _window = await DesktopMultiWindow.createWindow(jsonEncode(payload));
           _singleDisplayPreviewMode = true;
@@ -105,7 +115,9 @@ class CustomerDisplayWindowService {
           _singleDisplayPreviewMode = false;
           await _applySecondaryMonitorFrame(_window!, displays, primaryDisplay);
           await _window!.setTitle('Customer Display');
-          await _window!.show();
+          if (!await _tryShowExistingWindow()) {
+            continue;
+          }
           return true;
         }
 
@@ -121,6 +133,7 @@ class CustomerDisplayWindowService {
           'type': 'customer_display',
           'syncFilePath': _syncFile.path,
           'fullscreen': true,
+          'apiOrigin': AppConfig.apiOrigin,
           if (visiblePosition != null)
             'bounds': {
               'x': visiblePosition.dx,
@@ -209,16 +222,50 @@ class CustomerDisplayWindowService {
     }
   }
 
+  Future<bool> _tryShowExistingWindow() async {
+    final window = _window;
+    if (window == null) return false;
+    try {
+      await window.show();
+      return true;
+    } catch (e, stack) {
+      debugPrint('CustomerDisplayWindowService._tryShowExistingWindow: $e\n$stack');
+      _window = null;
+      _sessionActive = false;
+      openNotifier.value = false;
+      return false;
+    }
+  }
+
+  void _markOpen() {
+    _sessionActive = true;
+    openNotifier.value = true;
+  }
+
+  void _markClosed() {
+    _sessionActive = false;
+    openNotifier.value = false;
+  }
+
   /// Открыть окно экрана клиента (второй монитор — полноэкранно, один монитор — окно предпросмотра).
-  Future<bool> openCustomerDisplay(CartState cart) async {
-    if (!_isSupported) return false;
-    if (AppConfig.isCustomerDisplayWindowDisabled) return false;
+  Future<CustomerDisplayOpenResult> openCustomerDisplay(CartState cart) async {
+    if (!_isSupported) return CustomerDisplayOpenResult.failed;
+    if (AppConfig.isCustomerDisplayWindowDisabled) {
+      return CustomerDisplayOpenResult.failed;
+    }
+
+    if (isOpen) {
+      await _saveCartToFile(cart);
+      await ensureOpened(allowSingleDisplayPreview: true);
+      return CustomerDisplayOpenResult.alreadyOpen;
+    }
+
     await _saveCartToFile(cart);
     final opened = await ensureOpened(allowSingleDisplayPreview: true);
-    if (!opened) return false;
-    _sessionActive = true;
+    if (!opened) return CustomerDisplayOpenResult.failed;
+    _markOpen();
     await _saveCartToFile(cart);
-    return true;
+    return CustomerDisplayOpenResult.opened;
   }
 
   /// Обновить корзину на уже открытом экране клиента (не открывает окно само).
@@ -243,7 +290,7 @@ class CustomerDisplayWindowService {
   }
 
   Future<void> close() async {
-    _sessionActive = false;
+    _markClosed();
     final window = _window;
     _window = null;
     _singleDisplayPreviewMode = false;
@@ -285,6 +332,7 @@ class CustomerDisplayWindowService {
       await _ensureSyncDirectory();
       final payload = {
         'updatedAt': DateTime.now().millisecondsSinceEpoch,
+        'apiOrigin': AppConfig.apiOrigin,
         'cart': _snapshotFromCart(cart).toJson(),
         'displayConfig': _displayContentConfig?.toJson(),
       };

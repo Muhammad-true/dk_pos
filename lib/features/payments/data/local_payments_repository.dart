@@ -362,6 +362,8 @@ class LocalPaymentsRepository {
 
   String get _defaultBranchId => AppConfig.storeBranchId;
 
+  String get defaultTerminalId => _defaultTerminalId;
+
   String get _defaultTerminalId {
     final v = dotenv.maybeGet('POS_TERMINAL_ID')?.trim();
     if (v != null && v.isNotEmpty) return v;
@@ -452,6 +454,7 @@ class LocalPaymentsRepository {
 
   Future<LocalPaymentsTodayHistory> fetchTodayHistoryBundle({
     String? branchId,
+    String? terminalId,
     int limit = 150,
     int paymentOffset = 0,
     int refundOffset = 0,
@@ -466,6 +469,7 @@ class LocalPaymentsRepository {
       'api/local/payments/today',
       query: {
         'branchId': branchId ?? _defaultBranchId,
+        'terminalId': terminalId ?? _defaultTerminalId,
         'limit': '$safeLimit',
         'paymentOffset': '$safePayOff',
         'refundOffset': '$safeRefOff',
@@ -526,11 +530,13 @@ class LocalPaymentsRepository {
 
   Future<List<LocalPaymentHistoryEntry>> fetchTodayHistory({
     String? branchId,
+    String? terminalId,
     int limit = 150,
     String? lang,
   }) async {
     final bundle = await fetchTodayHistoryBundle(
       branchId: branchId,
+      terminalId: terminalId,
       limit: limit,
       lang: lang,
     );
