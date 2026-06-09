@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import 'package:dk_digitial_menu/widgets/robust_network_image.dart';
-import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/shared/shared.dart';
+
+import 'pos_product_image.dart';
 
 class PosMenuItemCard extends StatelessWidget {
   const PosMenuItemCard({
@@ -13,12 +13,11 @@ class PosMenuItemCard extends StatelessWidget {
   });
 
   final PosMenuItem item;
-  final VoidCallback onAdd;
+  final void Function(Rect sourceGlobalRect) onAdd;
   final VoidCallback onConfigure;
 
   @override
   Widget build(BuildContext context) {
-    final url = AppConfig.mediaUrl(item.imagePath);
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
 
@@ -26,7 +25,13 @@ class PosMenuItemCard extends StatelessWidget {
       margin: EdgeInsets.zero,
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: onAdd,
+        onTap: () {
+          final box = context.findRenderObject() as RenderBox?;
+          final rect = box != null && box.hasSize
+              ? (box.localToGlobal(Offset.zero) & box.size)
+              : Rect.zero;
+          onAdd(rect);
+        },
         child: DecoratedBox(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -46,66 +51,18 @@ class PosMenuItemCard extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    url.isEmpty
-                        ? DecoratedBox(
-                            decoration: BoxDecoration(
-                              gradient: LinearGradient(
-                                begin: Alignment.topLeft,
-                                end: Alignment.bottomRight,
-                                colors: [
-                                  scheme.surfaceContainerHighest,
-                                  scheme.surfaceContainerHigh,
-                                ],
-                              ),
-                            ),
-                            child: Icon(
-                              Icons.lunch_dining_rounded,
-                              size: 72,
-                              color: scheme.secondary,
-                            ),
-                          )
-                        : LayoutBuilder(
-                              builder: (context, constraints) {
-                                final dpr = MediaQuery.devicePixelRatioOf(context);
-                                final pxW =
-                                    (constraints.maxWidth * dpr).round().clamp(1, 4096);
-                                final pxH =
-                                    (constraints.maxHeight * dpr).round().clamp(1, 4096);
-                                // Одна сторона — пропорции как на сайте (object-fit: contain).
-                                final decodeSide = pxW > pxH ? pxW : pxH;
-                                return ColoredBox(
-                                  color: scheme.surfaceContainerHighest,
-                                  child: RobustNetworkImage(
-                                    url: url,
-                                    fit: BoxFit.contain,
-                                    alignment: Alignment.center,
-                                    cacheWidth: decodeSide,
-                                    filterQuality: FilterQuality.high,
-                                    errorWidget: DecoratedBox(
-                                      decoration: BoxDecoration(
-                                        gradient: LinearGradient(
-                                          begin: Alignment.topLeft,
-                                          end: Alignment.bottomRight,
-                                          colors: [
-                                            scheme.surfaceContainerHighest,
-                                            scheme.surfaceContainerHigh,
-                                          ],
-                                        ),
-                                      ),
-                                      child: Icon(
-                                        Icons.broken_image_outlined,
-                                        color: scheme.secondary,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
+                    PosProductImage(
+                      imagePath: item.imagePath,
+                      padding: const EdgeInsets.fromLTRB(10, 12, 10, 6),
+                    ),
                     Positioned(
                       right: 8,
                       top: 8,
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
                         decoration: BoxDecoration(
                           color: const Color(0xFFD92D20),
                           borderRadius: BorderRadius.circular(999),

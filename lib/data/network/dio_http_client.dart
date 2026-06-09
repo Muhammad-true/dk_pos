@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 
+import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/core/network/http_client.dart';
 
@@ -37,12 +38,18 @@ class DioHttpClient implements HttpClient {
   Future<HttpResponse> get(
     String path, {
     Map<String, String>? query,
+    Duration? receiveTimeout,
+    Duration? sendTimeout,
   }) async {
     try {
       final res = await _dio.get<dynamic>(
         path,
         queryParameters: query,
-        options: Options(headers: _headers()),
+        options: Options(
+          headers: _headers(),
+          receiveTimeout: receiveTimeout,
+          sendTimeout: sendTimeout,
+        ),
       );
       return HttpResponse(statusCode: res.statusCode ?? 0, body: res.data);
     } on DioException catch (e) {
@@ -54,12 +61,18 @@ class DioHttpClient implements HttpClient {
   Future<HttpResponse> post(
     String path, {
     Map<String, dynamic>? body,
+    Duration? receiveTimeout,
+    Duration? sendTimeout,
   }) async {
     try {
       final res = await _dio.post<dynamic>(
         path,
         data: body,
-        options: Options(headers: _headers()),
+        options: Options(
+          headers: _headers(),
+          receiveTimeout: receiveTimeout,
+          sendTimeout: sendTimeout,
+        ),
       );
       return HttpResponse(statusCode: res.statusCode ?? 0, body: res.data);
     } on DioException catch (e) {
@@ -71,12 +84,18 @@ class DioHttpClient implements HttpClient {
   Future<HttpResponse> patch(
     String path, {
     Map<String, dynamic>? body,
+    Duration? receiveTimeout,
+    Duration? sendTimeout,
   }) async {
     try {
       final res = await _dio.patch<dynamic>(
         path,
         data: body,
-        options: Options(headers: _headers()),
+        options: Options(
+          headers: _headers(),
+          receiveTimeout: receiveTimeout,
+          sendTimeout: sendTimeout,
+        ),
       );
       return HttpResponse(statusCode: res.statusCode ?? 0, body: res.data);
     } on DioException catch (e) {
@@ -140,6 +159,19 @@ class DioHttpClient implements HttpClient {
     final data = res?.data;
     if (data is Map && data['error'] != null) {
       msg = data['error'].toString();
+    } else {
+      switch (e.type) {
+        case DioExceptionType.connectionTimeout:
+        case DioExceptionType.sendTimeout:
+        case DioExceptionType.receiveTimeout:
+          msg = 'Сервер ${AppConfig.apiOrigin} не ответил вовремя';
+        case DioExceptionType.connectionError:
+          msg = 'Нет связи с сервером ${AppConfig.apiOrigin}';
+        case DioExceptionType.badCertificate:
+          msg = 'Ошибка SSL при подключении к ${AppConfig.apiOrigin}';
+        default:
+          break;
+      }
     }
     return ApiException(code, msg);
   }

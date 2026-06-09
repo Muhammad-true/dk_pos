@@ -11,6 +11,7 @@ import 'package:dk_pos/features/admin/data/menu_items_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/screen_page_item_row.dart';
 import 'package:dk_pos/features/admin/data/screens_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/upload_repository.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_tv_master_detail_layout.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/tv_video_bg_media_editor.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
 
@@ -58,6 +59,7 @@ class _Tv4SlidesEditorScreenState extends State<Tv4SlidesEditorScreen> {
   bool _savingOrder = false;
   String? _error;
   String _newPageType = 'tv4_welcome_pay';
+  int? _selectedPageId;
 
   @override
   void initState() {
@@ -101,6 +103,12 @@ class _Tv4SlidesEditorScreenState extends State<Tv4SlidesEditorScreen> {
         _screenConfig = nextScreenConfig;
         _detailByPageId.clear();
         _loading = false;
+        if (_selectedPageId == null && pages.isNotEmpty) {
+          _selectedPageId = pages.first.id;
+        } else if (_selectedPageId != null &&
+            !pages.any((p) => p.id == _selectedPageId)) {
+          _selectedPageId = pages.isNotEmpty ? pages.first.id : null;
+        }
       });
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -571,6 +579,69 @@ class _Tv4SlidesEditorScreenState extends State<Tv4SlidesEditorScreen> {
     );
   }
 
+  Widget _buildTv4PageEditor(AdminScreenPageRow p, AppLocalizations l10n) {
+    final isVideoBg = p.pageType.toLowerCase().trim() == 'tv4_video_bg';
+    if (isVideoBg) {
+      return _buildTv4VideoBgEditor(page: p, l10n: l10n);
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Text(
+        'Для этой страницы дополнительных настроек нет.',
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+    );
+  }
+
+  Widget _buildTv4ReorderableList(AppLocalizations l10n) {
+    return ReorderableListView.builder(
+      buildDefaultDragHandles: false,
+      padding: const EdgeInsets.only(bottom: 120),
+      itemCount: _pages.length,
+      onReorder: (oldIndex, newIndex) {
+        if (_savingOrder) return;
+        if (newIndex > oldIndex) newIndex -= 1;
+        final next = List<AdminScreenPageRow>.from(_pages);
+        final item = next.removeAt(oldIndex);
+        next.insert(newIndex, item);
+        setState(() => _pages = next);
+        _persistOrder(next);
+      },
+      itemBuilder: (context, index) {
+        final p = _pages[index];
+        return Card(
+          key: ValueKey<int>(p.id),
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: ExpansionTile(
+            onExpansionChanged: (open) {
+              if (open) _loadDetail(p.id);
+            },
+            title: Row(
+              children: [
+                ReorderableDragStartListener(
+                  index: index,
+                  child: const Icon(Icons.drag_handle_rounded),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '${_tv4PageTypeLabel(l10n, p.pageType)} · id=${p.id} · sort=${p.sortOrder}',
+                  ),
+                ),
+              ],
+            ),
+            trailing: IconButton(
+              tooltip: l10n.actionDelete,
+              icon: const Icon(Icons.delete_outline_rounded),
+              onPressed: _savingOrder ? null : () => _deletePage(p, l10n),
+            ),
+            children: [_buildTv4PageEditor(p, l10n)],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -594,85 +665,83 @@ class _Tv4SlidesEditorScreenState extends State<Tv4SlidesEditorScreen> {
                     ),
                   ),
                 )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                      child: Text(
-                        l10n.adminTv4SlidesEditorSubtitle,
-                        style: Theme.of(context).textTheme.bodyMedium,
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Text(
-                        l10n.adminTv4SlidesReorderHint,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Expanded(
-                      child: ReorderableListView.builder(
-                        buildDefaultDragHandles: false,
-                        padding: const EdgeInsets.only(bottom: 120),
-                        itemCount: _pages.length,
-                        onReorder: (oldIndex, newIndex) {
-                          if (_savingOrder) return;
-                          if (newIndex > oldIndex) newIndex -= 1;
-                          final next = List<AdminScreenPageRow>.from(_pages);
-                          final item = next.removeAt(oldIndex);
-                          next.insert(newIndex, item);
-                          setState(() => _pages = next);
-                          _persistOrder(next);
-                        },
-                        itemBuilder: (context, index) {
-                          final p = _pages[index];
-                          final isVideoBg = p.pageType.toLowerCase().trim() == 'tv4_video_bg';
-                          return Card(
-                            key: ValueKey<int>(p.id),
-                            margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                            child: ExpansionTile(
-                              onExpansionChanged: (open) {
-                                if (open) _loadDetail(p.id);
-                              },
-                              title: Row(
-                                children: [
-                                  ReorderableDragStartListener(
-                                    index: index,
-                                    child: const Icon(Icons.drag_handle_rounded),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      '${_tv4PageTypeLabel(l10n, p.pageType)} · id=${p.id} · sort=${p.sortOrder}',
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              trailing: IconButton(
-                                tooltip: l10n.actionDelete,
-                                icon: const Icon(Icons.delete_outline_rounded),
-                                onPressed: _savingOrder ? null : () => _deletePage(p, l10n),
-                              ),
-                              children: [
-                                if (isVideoBg)
-                                  _buildTv4VideoBgEditor(page: p, l10n: l10n)
-                                else
-                                  Padding(
-                                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                                    child: Text(
-                                      'Для этой страницы дополнительных настроек нет.',
-                                      style: Theme.of(context).textTheme.bodySmall,
-                                    ),
-                                  ),
-                              ],
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final wide = constraints.maxWidth >= 840;
+                    if (!wide) {
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                            child: Text(
+                              l10n.adminTv4SlidesEditorSubtitle,
+                              style: Theme.of(context).textTheme.bodyMedium,
                             ),
-                          );
-                        },
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: Text(
+                              l10n.adminTv4SlidesReorderHint,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Expanded(child: _buildTv4ReorderableList(l10n)),
+                        ],
+                      );
+                    }
+
+                    AdminScreenPageRow? selected;
+                    for (final p in _pages) {
+                      if (p.id == _selectedPageId) {
+                        selected = p;
+                        break;
+                      }
+                    }
+
+                    return AdminTvMasterDetailLayout(
+                      header: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            l10n.adminTv4SlidesEditorSubtitle,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            l10n.adminTv4SlidesReorderHint,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
+                      master: Column(
+                        children: [
+                          for (final p in _pages)
+                            AdminTvPageMasterTile(
+                              title: _tv4PageTypeLabel(l10n, p.pageType),
+                              subtitle: 'id=${p.id} · sort=${p.sortOrder}',
+                              selected: p.id == _selectedPageId,
+                              onTap: () {
+                                setState(() => _selectedPageId = p.id);
+                                _loadDetail(p.id);
+                              },
+                              onDelete: _savingOrder
+                                  ? null
+                                  : () => _deletePage(p, l10n),
+                            ),
+                        ],
+                      ),
+                      detail: selected == null
+                          ? null
+                          : Card(
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: _buildTv4PageEditor(selected, l10n),
+                              ),
+                            ),
+                    );
+                  },
                 ),
       floatingActionButton: _loading || _error != null
           ? null

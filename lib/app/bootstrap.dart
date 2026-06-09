@@ -9,6 +9,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:dk_digitial_menu/core/app_config.dart' as dm_app_config;
+import 'package:dk_digitial_menu/core/app_file_logger.dart';
 
 import 'package:dk_pos/app/app_update_info.dart';
 import 'package:dk_pos/core/cache/pos_local_cache_cleanup.dart';
@@ -19,6 +20,7 @@ import 'package:dk_pos/features/license/local_server_discovery.dart';
 import 'package:dk_pos/app/dk_pos_app.dart';
 import 'package:dk_pos/app/locale/locale_bloc.dart';
 import 'package:dk_pos/app/locale/locale_event.dart';
+import 'package:dk_pos/app/pos_cart_panel/pos_cart_panel_cubit.dart';
 import 'package:dk_pos/app/pos_catalog_grid/pos_catalog_grid_cubit.dart';
 import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
 import 'package:dk_pos/app/router/app_router.dart' show AppRouter;
@@ -82,10 +84,10 @@ String _formatDotenvError(Object e) =>
     'Не удалось загрузить assets/.env (нужен API_BASE_URL и др.). '
     'Переустановите сборку или добавьте файл в проект.\n\n$e';
 
-String _formatStartupError(Object e) {
-  final origin = AppConfig.apiOrigin;
+String _formatStartupError(Object e, {String? origin}) {
+  final target = origin ?? AppConfig.apiOrigin;
   if (e is TimeoutException) {
-    return 'Сервер не ответил вовремя ($origin). '
+    return 'Сервер не ответил вовремя ($target). '
         'Проверьте сеть и что backend запущен.\n\nТехнически: $e';
   }
   if (e is ApiException) {
@@ -98,7 +100,7 @@ String _formatStartupError(Object e) {
         lower.contains('failed host lookup') ||
         lower.contains('network is unreachable');
     if (isConn) {
-      return 'Нет связи с сервером $origin.\n'
+      return 'Нет связи с сервером $target.\n'
           'Убедитесь, что backend запущен, IP и порт верны, firewall не блокирует порт.\n\n'
           'Детали: $msg';
     }
@@ -110,18 +112,20 @@ String _formatStartupError(Object e) {
       lower.contains('failed host lookup') ||
       lower.contains('network is unreachable') ||
       lower.contains('socketexception')) {
-    return 'Нет связи с сервером $origin.\n'
+    return 'Нет связи с сервером $target.\n'
         'Проверьте сеть и адрес в assets/.env или введите IP ниже.\n\n'
         'Детали: $t';
   }
   if (lower.contains('timeout') || lower.contains('timed out')) {
-    return 'Превышено время ожидания ответа от $origin.\n\nДетали: $t';
+    return 'Превышено время ожидания ответа от $target.\n\nДетали: $t';
   }
   return t;
 }
 
 Future<void> bootstrap([List<String> args = const []]) async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AppFileLogger.instance.init(appTag: 'dk_pos');
+  installAppFileLoggerHooks(appTag: 'dk_pos');
   ErrorWidget.builder = (FlutterErrorDetails details) {
     return Material(
       color: Colors.white,
@@ -281,7 +285,6 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
   String? _licenseFormError;
   bool _licenseNeedsKey = false;
   AppUpdateInfo? _blockingUpdate;
-  bool _autoDiscoveryAttempted = false;
   final _updateCoordinator = UpdateCoordinator();
 
   /// Подпись под индикатором при старте (сначала лицензия через локальный API).
@@ -290,8 +293,14 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
   @override
   void initState() {
     super.initState();
-    _ipController.text = AppConfig.isLocalhostApi ? '' : AppConfig.apiOrigin;
+    unawaited(_primeIpField());
     _runStartupPipeline();
+  }
+
+  Future<void> _primeIpField() async {
+    final saved = await ServerEndpointStore.read();
+    if (!mounted) return;
+    _ipController.text = AppConfig.serverInputHintHost(savedOrigin: saved);
   }
 
   @override
@@ -302,7 +311,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
     super.dispose();
   }
 
-  Future<void> _runStartupPipeline() async {
+  Future<void> _runStartupPipeline({String? serverManualInput}) async {
     if (!mounted) return;
     setState(() {
       _loading = true;
@@ -315,7 +324,9 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       _blockingUpdate = null;
       _loadingSubtitle = 'Проверка лицензии на локальном сервере…';
     });
-    final lr = await GlobalLicenseBootstrap.evaluateBeforePos();
+    final lr = await GlobalLicenseBootstrap.evaluateBeforePos(
+      serverManualInput: serverManualInput,
+    );
     if (!mounted) return;
     if (lr is GlobalLicenseStartupNeedKey) {
       setState(() {
@@ -324,20 +335,10 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         _licenseNeedsKey = true;
       });
     } else if (lr is GlobalLicenseStartupBlocked) {
-      if (lr.suggestServerEndpoint && !_autoDiscoveryAttempted) {
-        _autoDiscoveryAttempted = true;
-        if (mounted) {
-          setState(() => _loadingSubtitle = 'Автопоиск сервера в локальной сети…');
-        }
-        final discovery = await LocalServerDiscovery.resolveAndApply();
-        if (!mounted) return;
-        if (discovery.ok) {
-          await _runStartupPipeline();
-          return;
-        }
-      }
       if (lr.suggestServerEndpoint) {
-        _ipController.text = AppConfig.apiOrigin;
+        final saved = await ServerEndpointStore.read();
+        if (!mounted) return;
+        _ipController.text = AppConfig.serverInputHintHost(savedOrigin: saved);
       }
       setState(() {
         _loading = false;
@@ -510,6 +511,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       final localeBloc = LocaleBloc(kv)..add(const LocaleStarted());
       final posThemeCubit = PosThemeCubit(kv);
       final posCatalogGridCubit = PosCatalogGridCubit(kv);
+      final posCartPanelCubit = PosCartPanelCubit(kv);
       final appRouter = AppRouter(authBloc: authBloc);
 
       if (!mounted) return;
@@ -550,6 +552,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           localeBloc: localeBloc,
           posThemeCubit: posThemeCubit,
           posCatalogGridCubit: posCatalogGridCubit,
+          posCartPanelCubit: posCartPanelCubit,
           authBloc: authBloc,
           appRouter: appRouter,
         );
@@ -558,9 +561,13 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       });
     } catch (e) {
       if (!mounted) return;
+      final manual = _ipController.text.trim();
+      final errorOrigin = manual.isNotEmpty
+          ? AppConfig.normalizeServerConnectionInput(manual)
+          : AppConfig.apiOrigin;
       setState(() {
         _payload = null;
-        _error = _formatStartupError(e);
+        _error = _formatStartupError(e, origin: errorOrigin);
         _loading = false;
         _loadingSubtitle = null;
       });
@@ -571,6 +578,37 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
     await http.get('api/health');
   }
 
+  Future<void> _runAutoDiscovery({bool fromLicenseScreen = false}) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+      _licenseFormError = null;
+      _loadingSubtitle = 'Автопоиск сервера в сети…';
+    });
+    final discovery = await LocalServerDiscovery.resolveAuto();
+    if (!mounted) return;
+    if (discovery.ok) {
+      await _runStartupPipeline();
+      return;
+    }
+    final saved = await ServerEndpointStore.read();
+    if (!mounted) return;
+    _ipController.text = AppConfig.serverInputHintHost(savedOrigin: saved);
+    setState(() {
+      _loading = false;
+      _loadingSubtitle = null;
+      if (fromLicenseScreen) {
+        _licenseNetworkError =
+            discovery.message ?? 'Автопоиск не нашёл сервер. Введите IP вручную.';
+        _licenseNetworkSuggestServer = true;
+        _licenseNeedsKey = false;
+      } else {
+        _error = discovery.message ?? 'Автопоиск не нашёл сервер. Введите IP вручную.';
+        _payload = null;
+      }
+    });
+  }
+
   Future<void> _saveServerIp({bool fromLicenseScreen = false}) async {
     final raw = _ipController.text.trim();
     if (raw.isEmpty) {
@@ -578,7 +616,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       return;
     }
 
-    final prevSaved = await ServerEndpointStore.read();
+    final attempted = AppConfig.normalizeServerConnectionInput(raw);
 
     setState(() {
       _error = null;
@@ -591,19 +629,17 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         throw StateError(result.message ?? 'Сервер недоступен');
       }
       await clearPosLocalCaches();
-      await _runStartupPipeline();
+      await _runStartupPipeline(serverManualInput: raw);
     } catch (e) {
-      if (prevSaved != null && prevSaved.isNotEmpty) {
-        AppConfig.setApiOriginOverride(prevSaved);
-        dm_app_config.AppConfig.setApiOriginOverride(prevSaved);
-      } else {
-        AppConfig.clearApiOriginOverride();
-        dm_app_config.AppConfig.clearApiOriginOverride();
-      }
+      AppConfig.setApiOriginOverride(attempted);
+      dm_app_config.AppConfig.setApiOriginOverride(attempted);
       if (!mounted) return;
       final msg = e is StateError
           ? e.message
-          : ServerEndpointApplier.formatConnectionError(e);
+          : ServerEndpointApplier.formatConnectionError(
+              e,
+              targetOrigin: attempted,
+            );
       if (fromLicenseScreen) {
         setState(() {
           _payload = null;
@@ -755,11 +791,11 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                                     RegExp(r'\s'),
                                   ),
                                 ],
-                                decoration: const InputDecoration(
+                                decoration: InputDecoration(
                                   labelText: 'IP сервера кассы',
-                                  hintText: '192.168.1.100',
-                                  prefixIcon: Icon(Icons.dns_rounded),
-                                  border: OutlineInputBorder(),
+                                  hintText: AppConfig.serverHostInputHint,
+                                  prefixIcon: const Icon(Icons.dns_rounded),
+                                  border: const OutlineInputBorder(),
                                 ),
                               ),
                               if (_licenseFormError != null) ...[
@@ -792,6 +828,13 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                                 ),
                               ),
                               const SizedBox(height: 8),
+                              OutlinedButton.icon(
+                                onPressed: _loading
+                                    ? null
+                                    : () => _runAutoDiscovery(fromLicenseScreen: true),
+                                icon: const Icon(Icons.travel_explore_rounded),
+                                label: const Text('Автопоиск в сети'),
+                              ),
                             ],
                             if (!_licenseNetworkSuggestServer)
                               const SizedBox(height: 16),
@@ -1077,7 +1120,8 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                             ),
                             const SizedBox(height: 10),
                             const Text(
-                              'IP компьютера, где запущен backend (не этот ПК). Пример: 192.168.1.100 или http://192.168.1.100:3000',
+                              'IP компьютера, где запущен backend (порт 3000). '
+                              'Можно нажать «Автопоиск в сети» — касса сама найдёт сервер.',
                               textAlign: TextAlign.center,
                             ),
                             const SizedBox(height: 18),
@@ -1085,15 +1129,20 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                               controller: _ipController,
                               keyboardType: TextInputType.url,
                               textInputAction: TextInputAction.done,
+                              onChanged: (_) {
+                                if (_error != null) {
+                                  setState(() => _error = null);
+                                }
+                              },
                               onSubmitted: (_) => _saveServerIp(),
                               inputFormatters: [
                                 FilteringTextInputFormatter.deny(RegExp(r'\s')),
                               ],
-                              decoration: const InputDecoration(
+                              decoration: InputDecoration(
                                 labelText: 'IP сервера',
-                                hintText: '192.168.1.100',
-                                prefixIcon: Icon(Icons.dns_rounded),
-                                border: OutlineInputBorder(),
+                                hintText: AppConfig.serverHostInputHint,
+                                prefixIcon: const Icon(Icons.dns_rounded),
+                                border: const OutlineInputBorder(),
                               ),
                             ),
                             if (_error != null) ...[
@@ -1127,6 +1176,12 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                                 ),
                               ),
                               child: const Text('Подключиться'),
+                            ),
+                            const SizedBox(height: 8),
+                            OutlinedButton.icon(
+                              onPressed: _loading ? null : _runAutoDiscovery,
+                              icon: const Icon(Icons.travel_explore_rounded),
+                              label: const Text('Автопоиск в сети'),
                             ),
                           ],
                         ),
@@ -1232,6 +1287,9 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           BlocProvider<PosCatalogGridCubit>.value(
             value: payload.posCatalogGridCubit,
           ),
+          BlocProvider<PosCartPanelCubit>.value(
+            value: payload.posCartPanelCubit,
+          ),
           BlocProvider<AuthBloc>.value(value: payload.authBloc),
           BlocProvider<CartBloc>(create: (_) => CartBloc(payload.cartRepo)),
         ],
@@ -1285,6 +1343,7 @@ class _BootPayload {
     required this.localeBloc,
     required this.posThemeCubit,
     required this.posCatalogGridCubit,
+    required this.posCartPanelCubit,
     required this.authBloc,
     required this.appRouter,
   });
@@ -1323,6 +1382,7 @@ class _BootPayload {
   final LocaleBloc localeBloc;
   final PosThemeCubit posThemeCubit;
   final PosCatalogGridCubit posCatalogGridCubit;
+  final PosCartPanelCubit posCartPanelCubit;
   final AuthBloc authBloc;
   final AppRouter appRouter;
 }

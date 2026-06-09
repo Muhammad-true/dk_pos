@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/formatting/money_format.dart';
+import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/features/admin/data/admin_reports_repository.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
@@ -302,47 +303,55 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
                   final report = _report!;
                   final topMethod = _topMethod(l10n, report);
                   final topDay = _topDay(report);
-                  return Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      SizedBox(
-                        width: 230,
-                        child: _SimpleMetricCard(
-                          title: 'Средний чек',
-                          value: formatSomoni(_avgCheck(report.summary)),
-                          tone: const Color(0xFF1565C0),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 230,
-                        child: _SimpleMetricCard(
-                          title: 'Кассиров в отчёте',
-                          value: '${report.cashierRevenue.byUser.length}',
-                          tone: const Color(0xFF00695C),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 230,
-                        child: _SimpleMetricCard(
-                          title: 'Топ-способ оплаты',
-                          value: topMethod == null
-                              ? '—'
-                              : '${topMethod.$1} · ${formatSomoni(topMethod.$3)}',
-                          tone: const Color(0xFF7B1FA2),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 230,
-                        child: _SimpleMetricCard(
-                          title: 'Пиковый день',
-                          value: topDay == null
-                              ? '—'
-                              : '${topDay.$1} · ${formatSomoni(topDay.$3)}',
-                          tone: const Color(0xFFEF6C00),
-                        ),
-                      ),
-                    ],
+                  return LayoutBuilder(
+                    builder: (context, constraints) {
+                      final cols = (constraints.maxWidth / 230).floor().clamp(1, 4);
+                      final tileWidth = cols <= 1
+                          ? constraints.maxWidth
+                          : (constraints.maxWidth - (cols - 1) * 10) / cols;
+                      return Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: [
+                          SizedBox(
+                            width: tileWidth,
+                            child: _SimpleMetricCard(
+                              title: 'Средний чек',
+                              value: formatSomoni(_avgCheck(report.summary)),
+                              tone: const Color(0xFF1565C0),
+                            ),
+                          ),
+                          SizedBox(
+                            width: tileWidth,
+                            child: _SimpleMetricCard(
+                              title: 'Кассиров в отчёте',
+                              value: '${report.cashierRevenue.byUser.length}',
+                              tone: const Color(0xFF00695C),
+                            ),
+                          ),
+                          SizedBox(
+                            width: tileWidth,
+                            child: _SimpleMetricCard(
+                              title: 'Топ-способ оплаты',
+                              value: topMethod == null
+                                  ? '—'
+                                  : '${topMethod.$1} · ${formatSomoni(topMethod.$3)}',
+                              tone: const Color(0xFF7B1FA2),
+                            ),
+                          ),
+                          SizedBox(
+                            width: tileWidth,
+                            child: _SimpleMetricCard(
+                              title: 'Пиковый день',
+                              value: topDay == null
+                                  ? '—'
+                                  : '${topDay.$1} · ${formatSomoni(topDay.$3)}',
+                              tone: const Color(0xFFEF6C00),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
                   );
                 },
               ),
@@ -460,48 +469,108 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
                 ),
                 const SizedBox(height: 10),
                 if (!_compactView)
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: DataTable(
-                      headingRowColor: WidgetStatePropertyAll(
-                        scheme.surfaceContainerHighest.withValues(alpha: 0.65),
-                      ),
-                      columns: [
-                        DataColumn(label: Text(l10n.adminReportsColumnTime)),
-                        DataColumn(label: Text(l10n.adminReportsColumnOrder)),
-                        DataColumn(label: Text(l10n.adminReportsColumnMethod)),
-                        DataColumn(
-                          label: Align(
-                            alignment: Alignment.centerRight,
-                            child: Text(l10n.adminReportsColumnAmount),
-                          ),
-                          numeric: true,
-                        ),
-                      ],
-                      rows: [
-                        for (final p in _report!.payments)
-                          DataRow(
-                            onSelectChanged: (_) => _showPaymentCheck(context, p),
-                            cells: [
-                              DataCell(
-                                Text(
-                                  p.createdAtIso.isNotEmpty
-                                      ? _formatPaymentTime(p.createdAtIso, dateTimeFmt)
-                                      : '—',
-                                ),
-                              ),
-                              DataCell(Text(p.orderNumber.isNotEmpty ? p.orderNumber : '—')),
-                              DataCell(Text(_methodPaymentDisplayLabel(l10n, p))),
-                              DataCell(
-                                Align(
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final payments = _report!.payments;
+                      if (constraints.maxWidth >= 900) {
+                        return SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: DataTable(
+                            headingRowColor: WidgetStatePropertyAll(
+                              scheme.surfaceContainerHighest.withValues(alpha: 0.65),
+                            ),
+                            columns: [
+                              DataColumn(label: Text(l10n.adminReportsColumnTime)),
+                              DataColumn(label: Text(l10n.adminReportsColumnOrder)),
+                              DataColumn(label: Text(l10n.adminReportsColumnMethod)),
+                              DataColumn(
+                                label: Align(
                                   alignment: Alignment.centerRight,
-                                  child: Text(formatSomoni(p.amount)),
+                                  child: Text(l10n.adminReportsColumnAmount),
                                 ),
+                                numeric: true,
                               ),
                             ],
+                            rows: [
+                              for (final p in payments)
+                                DataRow(
+                                  onSelectChanged: (_) => _showPaymentCheck(context, p),
+                                  cells: [
+                                    DataCell(
+                                      Text(
+                                        p.createdAtIso.isNotEmpty
+                                            ? _formatPaymentTime(p.createdAtIso, dateTimeFmt)
+                                            : '—',
+                                      ),
+                                    ),
+                                    DataCell(Text(p.orderNumber.isNotEmpty ? p.orderNumber : '—')),
+                                    DataCell(Text(_methodPaymentDisplayLabel(l10n, p))),
+                                    DataCell(
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: Text(formatSomoni(p.amount)),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                            ],
                           ),
-                      ],
-                    ),
+                        );
+                      }
+                      final cols = WindowLayout(width: constraints.maxWidth)
+                          .hubGridColumns(minCellWidth: 260);
+                      return GridView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: cols,
+                          mainAxisSpacing: 10,
+                          crossAxisSpacing: 10,
+                          childAspectRatio: 2.0,
+                        ),
+                        itemCount: payments.length,
+                        itemBuilder: (_, i) {
+                          final p = payments[i];
+                          return Material(
+                            color: scheme.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(12),
+                            child: InkWell(
+                              onTap: () => _showPaymentCheck(context, p),
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      p.orderNumber.isNotEmpty ? p.orderNumber : '—',
+                                      style: textTheme.titleSmall?.copyWith(
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      p.createdAtIso.isNotEmpty
+                                          ? _formatPaymentTime(p.createdAtIso, dateTimeFmt)
+                                          : '—',
+                                      style: textTheme.bodySmall,
+                                    ),
+                                    const Spacer(),
+                                    Text(
+                                      '${_methodPaymentDisplayLabel(l10n, p)} · ${formatSomoni(p.amount)}',
+                                      style: textTheme.labelLarge?.copyWith(
+                                        fontWeight: FontWeight.w800,
+                                        color: scheme.primary,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
                   )
                 else
                   Text(
@@ -648,31 +717,58 @@ class _AcceptedByTable extends StatelessWidget {
     if (rows.isEmpty) {
       return Text('—', style: Theme.of(context).textTheme.bodyLarge);
     }
-    final scheme = Theme.of(context).colorScheme;
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: DataTable(
-        headingRowColor: WidgetStatePropertyAll(
-          scheme.surfaceContainerHighest.withValues(alpha: 0.65),
-        ),
-        columns: const [
-          DataColumn(label: Text('Сотрудник')),
-          DataColumn(label: Text('Роль')),
-          DataColumn(label: Text('Оплат'), numeric: true),
-          DataColumn(label: Text('Сумма'), numeric: true),
-        ],
-        rows: [
-          for (final r in rows)
-            DataRow(
-              cells: [
-                DataCell(Text(r.username.isEmpty ? '—' : r.username)),
-                DataCell(Text(roleLabel(r.role))),
-                DataCell(Text('${r.paymentCount}')),
-                DataCell(Text(formatSomoni(r.totalAmount))),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 900) {
+          final scheme = Theme.of(context).colorScheme;
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              headingRowColor: WidgetStatePropertyAll(
+                scheme.surfaceContainerHighest.withValues(alpha: 0.65),
+              ),
+              columns: const [
+                DataColumn(label: Text('Сотрудник')),
+                DataColumn(label: Text('Роль')),
+                DataColumn(label: Text('Оплат'), numeric: true),
+                DataColumn(label: Text('Сумма'), numeric: true),
+              ],
+              rows: [
+                for (final r in rows)
+                  DataRow(
+                    cells: [
+                      DataCell(Text(r.username.isEmpty ? '—' : r.username)),
+                      DataCell(Text(roleLabel(r.role))),
+                      DataCell(Text('${r.paymentCount}')),
+                      DataCell(Text(formatSomoni(r.totalAmount))),
+                    ],
+                  ),
               ],
             ),
-        ],
-      ),
+          );
+        }
+        final cols = WindowLayout(width: constraints.maxWidth)
+            .hubGridColumns(minCellWidth: 240);
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: cols,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: cols >= 3 ? 1.7 : 1.9,
+          ),
+          itemCount: rows.length,
+          itemBuilder: (_, i) {
+            final r = rows[i];
+            return _SimpleMetricCard(
+              title: r.username.isEmpty ? '—' : r.username,
+              value: '${roleLabel(r.role)} · ${r.paymentCount} опл. · ${formatSomoni(r.totalAmount)}',
+              tone: const Color(0xFF00695C),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -687,29 +783,56 @@ class _KitchenTable extends StatelessWidget {
     if (rows.isEmpty) {
       return Text('—', style: Theme.of(context).textTheme.bodyLarge);
     }
-    final scheme = Theme.of(context).colorScheme;
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: DataTable(
-        headingRowColor: WidgetStatePropertyAll(
-          scheme.surfaceContainerHighest.withValues(alpha: 0.65),
-        ),
-        columns: const [
-          DataColumn(label: Text('Кухня')),
-          DataColumn(label: Text('Заказов'), numeric: true),
-          DataColumn(label: Text('Позиций'), numeric: true),
-        ],
-        rows: [
-          for (final r in rows)
-            DataRow(
-              cells: [
-                DataCell(Text(r.stationName.isEmpty ? 'Без кухни' : r.stationName)),
-                DataCell(Text('${r.ordersCount}')),
-                DataCell(Text('${r.itemsQuantity}')),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 900) {
+          final scheme = Theme.of(context).colorScheme;
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              headingRowColor: WidgetStatePropertyAll(
+                scheme.surfaceContainerHighest.withValues(alpha: 0.65),
+              ),
+              columns: const [
+                DataColumn(label: Text('Кухня')),
+                DataColumn(label: Text('Заказов'), numeric: true),
+                DataColumn(label: Text('Позиций'), numeric: true),
+              ],
+              rows: [
+                for (final r in rows)
+                  DataRow(
+                    cells: [
+                      DataCell(Text(r.stationName.isEmpty ? 'Без кухни' : r.stationName)),
+                      DataCell(Text('${r.ordersCount}')),
+                      DataCell(Text('${r.itemsQuantity}')),
+                    ],
+                  ),
               ],
             ),
-        ],
-      ),
+          );
+        }
+        final cols = WindowLayout(width: constraints.maxWidth)
+            .hubGridColumns(minCellWidth: 220);
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: cols,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 1.8,
+          ),
+          itemCount: rows.length,
+          itemBuilder: (_, i) {
+            final r = rows[i];
+            return _SimpleMetricCard(
+              title: r.stationName.isEmpty ? 'Без кухни' : r.stationName,
+              value: '${r.ordersCount} зак. · ${r.itemsQuantity} поз.',
+              tone: const Color(0xFFEF6C00),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -774,28 +897,55 @@ class _BreakdownTable extends StatelessWidget {
     if (rows.isEmpty) {
       return Text('—', style: Theme.of(context).textTheme.bodyLarge);
     }
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: DataTable(
-        headingRowColor: WidgetStatePropertyAll(
-          scheme.surfaceContainerHighest.withValues(alpha: 0.65),
-        ),
-        columns: [
-          DataColumn(label: Text(firstColumnLabel)),
-          DataColumn(label: Text(l10n.adminReportsColumnCountShort), numeric: true),
-          DataColumn(label: Text(l10n.adminReportsColumnAmount), numeric: true),
-        ],
-        rows: [
-          for (final r in rows)
-            DataRow(
-              cells: [
-                DataCell(Text(r.$1)),
-                DataCell(Text('${r.$2}')),
-                DataCell(Text(formatSomoni(r.$3))),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 900) {
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              headingRowColor: WidgetStatePropertyAll(
+                scheme.surfaceContainerHighest.withValues(alpha: 0.65),
+              ),
+              columns: [
+                DataColumn(label: Text(firstColumnLabel)),
+                DataColumn(label: Text(l10n.adminReportsColumnCountShort), numeric: true),
+                DataColumn(label: Text(l10n.adminReportsColumnAmount), numeric: true),
+              ],
+              rows: [
+                for (final r in rows)
+                  DataRow(
+                    cells: [
+                      DataCell(Text(r.$1)),
+                      DataCell(Text('${r.$2}')),
+                      DataCell(Text(formatSomoni(r.$3))),
+                    ],
+                  ),
               ],
             ),
-        ],
-      ),
+          );
+        }
+        final cols = WindowLayout(width: constraints.maxWidth)
+            .hubGridColumns(minCellWidth: 220);
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: cols,
+            mainAxisSpacing: 10,
+            crossAxisSpacing: 10,
+            childAspectRatio: 1.75,
+          ),
+          itemCount: rows.length,
+          itemBuilder: (_, i) {
+            final r = rows[i];
+            return _SimpleMetricCard(
+              title: r.$1,
+              value: '${r.$2} · ${formatSomoni(r.$3)}',
+              tone: scheme.primary,
+            );
+          },
+        );
+      },
     );
   }
 }

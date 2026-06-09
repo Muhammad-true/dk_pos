@@ -13,6 +13,8 @@ import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
 import 'package:dk_pos/features/cart/bloc/cart_event.dart';
 import 'package:dk_pos/features/cart/bloc/cart_state.dart';
+import 'package:dk_pos/features/menu/bloc/menu_bloc.dart';
+import 'package:dk_pos/features/menu/bloc/menu_event.dart';
 import 'package:dk_pos/features/cart/domain/cart_payment_adjustment.dart';
 import 'package:dk_pos/features/hardware/data/local_hardware_repository.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
@@ -21,10 +23,115 @@ import 'package:dk_pos/features/payments/data/local_payment_methods_repository.d
 import 'package:dk_pos/features/loyalty/data/local_loyalty_repository.dart';
 import 'package:dk_pos/features/pos/bloc/pos_hall_orders_cubit.dart';
 import 'package:dk_pos/features/pos/data/open_table_bill_from_server.dart';
+import 'package:dk_digitial_menu/core/app_file_logger.dart';
 import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
 import 'package:dk_pos/features/cash/presentation/pos_cash_flow.dart';
+import 'package:dk_pos/features/pos/presentation/customer_display_window_service.dart';
+import 'package:dk_pos/features/pos/presentation/widgets/open_table_bill_cart_hydrate.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_online_order_edit_flow.dart';
 import 'package:flutter/services.dart';
+
+/// Блокирует повторное оформление, пока идёт синхронизация с сервером.
+class PosCheckoutFlowLock {
+  PosCheckoutFlowLock._();
+
+  static final ValueNotifier<bool> inProgress = ValueNotifier(false);
+
+  /// Ненулевое значение — показать полноэкранный индикатор с этим текстом.
+  static final ValueNotifier<String?> overlayMessage = ValueNotifier(null);
+
+  static void beginProcessing() {
+    inProgress.value = true;
+  }
+
+  static void showOverlay(String message) {
+    overlayMessage.value = message;
+  }
+
+  static void updateOverlay(String message) {
+    if (overlayMessage.value != null) {
+      overlayMessage.value = message;
+    }
+  }
+
+  static void end() {
+    inProgress.value = false;
+    overlayMessage.value = null;
+  }
+}
+
+/// Полноэкранный индикатор оформления (виден и после закрытия листа корзины на телефоне).
+class PosCheckoutProgressOverlay extends StatelessWidget {
+  const PosCheckoutProgressOverlay({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        child,
+        ValueListenableBuilder<String?>(
+          valueListenable: PosCheckoutFlowLock.overlayMessage,
+          builder: (context, message, _) {
+            if (message == null || message.isEmpty) {
+              return const SizedBox.shrink();
+            }
+            final scheme = Theme.of(context).colorScheme;
+            final compact = MediaQuery.sizeOf(context).width < 600;
+            return Positioned.fill(
+              child: AbsorbPointer(
+                child: ColoredBox(
+                  color: Colors.black54,
+                  child: Center(
+                    child: Material(
+                      color: scheme.surface,
+                      elevation: 8,
+                      borderRadius: BorderRadius.circular(compact ? 20 : 16),
+                      child: Padding(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: compact ? 28 : 20,
+                          vertical: compact ? 28 : 16,
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            SizedBox(
+                              width: compact ? 36 : 28,
+                              height: compact ? 36 : 28,
+                              child: CircularProgressIndicator(
+                                strokeWidth: compact ? 3.2 : 2.4,
+                                color: scheme.primary,
+                              ),
+                            ),
+                            SizedBox(height: compact ? 16 : 12),
+                            ConstrainedBox(
+                              constraints: BoxConstraints(
+                                maxWidth: compact ? 280 : 320,
+                              ),
+                              child: Text(
+                                message,
+                                textAlign: TextAlign.center,
+                                style: (compact
+                                        ? Theme.of(context).textTheme.titleMedium
+                                        : Theme.of(context).textTheme.titleSmall)
+                                    ?.copyWith(fontWeight: FontWeight.w700),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
 
 /// Тип заказа в корзине POS (совпадает с выбором в панели корзины).
 enum PosCheckoutOrderType { takeAway, dineIn, delivery }
@@ -78,8 +185,8 @@ Future<void> refreshOpenTableBillsIntoHall(BuildContext context) async {
     if (!context.mounted) return;
     final bills = dtos.map(posTableBillFromServerDto).toList();
     context.read<PosHallOrdersCubit>().mergeHydrateFromServer(bills);
-  } catch (_) {
-    // сеть — счёт на сервере уже обновлён, список подтянется по таймеру
+  } catch (e, st) {
+    AppFileLogger.instance.error('hall_orders', 'refreshOpenTableBills failed', e, st);
   }
 }
 
@@ -93,9 +200,67 @@ Future<void> runPosCheckoutFlow(
   required CartState cart,
   bool waiterMode = false,
   PosTableBill? appendToOpenBill,
+  VoidCallback? closeCartSheet,
 }) async {
   if (cart.isEmpty || !context.mounted) return;
-  final user = context.read<AuthBloc>().state.user;
+  if (PosCheckoutFlowLock.inProgress.value) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Заказ уже оформляется — подождите'),
+      ),
+    );
+    return;
+  }
+  PosCheckoutFlowLock.beginProcessing();
+  try {
+    await _runPosCheckoutFlowBody(
+      context,
+      orderType: orderType,
+      cart: cart,
+      waiterMode: waiterMode,
+      appendToOpenBill: appendToOpenBill,
+      closeCartSheet: closeCartSheet,
+    );
+  } finally {
+    PosCheckoutFlowLock.end();
+  }
+}
+
+void _closeCartSheetIfNeeded(VoidCallback? closeCartSheet) {
+  closeCartSheet?.call();
+}
+
+/// Вернуть экран клиента в меню, если оформление прервано (стол, оплата и т.д.).
+void _restoreCustomerDisplayMenuIfCheckoutCancelled(
+  BuildContext context, {
+  required CustomerDisplayWindowService customerDisplay,
+}) {
+  if (!customerDisplay.isOpen || !context.mounted) return;
+  unawaited(
+    customerDisplay.returnToMenuMode(
+      menu: context.read<MenuBloc>().state,
+      cart: context.read<CartBloc>().state,
+    ),
+  );
+}
+
+Future<void> _runPosCheckoutFlowBody(
+  BuildContext context, {
+  required PosCheckoutOrderType orderType,
+  required CartState cart,
+  bool waiterMode = false,
+  PosTableBill? appendToOpenBill,
+  VoidCallback? closeCartSheet,
+}) async {
+  if (!context.mounted) return;
+  final customerDisplay = CustomerDisplayWindowService.instance;
+  var checkoutCommitted = false;
+
+  try {
+    if (customerDisplay.isOpen) {
+      unawaited(customerDisplay.showPaymentMode(cart));
+    }
+    final user = context.read<AuthBloc>().state.user;
   final role = (user?.role ?? '').trim().toLowerCase();
   if (role == 'cashier' || role == 'admin') {
     final shiftOpen = await ensureCashShiftOpen(context);
@@ -146,8 +311,7 @@ Future<void> runPosCheckoutFlow(
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
                 content: Text(
-                  'Для заказа «на месте» выберите стол в диалоге '
-                  '(или нажмите «Оформить заказ» ещё раз).',
+                  'Для заказа «на месте» нужно выбрать стол в диалоге.',
                 ),
               ),
             );
@@ -156,6 +320,9 @@ Future<void> runPosCheckoutFlow(
         }
         tableNumber = outcome.number;
         tableZone = outcome.zone;
+        if (!context.mounted) return;
+        _closeCartSheetIfNeeded(closeCartSheet);
+        PosCheckoutFlowLock.showOverlay('Отправляем заказ на кухню…');
       } else {
         final outcome = await showPosTablePickDialog(
           context,
@@ -176,6 +343,15 @@ Future<void> runPosCheckoutFlow(
     if (!context.mounted) return;
     if (phone == null) return;
     deliveryPhone = phone;
+  }
+
+  if (PosCheckoutFlowLock.overlayMessage.value == null) {
+    _closeCartSheetIfNeeded(closeCartSheet);
+    PosCheckoutFlowLock.showOverlay(
+      effectiveWaiterMode
+          ? 'Отправляем заказ на кухню…'
+          : 'Сохраняем заказ…',
+    );
   }
 
   bool payNow = false;
@@ -233,7 +409,24 @@ Future<void> runPosCheckoutFlow(
   payableTotal = paymentDiscount?.payableAmount ?? cartLive.total;
 
   PosTableBill? openBillBefore;
-  if (append == null && tableNumber != null && tableZone != null) {
+  PosTableBill? resolvedAppendBill;
+  if (append != null) {
+    PosCheckoutFlowLock.updateOverlay('Проверяем счёт…');
+    await refreshOpenTableBillsIntoHall(context);
+    if (!context.mounted) return;
+    resolvedAppendBill = hall.findOpenBillByOrderId(append.id);
+    if (resolvedAppendBill == null &&
+        append.tableNumber != null &&
+        append.tableZone != null) {
+      resolvedAppendBill = hall.findOpenBillForTable(
+        number: append.tableNumber!,
+        zone: append.tableZone!,
+      );
+    }
+  } else if (tableNumber != null && tableZone != null) {
+    PosCheckoutFlowLock.updateOverlay('Проверяем стол…');
+    await refreshOpenTableBillsIntoHall(context);
+    if (!context.mounted) return;
     openBillBefore = hall.findOpenBillForTable(
       number: tableNumber,
       zone: tableZone,
@@ -242,45 +435,34 @@ Future<void> runPosCheckoutFlow(
 
   late final String registeredId;
   if (append != null) {
-    registeredId = append.id;
+    registeredId = resolvedAppendBill?.id ?? append.id;
   } else {
-    final lines = cartLive.sortedLines
-        .map(
-          (l) => PosTableBillLine(
-            name: l.item.name,
-            quantity: l.quantity,
-            lineTotal: l.lineTotal,
-          ),
-        )
-        .toList(growable: false);
-    final preSyncDeliveryPhone =
-        TjPhoneDialLockedFormatter.ensureStored(deliveryPhone ?? '').trim();
-    final billIsDelivery = effectiveOrderType == PosCheckoutOrderType.delivery;
-    final bill = PosTableBill(
-      id: 'tb-${DateTime.now().millisecondsSinceEpoch}',
-      lines: lines,
-      total: cartLive.total,
-      orderTypeLabel: effectiveOrderTypeLabel,
-      tableNumber: tableNumber,
-      tableZone: tableZone,
-      createdAt: DateTime.now(),
-      isPaid: false,
-      paymentMethod: null,
-      isDelivery: billIsDelivery,
-      customerPhone:
-          preSyncDeliveryPhone.isNotEmpty ? preSyncDeliveryPhone : null,
-      tableLabel: billIsDelivery && preSyncDeliveryPhone.isNotEmpty
-          ? 'Доставка · тел. получателя: $preSyncDeliveryPhone'
-          : '',
-    );
-    final registered = hall.registerOrMergeBill(bill);
-    registeredId = registered.id;
+    registeredId =
+        openBillBefore?.id ?? 'tb-${DateTime.now().millisecondsSinceEpoch}';
   }
 
-  final appendBaselineQtyByLineKey = append != null
+  Map<String, int>? appendBaselineQtyByLineKey = append != null
       ? Map<String, int>.from(hall.state.openBillAppendBaselineQtyByLineKey)
       : null;
+  if (append != null && (appendBaselineQtyByLineKey?.isEmpty ?? true)) {
+    final billForBaseline = resolvedAppendBill ?? append;
+    if (billForBaseline.lines.isNotEmpty) {
+      final cartKeys = cartLive.sortedLines.map((l) => l.lineKey).toSet();
+      appendBaselineQtyByLineKey = intersectBillBaselineWithCart(
+        billBaseline: baselineQtyByLineKeyFromBillLines(billForBaseline.lines),
+        cartLineKeys: cartKeys,
+      );
+      if (appendBaselineQtyByLineKey.isEmpty) {
+        appendBaselineQtyByLineKey = null;
+      }
+    }
+  }
 
+  PosCheckoutFlowLock.updateOverlay(
+    effectiveWaiterMode
+        ? 'Отправляем заказ на кухню…'
+        : 'Сохраняем заказ…',
+  );
   final orderSync = await _syncLocalOrder(
     context,
     orderId: registeredId,
@@ -299,6 +481,64 @@ Future<void> runPosCheckoutFlow(
     );
     return;
   }
+
+  void clearCartAfterSuccessfulOrder() {
+    checkoutCommitted = true;
+    cartBloc.add(const CartCleared());
+    if (customerDisplay.isOpen) {
+      final menuBloc = context.read<MenuBloc>();
+      menuBloc.add(const MenuCatalogPathSet([]));
+      unawaited(
+        customerDisplay.returnToMenuMode(
+          menu: menuBloc.state,
+          cart: const CartState(),
+        ),
+      );
+    }
+    if (append != null) {
+      hall.clearOpenBillAppend();
+    }
+  }
+
+  if (!orderSync.orderCancelledEmpty && append == null) {
+    final lines = cartLive.sortedLines
+        .map(
+          (l) => PosTableBillLine(
+            name: l.item.name,
+            quantity: l.quantity,
+            lineTotal: l.lineTotal,
+            menuItemId: l.item.id,
+            lineKey: l.lineKey,
+            unitPrice: l.item.price,
+          ),
+        )
+        .toList(growable: false);
+    final preSyncDeliveryPhone =
+        TjPhoneDialLockedFormatter.ensureStored(deliveryPhone ?? '').trim();
+    final billIsDelivery = effectiveOrderType == PosCheckoutOrderType.delivery;
+    hall.registerOrMergeBill(
+      PosTableBill(
+        id: orderSync.orderId ?? registeredId,
+        lines: lines,
+        total: cartLive.total,
+        orderTypeLabel: effectiveOrderTypeLabel,
+        orderNumber: orderSync.orderNumber?.trim() ?? '',
+        tableNumber: tableNumber,
+        tableZone: tableZone,
+        createdAt: DateTime.now(),
+        isPaid: false,
+        paymentMethod: null,
+        isDelivery: billIsDelivery,
+        customerPhone:
+            preSyncDeliveryPhone.isNotEmpty ? preSyncDeliveryPhone : null,
+        tableLabel: billIsDelivery && preSyncDeliveryPhone.isNotEmpty
+            ? 'Доставка · тел. получателя: $preSyncDeliveryPhone'
+            : '',
+      ),
+    );
+  }
+
+  clearCartAfterSuccessfulOrder();
 
   final normalizedDeliveryPhone =
       TjPhoneDialLockedFormatter.ensureStored(deliveryPhone ?? '').trim();
@@ -327,10 +567,6 @@ Future<void> runPosCheckoutFlow(
   }
 
   if (orderSync.orderCancelledEmpty) {
-    cartBloc.add(const CartCleared());
-    if (append != null) {
-      hall.clearOpenBillAppend();
-    }
     await refreshOpenTableBillsIntoHall(context);
     if (!context.mounted) return;
     final numLabel = orderSync.orderNumber?.trim() ?? '';
@@ -391,10 +627,11 @@ Future<void> runPosCheckoutFlow(
   final consentMeta = hall.state.openBillAppendConsentMeta;
   final appendTotal = cartLive.total;
 
-  cartBloc.add(const CartCleared());
   if (append != null) {
-    hall.clearOpenBillAppend();
-    await refreshOpenTableBillsIntoHall(context);
+    hall.replaceOpenBillFromCart(
+      template: resolvedAppendBill ?? append,
+      cart: cartLive,
+    );
   }
 
   if (!context.mounted) return;
@@ -456,6 +693,14 @@ Future<void> runPosCheckoutFlow(
       errorMessage: paymentResult.hardwareErrorMessage,
     );
   }
+  } finally {
+    if (!checkoutCommitted) {
+      _restoreCustomerDisplayMenuIfCheckoutCancelled(
+        context,
+        customerDisplay: customerDisplay,
+      );
+    }
+  }
 }
 
 String _tablePlaceSnippet(
@@ -486,6 +731,7 @@ final class PosTablePickChosen extends PosTablePickOutcome {
 final class PosTablePickSkipTable extends PosTablePickOutcome {}
 
 /// Диалог выбора столика (зал / веранда / без стола / отмена).
+/// На телефоне — нижний лист на весь экран, на планшете/ПК — диалог.
 Future<PosTablePickOutcome?> showPosTablePickDialog(
   BuildContext context, {
   bool allowSkipTable = true,
@@ -493,22 +739,48 @@ Future<PosTablePickOutcome?> showPosTablePickDialog(
   // Overlay диалога не под [PosScreen], поэтому cubit нужно пробросить явно
   // (как в [showOpenTableBillsDialog]).
   final hallOrders = context.read<PosHallOrdersCubit>();
+  final phoneLayout = MediaQuery.sizeOf(context).width < 600;
+  final child = BlocProvider.value(
+    value: hallOrders,
+    child: _PickTableDialog(
+      allowSkipTable: allowSkipTable,
+      phoneLayout: phoneLayout,
+    ),
+  );
+  if (phoneLayout) {
+    return showModalBottomSheet<PosTablePickOutcome?>(
+      context: context,
+      useRootNavigator: true,
+      isScrollControlled: true,
+      showDragHandle: true,
+      isDismissible: allowSkipTable,
+      enableDrag: allowSkipTable,
+      backgroundColor: Colors.transparent,
+      builder: (_) => Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: child,
+      ),
+    );
+  }
   return showDialog<PosTablePickOutcome?>(
     context: context,
     useRootNavigator: true,
     barrierDismissible: allowSkipTable,
     barrierColor: Colors.black54,
-    builder: (_) => BlocProvider.value(
-      value: hallOrders,
-      child: _PickTableDialog(allowSkipTable: allowSkipTable),
-    ),
+    builder: (_) => child,
   );
 }
 
 class _PickTableDialog extends StatefulWidget {
-  const _PickTableDialog({required this.allowSkipTable});
+  const _PickTableDialog({
+    required this.allowSkipTable,
+    this.phoneLayout = false,
+  });
 
   final bool allowSkipTable;
+  final bool phoneLayout;
 
   static int get hallTableCount => AppConfig.posHallTableCount;
   static int get verandaTableCount => AppConfig.posVerandaTableCount;
@@ -532,15 +804,10 @@ class _PickTableDialogState extends State<_PickTableDialog> {
     final scheme = theme.colorScheme;
     final screen = MediaQuery.sizeOf(context);
 
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
-      backgroundColor: scheme.surfaceContainerLow,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-      clipBehavior: Clip.antiAlias,
-      child: ConstrainedBox(
+    final body = ConstrainedBox(
         constraints: BoxConstraints(
           maxWidth: 920,
-          maxHeight: screen.height * 0.92,
+          maxHeight: widget.phoneLayout ? screen.height * 0.94 : screen.height * 0.92,
           minHeight: 260,
         ),
         child: Column(
@@ -616,7 +883,9 @@ class _PickTableDialogState extends State<_PickTableDialog> {
                           ? 7
                           : w >= 380
                           ? 6
-                          : 5;
+                          : w >= 320
+                          ? 5
+                          : 4;
                       return BlocBuilder<
                         PosHallOrdersCubit,
                         PosHallOrdersState
@@ -704,7 +973,21 @@ class _PickTableDialogState extends State<_PickTableDialog> {
             ),
           ],
         ),
-      ),
+      );
+    if (widget.phoneLayout) {
+      return Material(
+        color: scheme.surfaceContainerLow,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+        clipBehavior: Clip.antiAlias,
+        child: body,
+      );
+    }
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+      backgroundColor: scheme.surfaceContainerLow,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      clipBehavior: Clip.antiAlias,
+      child: body,
     );
   }
 }
@@ -796,7 +1079,7 @@ class _ZoneTableGrid extends StatelessWidget {
                 crossAxisCount: crossAxisCount,
                 mainAxisSpacing: 6,
                 crossAxisSpacing: 6,
-                childAspectRatio: 1.38,
+                childAspectRatio: crossAxisCount <= 5 ? 1.15 : 1.38,
               ),
               itemCount: tableCount,
               itemBuilder: (context, i) {
@@ -1127,6 +1410,7 @@ Future<void> configureCartPaymentDiscount(
       ),
     ),
   );
+  scheduleCustomerDisplayCartSync(context);
   if (!context.mounted) return;
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
@@ -2872,6 +3156,53 @@ Future<_PaymentAttemptResult> _runLocalPayment(
   }
 }
 
+_BlockingPaymentOverlayHandle? _showBlockingCheckoutOverlay(
+  BuildContext context, {
+  required String message,
+}) {
+  final overlay = Overlay.maybeOf(context, rootOverlay: true);
+  if (overlay == null) return null;
+  final entry = OverlayEntry(
+    builder: (ctx) {
+      final scheme = Theme.of(ctx).colorScheme;
+      return Stack(
+        children: [
+          const ModalBarrier(dismissible: false, color: Colors.black54),
+          Center(
+            child: Material(
+              color: scheme.surface,
+              borderRadius: BorderRadius.circular(16),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 16,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2.4),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      message,
+                      style: Theme.of(ctx).textTheme.titleSmall,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    },
+  );
+  overlay.insert(entry);
+  return _BlockingPaymentOverlayHandle(entry);
+}
+
 _BlockingPaymentOverlayHandle? _showBlockingPaymentOverlay(
   BuildContext context, {
   bool skipReceipt = false,
@@ -3133,6 +3464,8 @@ Future<_OrderSyncResult> _syncLocalOrder(
       );
       return _OrderSyncResult(
         synced: true,
+        orderId: result.orderId,
+        orderCreated: result.created,
         message: result.created
             ? 'Локальный заказ создан: ${result.number}'
             : 'Локальный заказ обновлен: ${result.number}',
@@ -3312,10 +3645,14 @@ class _OrderSyncResult {
     this.message,
     this.orderCancelledEmpty = false,
     this.orderNumber,
+    this.orderId,
+    this.orderCreated = false,
   });
 
   final bool synced;
   final String? message;
   final bool orderCancelledEmpty;
   final String? orderNumber;
+  final String? orderId;
+  final bool orderCreated;
 }

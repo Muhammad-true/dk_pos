@@ -5,11 +5,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'package:dk_pos/app/pos_theme/pos_theme_toggle_button.dart';
+import 'package:dk_pos/core/config/app_config.dart';
+import 'package:dk_pos/core/error/network_error_message.dart';
+import 'package:dk_pos/core/logging/pos_perf_helpers.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
+import 'package:dk_pos/features/orders/data/local_orders_realtime.dart';
 import 'package:dk_pos/features/kitchen_board/presentation/widgets/kitchen_order_number_badge.dart';
 import 'package:dk_pos/features/orders/presentation/widgets/pos_queue_section_label.dart';
+import 'package:dk_pos/features/orders/presentation/pos_queue_layout.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
 import 'package:dk_pos/theme/pos_workspace_theme.dart';
+import 'package:dk_digitial_menu/core/app_file_logger.dart';
 
 const _kTonePreparing = Color(0xFFE4002B);
 const _kToneReady = Color(0xFF24B47E);
@@ -47,22 +53,99 @@ class _QueueBoardScreenState extends State<QueueBoardScreen> {
   bool _loading = true;
   String? _error;
   Timer? _timer;
+  Timer? _reloadDebounce;
+  Timer? _realtimeReconnectTimer;
+  final LocalOrdersRealtime _realtime = LocalOrdersRealtime();
+  StreamSubscription<LocalOrdersRealtimeEvent>? _realtimeSub;
+  bool _realtimeConnected = false;
+  bool _reloadInFlight = false;
+
+  String get _branchId => AppConfig.storeBranchId;
 
   @override
   void initState() {
     super.initState();
     _reload();
-    _timer = Timer.periodic(const Duration(seconds: 5), (_) => _reload(silent: true));
+    _connectRealtime();
+    _timer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (!_realtimeConnected) _scheduleReload(silent: true);
+    });
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _reloadDebounce?.cancel();
+    _realtimeReconnectTimer?.cancel();
+    _realtimeSub?.cancel();
+    unawaited(_realtime.dispose());
     super.dispose();
   }
 
+  void _scheduleReload({bool silent = true, bool immediate = false}) {
+    _reloadDebounce?.cancel();
+    if (immediate) {
+      if (mounted) unawaited(_reload(silent: silent));
+      return;
+    }
+    _reloadDebounce = Timer(const Duration(milliseconds: 60), () {
+      if (mounted) unawaited(_reload(silent: silent));
+    });
+  }
+
+  Future<void> _connectRealtime() async {
+    _realtimeReconnectTimer?.cancel();
+    await _realtimeSub?.cancel();
+    _realtimeSub = null;
+    try {
+      await _realtime.connect(branchId: _branchId, clientType: 'kitchen');
+    } catch (e, st) {
+      AppFileLogger.instance.error('queue_board_ws', 'connect failed', e, st);
+      _scheduleRealtimeReconnect();
+      return;
+    }
+    _realtimeSub = _realtime.events.listen((event) async {
+      if (!mounted) return;
+      final type = event.type;
+      if (type == 'hello') {
+        setState(() => _realtimeConnected = true);
+        return;
+      }
+      if (type == 'socket.done') {
+        setState(() => _realtimeConnected = false);
+        _scheduleRealtimeReconnect();
+        return;
+      }
+      if (type == 'pong') return;
+      if (type == 'order.created' ||
+          type == 'order.updated' ||
+          type == 'order.status_changed' ||
+          type == 'payment.accepted' ||
+          type == 'payment.refunded' ||
+          type == 'kitchen.queue_changed') {
+        _scheduleReload(
+          silent: true,
+          immediate: type == 'order.created',
+        );
+      }
+    }, onError: (Object e, StackTrace st) {
+      AppFileLogger.instance.error('queue_board_ws', 'stream error', e, st);
+      if (mounted) setState(() => _realtimeConnected = false);
+      _scheduleRealtimeReconnect();
+    });
+  }
+
+  void _scheduleRealtimeReconnect() {
+    _realtimeReconnectTimer?.cancel();
+    _realtimeReconnectTimer = Timer(const Duration(seconds: 2), () {
+      if (mounted) unawaited(_connectRealtime());
+    });
+  }
+
   Future<void> _reload({bool silent = false}) async {
-    if (!mounted) return;
+    if (!mounted || _reloadInFlight) return;
+    _reloadInFlight = true;
+    final started = DateTime.now();
     if (!silent) {
       setState(() {
         _loading = true;
@@ -72,17 +155,29 @@ class _QueueBoardScreenState extends State<QueueBoardScreen> {
     try {
       final snap = await context.read<LocalOrdersRepository>().fetchKitchenQueueDisplay();
       if (!mounted) return;
-      setState(() {
-        _snapshot = snap;
+      if (kitchenSnapshotChanged(_snapshot, snap) || !silent) {
+        setState(() {
+          _snapshot = snap;
+          _loading = false;
+          _error = null;
+        });
+      } else {
         _loading = false;
-        _error = null;
-      });
+      }
+      AppFileLogger.instance.slow(
+        'queue_board',
+        'reload preparing=${snap.preparing.length} ready=${snap.readyForPickup.length}',
+        DateTime.now().difference(started).inMilliseconds,
+      );
     } catch (e) {
       if (!mounted) return;
+      AppFileLogger.instance.error('queue_board', 'reload failed', e);
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _error = formatNetworkErrorMessage(e);
       });
+    } finally {
+      _reloadInFlight = false;
     }
   }
 
@@ -174,15 +269,11 @@ class _QueueBoardScreenState extends State<QueueBoardScreen> {
                               count: preparing.length,
                             ),
                             const SizedBox(height: 10),
-                            for (final o in preparing) ...[
-                              _QueueBoardCard(
-                                order: o,
-                                tone: _kTonePreparing,
-                                summary: _linesSummary(o),
-                                isDeliveryDemo: false,
-                              ),
-                              const SizedBox(height: 10),
-                            ],
+                            _QueueBoardOrdersGrid(
+                              orders: preparing,
+                              tone: _kTonePreparing,
+                              linesSummary: _linesSummary,
+                            ),
                           ],
                           if (ready.isNotEmpty) ...[
                             if (preparing.isNotEmpty) const SizedBox(height: 8),
@@ -194,21 +285,74 @@ class _QueueBoardScreenState extends State<QueueBoardScreen> {
                               count: ready.length,
                             ),
                             const SizedBox(height: 10),
-                            for (final o in ready) ...[
-                              _QueueBoardCard(
-                                order: o,
-                                tone: _kToneReady,
-                                summary: _linesSummary(o),
-                                isDeliveryDemo: false,
-                              ),
-                              const SizedBox(height: 10),
-                            ],
+                            _QueueBoardOrdersGrid(
+                              orders: ready,
+                              tone: _kToneReady,
+                              linesSummary: _linesSummary,
+                            ),
                           ],
                         ],
                       ],
                     ),
                   ),
       ),
+    );
+  }
+}
+
+class _QueueBoardOrdersGrid extends StatelessWidget {
+  const _QueueBoardOrdersGrid({
+    required this.orders,
+    required this.tone,
+    required this.linesSummary,
+  });
+
+  final List<LocalKitchenQueueOrder> orders;
+  final Color tone;
+  final String Function(LocalKitchenQueueOrder) linesSummary;
+
+  @override
+  Widget build(BuildContext context) {
+    if (orders.isEmpty) return const SizedBox.shrink();
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final cols = PosQueueLayout.kitchenGridColumns(context);
+        if (cols <= 1) {
+          return Column(
+            children: [
+              for (var i = 0; i < orders.length; i++) ...[
+                if (i > 0) const SizedBox(height: 10),
+                _QueueBoardCard(
+                  order: orders[i],
+                  tone: tone,
+                  summary: linesSummary(orders[i]),
+                  isDeliveryDemo: false,
+                ),
+              ],
+            ],
+          );
+        }
+
+        const gap = 10.0;
+        final cardWidth = (constraints.maxWidth - gap * (cols - 1)) / cols;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (final o in orders)
+              SizedBox(
+                width: cardWidth,
+                child: _QueueBoardCard(
+                  order: o,
+                  tone: tone,
+                  summary: linesSummary(o),
+                  isDeliveryDemo: false,
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 }

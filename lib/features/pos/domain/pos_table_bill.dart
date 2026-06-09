@@ -77,6 +77,7 @@ class PosTableBill extends Equatable {
     required this.total,
     required this.orderTypeLabel,
     required this.createdAt,
+    this.orderNumber = '',
     this.tableNumber,
     this.tableZone,
     this.isPaid = false,
@@ -97,6 +98,7 @@ class PosTableBill extends Equatable {
   final List<PosTableBillLine> lines;
   final double total;
   final String orderTypeLabel;
+  final String orderNumber;
   final int? tableNumber;
   /// Для «на месте»: зал или веранда (если стол задан).
   final PosTableZone? tableZone;
@@ -130,6 +132,22 @@ class PosTableBill extends Equatable {
   bool get isHandedOutUnpaid =>
       !isPaid && orderStatus.trim().toLowerCase() == 'done';
 
+  /// Номер для UI: префикс Д-/С- для доставки и самовывоза (как на доске кассы).
+  String get displayOrderNumber {
+    final clean = orderNumber.trim();
+    if (clean.isEmpty) return '';
+    final low = orderTypeLabel.toLowerCase();
+    if (isDelivery || low.contains('доставк')) return 'Д-$clean';
+    if (isTakeaway ||
+        low.contains('самовывоз') ||
+        low.contains('с собой') ||
+        low.contains('pickup') ||
+        low.contains('takeaway')) {
+      return 'С-$clean';
+    }
+    return clean;
+  }
+
   String get tableSummary {
     if (tableNumber != null) {
       final z = tableZone;
@@ -158,6 +176,7 @@ class PosTableBill extends Equatable {
       lines: lines,
       total: total,
       orderTypeLabel: orderTypeLabel,
+      orderNumber: orderNumber,
       tableNumber: tableNumber,
       tableZone: tableZone,
       createdAt: createdAt,
@@ -182,6 +201,7 @@ class PosTableBill extends Equatable {
         lines,
         total,
         orderTypeLabel,
+        orderNumber,
         tableNumber,
         tableZone,
         createdAt,

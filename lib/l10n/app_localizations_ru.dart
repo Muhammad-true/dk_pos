@@ -302,6 +302,52 @@ class AppLocalizationsRu extends AppLocalizations {
   String get adminScreenTypeTv4 => 'ТВ4 — приветствие и оплата (config)';
 
   @override
+  String get adminScreenTypeCarouselShort => 'ТВ1 — карусель';
+
+  @override
+  String get adminScreenTypeTv2Short => 'ТВ2 — меню';
+
+  @override
+  String get adminScreenTypeTv3Short => 'ТВ3 — акции';
+
+  @override
+  String get adminScreenTypeTv4Short => 'ТВ4 — очередь';
+
+  @override
+  String get adminScreenTypeCustomerDisplayShort => 'Экран покупателя';
+
+  @override
+  String get adminScreenTypeCarouselDesc =>
+      'Классическая карусель категорий и товаров с tv1_page.';
+
+  @override
+  String get adminScreenTypeTv2Desc =>
+      'Гибкие страницы: split, сетка, list, видеофон.';
+
+  @override
+  String get adminScreenTypeTv3Desc =>
+      'Промо-слайды: товар, комбо, фото или видео на весь экран.';
+
+  @override
+  String get adminScreenTypeTv4Desc =>
+      'Приветствие, QR оплаты и доска очереди заказов.';
+
+  @override
+  String get adminScreenTypeCustomerDisplayDesc =>
+      'Второй монитор у кассы: меню, корзина, оплата.';
+
+  @override
+  String get adminTvPageTypePickerHint =>
+      'Выберите макет, затем нажмите «Добавить страницу».';
+
+  @override
+  String get adminTv2EditorPreviewOnTv => 'Предпросмотр на ТВ';
+
+  @override
+  String get adminTv2UserGuidePhotoHint =>
+      'Фото блюд показываются целиком (без обрезки). Загружайте PNG на прозрачном или светлом фоне.';
+
+  @override
   String get adminScreenActive => 'Активен';
 
   @override
@@ -474,6 +520,22 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get adminTv3PageTypePromoCombo => 'Комбо (слайд)';
+
+  @override
+  String get adminTv3PageTypePromoProductDesc =>
+      'Крупное фото товара, слоган и цена.';
+
+  @override
+  String get adminTv3PageTypePromoComboDesc =>
+      'Комбо-набор с составом и ценой.';
+
+  @override
+  String get adminTv3PageTypePromoVideoBgDesc =>
+      'Видео на весь экран с текстом поверх.';
+
+  @override
+  String get adminTv3PageTypePromoPhotoBgDesc =>
+      'Фото на весь экран с текстом поверх.';
 
   @override
   String get adminTv3PromoSelectCombo => 'Комбо';
@@ -847,6 +909,42 @@ class AppLocalizationsRu extends AppLocalizations {
   String get adminTv2ProductGridCardSizeLarge => 'Крупный';
 
   @override
+  String get adminTv2ProductGridTypographyTitle => 'Название и цена в сетке';
+
+  @override
+  String get adminTv2ProductGridTypographyHint =>
+      'По умолчанию «Авто» — размер подстраивается под диагональ ТВ и размер карточки. Ручной режим — фиксированный размер в пикселях.';
+
+  @override
+  String get adminTv2ProductGridNameSizeLabel => 'Название товара';
+
+  @override
+  String get adminTv2ProductGridPriceSizeLabel => 'Цена';
+
+  @override
+  String get adminTv2ProductGridSizeAuto => 'Авто';
+
+  @override
+  String get adminTv2ProductGridSizeManual => 'Вручную';
+
+  @override
+  String get adminTv2ProductGridTextScaleLabel => 'Масштаб текста (авто)';
+
+  @override
+  String get adminTv2ProductGridTextScaleHint =>
+      'Чуть увеличить или уменьшить авто-размер под ваш зал.';
+
+  @override
+  String get adminTv2PageLayoutSaveButton => 'Сохранить настройки страницы';
+
+  @override
+  String get adminTv2PageLayoutSaved => 'Настройки страницы сохранены';
+
+  @override
+  String get adminTv2PageLayoutUnsavedHint =>
+      'Есть несохранённые изменения — нажмите «Сохранить настройки страницы».';
+
+  @override
   String get adminTv2PageTransitionPerPage =>
       'Анимация перехода (эта страница)';
 
@@ -980,6 +1078,30 @@ class AppLocalizationsRu extends AppLocalizations {
 
   @override
   String get adminTv2PageTypeVideoBg => 'Фон (видео)';
+
+  @override
+  String get adminTv2PageTypeSplitDesc =>
+      'Слева крупное фото, справа две колонки категорий.';
+
+  @override
+  String get adminTv2PageTypeDrinksDesc =>
+      'Сетка напитков с фото и ценами по объёмам.';
+
+  @override
+  String get adminTv2PageTypeCarouselDesc =>
+      'Крупное фото товара и полоса с названием внизу.';
+
+  @override
+  String get adminTv2PageTypeListDesc =>
+      'Герой сверху и сетка позиций категории.';
+
+  @override
+  String get adminTv2PageTypeProductGridDesc =>
+      'Плитка товаров с фото, названием и ценой.';
+
+  @override
+  String get adminTv2PageTypeVideoBgDesc =>
+      'Видео или фото на весь экран + карточка оффера.';
 
   @override
   String get adminTv2OptionalVideoTitle => 'Видео под макетом (опционально)';
@@ -1448,7 +1570,7 @@ class AppLocalizationsRu extends AppLocalizations {
   String get roleCashier => 'Касса';
 
   @override
-  String get roleExpeditor => 'Сборщик';
+  String get roleExpeditor => 'Сортировщик';
 
   @override
   String get roleWaiter => 'Официант';
@@ -1487,7 +1609,7 @@ class AppLocalizationsRu extends AppLocalizations {
       'Официант не может принимать оплату — подойдите к кассе.';
 
   @override
-  String get expeditorTitle => 'Сборка и выдача';
+  String get expeditorTitle => 'Сортировка и выдача';
 
   @override
   String get expeditorSectionBundling => 'Собрать';

@@ -191,7 +191,7 @@ class _PosServerEndpointEditorState extends State<PosServerEndpointEditor> {
         inputFormatters: [FilteringTextInputFormatter.deny(RegExp(r'\s'))],
         decoration: const InputDecoration(
           labelText: 'IP или URL',
-          hintText: '192.168.1.100',
+          hintText: AppConfig.defaultServerHost,
           border: OutlineInputBorder(),
           prefixIcon: Icon(Icons.dns_rounded),
         ),

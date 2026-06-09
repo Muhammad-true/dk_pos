@@ -18,16 +18,22 @@ abstract class HttpClient {
   Future<HttpResponse> get(
     String path, {
     Map<String, String>? query,
+    Duration? receiveTimeout,
+    Duration? sendTimeout,
   });
 
   Future<HttpResponse> post(
     String path, {
     Map<String, dynamic>? body,
+    Duration? receiveTimeout,
+    Duration? sendTimeout,
   });
 
   Future<HttpResponse> patch(
     String path, {
     Map<String, dynamic>? body,
+    Duration? receiveTimeout,
+    Duration? sendTimeout,
   });
 
   Future<HttpResponse> delete(String path);

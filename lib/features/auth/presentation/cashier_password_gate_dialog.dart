@@ -108,6 +108,10 @@ class _CashierPasswordGateDialogState extends State<_CashierPasswordGateDialog> 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final fieldStyle = theme.textTheme.bodyLarge?.copyWith(
+      color: scheme.onSurface,
+    );
     return AlertDialog(
       title: Text(widget.title),
       content: SizedBox(
@@ -148,12 +152,17 @@ class _CashierPasswordGateDialogState extends State<_CashierPasswordGateDialog> 
                     value: users.any((u) => u.username == _username)
                         ? _username
                         : users.first.username,
+                    dropdownColor: scheme.surfaceContainerHigh,
+                    style: fieldStyle,
                     decoration: const InputDecoration(labelText: 'Кассир'),
                     items: users
                         .map(
                           (u) => DropdownMenuItem(
                             value: u.username,
-                            child: Text(u.username),
+                            child: Text(
+                              u.username,
+                              style: fieldStyle,
+                            ),
                           ),
                         )
                         .toList(growable: false),
@@ -178,6 +187,7 @@ class _CashierPasswordGateDialogState extends State<_CashierPasswordGateDialog> 
               focusNode: _passwordFocus,
               obscureText: _obscure,
               enabled: !_loading,
+              style: fieldStyle,
               textInputAction: TextInputAction.done,
               onSubmitted: (_) => _submit(),
               decoration: InputDecoration(

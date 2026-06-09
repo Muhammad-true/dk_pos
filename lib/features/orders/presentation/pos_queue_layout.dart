@@ -89,6 +89,23 @@ abstract final class PosQueueLayout {
     return 16;
   }
 
+  /// Высота основной кнопки действия на карточке (удобный тап на телефоне).
+  static double actionButtonHeight(BuildContext context) {
+    final s = shortestSide(context);
+    if (s < 360) return 52;
+    if (s < 600) return 50;
+    return 48;
+  }
+
+  static double cardGap(BuildContext context) {
+    final s = shortestSide(context);
+    if (s < 360) return 10;
+    if (s < 600) return 12;
+    return 14;
+  }
+
+  static bool isPhone(BuildContext context) => shortestSide(context) < 600;
+
   static double rowGutter(BuildContext context) {
     final s = shortestSide(context);
     if (s < 360) return 10;

@@ -265,11 +265,87 @@ class AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
                         ),
                       ),
                     )
-                  : Card(
-                      clipBehavior: Clip.antiAlias,
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: DataTable(
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                        final useCards = constraints.maxWidth < 840;
+                        if (useCards) {
+                          return ListView.builder(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            itemCount: _items.length,
+                            itemBuilder: (_, i) {
+                              final s = _items[i];
+                              final p = s.preview;
+                              final variance = s.variance;
+                              final noEnc = p != null && !p.encashmentDone;
+                              return Card(
+                                margin: const EdgeInsets.only(bottom: 10),
+                                color: noEnc
+                                    ? theme.colorScheme.errorContainer
+                                        .withValues(alpha: 0.35)
+                                    : null,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(14),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Text(
+                                        _fmtDateTime(s.closedAt),
+                                        style: theme.textTheme.titleSmall
+                                            ?.copyWith(
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'Касса: ${s.terminalId ?? '—'}',
+                                        style: theme.textTheme.bodyMedium,
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(
+                                        'Выручка: ${p != null && p.totalSalesNet > 0 ? formatSomoni(p.totalSalesNet) : '—'}',
+                                      ),
+                                      Text(
+                                        'Безнал: ${p != null && p.nonCashNet > 0.009 ? formatSomoni(p.nonCashNet) : '—'}',
+                                      ),
+                                      Text(
+                                        'Инкассация: ${p != null && p.encashmentDone ? formatSomoni(p.encashmentTotal) : 'не было'}',
+                                        style: noEnc
+                                            ? TextStyle(
+                                                color: theme.colorScheme.error,
+                                                fontWeight: FontWeight.w600,
+                                              )
+                                            : null,
+                                      ),
+                                      if (variance != null &&
+                                          variance.abs() >= 0.01)
+                                        Text(
+                                          'Разница: ${formatSomoni(variance)}',
+                                          style: TextStyle(
+                                            color: theme.colorScheme.error,
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                      const SizedBox(height: 10),
+                                      Align(
+                                        alignment: Alignment.centerRight,
+                                        child: FilledButton.tonal(
+                                          onPressed: () => _openReport(s),
+                                          child: const Text('Отчёт'),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            },
+                          );
+                        }
+                        return Card(
+                          clipBehavior: Clip.antiAlias,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: DataTable(
                           columns: const [
                             DataColumn(label: Text('Закрыта')),
                             DataColumn(label: Text('Касса')),
@@ -342,8 +418,10 @@ class AdminCashShiftsPanelState extends State<AdminCashShiftsPanel> {
                               ],
                             );
                           }).toList(),
-                        ),
-                      ),
+                            ),
+                          ),
+                        );
+                      },
                     ),
             ),
           ],

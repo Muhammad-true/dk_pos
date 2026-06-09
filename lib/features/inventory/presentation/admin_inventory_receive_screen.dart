@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/features/inventory/data/local_inventory_repository.dart';
 
 /// Приём перемещений с центрального склада на эту точку (через global API).
@@ -129,31 +130,74 @@ class _AdminInventoryReceiveScreenState extends State<AdminInventoryReceiveScree
                     ),
                   ..._items.map((item) {
                     final busy = _receivingId == item.id;
-                    return Card(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-                        title: Text(
-                          item.docNumber,
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        subtitle: Text(
-                          '${item.lineCount} поз. · ${item.docDate ?? "—"}'
-                          '${item.totalAmount != null ? " · ${_fmtSom(item.totalAmount!)}" : ""}'
-                          '${item.toLocationName != null ? "\n${item.toLocationName}" : ""}',
-                        ),
-                        isThreeLine: item.toLocationName != null,
-                        trailing: FilledButton(
-                          onPressed: busy || !_enabled ? null : () => _receive(item.id, item.docNumber),
-                          child: busy
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                )
-                              : const Text('Принять'),
-                        ),
-                      ),
+                    return LayoutBuilder(
+                      builder: (context, constraints) {
+                        final compact = WindowLayout(width: constraints.maxWidth).isCompact;
+                        if (compact) {
+                          return Card(
+                            margin: const EdgeInsets.only(bottom: 10),
+                            child: Padding(
+                              padding: const EdgeInsets.all(14),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Text(
+                                    item.docNumber,
+                                    style: const TextStyle(fontWeight: FontWeight.w700),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    '${item.lineCount} поз. · ${item.docDate ?? "—"}'
+                                    '${item.totalAmount != null ? " · ${_fmtSom(item.totalAmount!)}" : ""}'
+                                    '${item.toLocationName != null ? "\n${item.toLocationName}" : ""}',
+                                  ),
+                                  const SizedBox(height: 12),
+                                  FilledButton(
+                                    onPressed: busy || !_enabled
+                                        ? null
+                                        : () => _receive(item.id, item.docNumber),
+                                    child: busy
+                                        ? const SizedBox(
+                                            width: 18,
+                                            height: 18,
+                                            child: CircularProgressIndicator(strokeWidth: 2),
+                                          )
+                                        : const Text('Принять'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        }
+                        return Card(
+                          margin: const EdgeInsets.only(bottom: 10),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+                            title: Text(
+                              item.docNumber,
+                              style: const TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            subtitle: Text(
+                              '${item.lineCount} поз. · ${item.docDate ?? "—"}'
+                              '${item.totalAmount != null ? " · ${_fmtSom(item.totalAmount!)}" : ""}'
+                              '${item.toLocationName != null ? "\n${item.toLocationName}" : ""}',
+                            ),
+                            isThreeLine: item.toLocationName != null,
+                            trailing: FilledButton(
+                              onPressed: busy || !_enabled
+                                  ? null
+                                  : () => _receive(item.id, item.docNumber),
+                              child: busy
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Text('Принять'),
+                            ),
+                          ),
+                        );
+                      },
                     );
                   }),
                 ],

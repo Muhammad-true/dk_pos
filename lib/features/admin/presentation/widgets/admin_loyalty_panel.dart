@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:dk_pos/core/constants/phone_defaults.dart';
 import 'package:dk_pos/core/input/tj_phone_dial_locked_formatter.dart';
+import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/features/loyalty/data/local_loyalty_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -321,40 +322,46 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                SizedBox(
-                  width: 260,
-                  child: TextField(
-                    controller: _searchCtrl,
-                    autofocus: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Поиск клиента (сканер)',
-                      hintText: 'Телефон / карта / QR / имя',
-                      border: OutlineInputBorder(),
-                    ),
-                    onChanged: _onSearchChanged,
-                    onSubmitted: (_) => _reload(),
-                  ),
-                ),
-                FilledButton.icon(
-                  onPressed: _loading ? null : _reload,
-                  icon: const Icon(Icons.search_rounded),
-                  label: const Text('Найти'),
-                ),
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 600;
+                final fieldWidth = compact ? constraints.maxWidth : 260.0;
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
                   children: [
-                    const Text('Авто-скан'),
-                    Switch(
-                      value: _autoScan,
-                      onChanged: (v) => setState(() => _autoScan = v),
+                    SizedBox(
+                      width: fieldWidth,
+                      child: TextField(
+                        controller: _searchCtrl,
+                        autofocus: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Поиск клиента (сканер)',
+                          hintText: 'Телефон / карта / QR / имя',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: _onSearchChanged,
+                        onSubmitted: (_) => _reload(),
+                      ),
+                    ),
+                    FilledButton.icon(
+                      onPressed: _loading ? null : _reload,
+                      icon: const Icon(Icons.search_rounded),
+                      label: const Text('Найти'),
+                    ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('Авто-скан'),
+                        Switch(
+                          value: _autoScan,
+                          onChanged: (v) => setState(() => _autoScan = v),
+                        ),
+                      ],
                     ),
                   ],
-                ),
-              ],
+                );
+              },
             ),
             const SizedBox(height: 10),
             Text(
@@ -362,55 +369,61 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
               style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                SizedBox(
-                  width: 220,
-                  child: TextField(
-                    controller: _newNameCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Имя',
-                      border: OutlineInputBorder(),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 600;
+                final fieldWidth = compact ? constraints.maxWidth : 220.0;
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    SizedBox(
+                      width: fieldWidth,
+                      child: TextField(
+                        controller: _newNameCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Имя',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                SizedBox(
-                  width: 180,
-                  child: TextField(
-                    controller: _newPhoneCtrl,
-                    keyboardType: TextInputType.phone,
-                    inputFormatters: const [TjPhoneDialLockedFormatter()],
-                    decoration: InputDecoration(
-                      labelText: 'Телефон *',
-                      hintText: '$kDefaultPhoneDialPrefix…',
-                      border: const OutlineInputBorder(),
+                    SizedBox(
+                      width: compact ? constraints.maxWidth : 180,
+                      child: TextField(
+                        controller: _newPhoneCtrl,
+                        keyboardType: TextInputType.phone,
+                        inputFormatters: const [TjPhoneDialLockedFormatter()],
+                        decoration: InputDecoration(
+                          labelText: 'Телефон *',
+                          hintText: '$kDefaultPhoneDialPrefix…',
+                          border: const OutlineInputBorder(),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                SizedBox(
-                  width: 180,
-                  child: TextField(
-                    controller: _newCardCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Карта',
-                      border: OutlineInputBorder(),
+                    SizedBox(
+                      width: compact ? constraints.maxWidth : 180,
+                      child: TextField(
+                        controller: _newCardCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Карта',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
                     ),
-                  ),
-                ),
-                FilledButton.icon(
-                  onPressed: _savingCreate ? null : _createCustomer,
-                  icon: _savingCreate
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.person_add_alt_1_rounded),
-                  label: const Text('Создать'),
-                ),
-              ],
+                    FilledButton.icon(
+                      onPressed: _savingCreate ? null : _createCustomer,
+                      icon: _savingCreate
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.person_add_alt_1_rounded),
+                      label: const Text('Создать'),
+                    ),
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 14),
             Text(
@@ -440,50 +453,110 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
               style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
             const SizedBox(height: 6),
-            ..._customers.map(
-              (c) => Card(
-                margin: const EdgeInsets.only(bottom: 8),
-                child: ListTile(
-                  title: Text('${c.fullName} • ${c.phone}'),
-                  subtitle: Text(
-                    'Баллы: ${c.pointsBalance.toStringAsFixed(2)} • '
-                    'QR: ${c.qrCode}'
-                    '${c.cardCode != null && c.cardCode!.isNotEmpty ? ' • Карта: ${c.cardCode}' : ''}'
-                    '${c.tier != null ? ' • ${c.tier!.title} (${c.tier!.accrualPercent.toStringAsFixed(2)}%)' : ''}',
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final cols = WindowLayout(width: constraints.maxWidth)
+                    .hubGridColumns(minCellWidth: 320);
+                if (cols <= 1) {
+                  return Column(
+                    children: _customers
+                        .map(
+                          (c) => Card(
+                            margin: const EdgeInsets.only(bottom: 8),
+                            child: ListTile(
+                              title: Text('${c.fullName} • ${c.phone}'),
+                              subtitle: Text(
+                                'Баллы: ${c.pointsBalance.toStringAsFixed(2)} • '
+                                'QR: ${c.qrCode}'
+                                '${c.cardCode != null && c.cardCode!.isNotEmpty ? ' • Карта: ${c.cardCode}' : ''}'
+                                '${c.tier != null ? ' • ${c.tier!.title} (${c.tier!.accrualPercent.toStringAsFixed(2)}%)' : ''}',
+                              ),
+                              trailing: _customerActions(c),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  );
+                }
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: cols,
+                    mainAxisSpacing: 8,
+                    crossAxisSpacing: 8,
+                    childAspectRatio: cols >= 3 ? 1.8 : 2.0,
                   ),
-                  trailing: Wrap(
-                    spacing: 4,
-                    children: [
-                      IconButton(
-                        tooltip: 'История',
-                        onPressed: () => _showHistory(c),
-                        icon: const Icon(Icons.history_rounded),
-                      ),
-                      IconButton(
-                        tooltip: 'Баллы +/-',
-                        onPressed: () => _adjustPoints(c),
-                        icon: const Icon(Icons.exposure_plus_1_rounded),
-                      ),
-                      IconButton(
-                        tooltip: c.isBlacklisted ? 'Снять из ЧС' : 'В ЧС',
-                        onPressed: () => _toggleBlacklist(c),
-                        icon: Icon(
-                          c.isBlacklisted ? Icons.lock_open_rounded : Icons.block_rounded,
+                  itemCount: _customers.length,
+                  itemBuilder: (_, i) {
+                    final c = _customers[i];
+                    return Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              c.fullName,
+                              style: textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w800,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            Text(c.phone, style: textTheme.bodySmall),
+                            const Spacer(),
+                            Text(
+                              'Баллы: ${c.pointsBalance.toStringAsFixed(0)}',
+                              style: textTheme.labelLarge?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: _customerActions(c),
+                            ),
+                          ],
                         ),
                       ),
-                      IconButton(
-                        tooltip: 'Удалить',
-                        onPressed: () => _deleteCustomer(c),
-                        icon: const Icon(Icons.delete_outline_rounded),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+                    );
+                  },
+                );
+              },
             ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _customerActions(LoyaltyCustomer c) {
+    return Wrap(
+      spacing: 4,
+      children: [
+        IconButton(
+          tooltip: 'История',
+          onPressed: () => _showHistory(c),
+          icon: const Icon(Icons.history_rounded),
+        ),
+        IconButton(
+          tooltip: 'Баллы +/-',
+          onPressed: () => _adjustPoints(c),
+          icon: const Icon(Icons.exposure_plus_1_rounded),
+        ),
+        IconButton(
+          tooltip: c.isBlacklisted ? 'Снять из ЧС' : 'В ЧС',
+          onPressed: () => _toggleBlacklist(c),
+          icon: Icon(
+            c.isBlacklisted ? Icons.lock_open_rounded : Icons.block_rounded,
+          ),
+        ),
+        IconButton(
+          tooltip: 'Удалить',
+          onPressed: () => _deleteCustomer(c),
+          icon: const Icon(Icons.delete_outline_rounded),
+        ),
+      ],
     );
   }
 

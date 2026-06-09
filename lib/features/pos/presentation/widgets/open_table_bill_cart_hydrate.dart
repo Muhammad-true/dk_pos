@@ -1,4 +1,5 @@
 import 'package:dk_pos/core/utils/cart_line_key.dart';
+import 'package:dk_pos/core/utils/order_line_key.dart';
 import 'package:dk_pos/features/cart/bloc/cart_state.dart';
 import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
 import 'package:dk_pos/shared/shared.dart';
@@ -65,7 +66,7 @@ OpenBillHydrateResult hydrateOpenTableBillIntoCartLines({
       priceText: _priceTextForLine(up),
     );
     final keyFromServer = bl.lineKey?.trim();
-    final key = keyFromServer != null && keyFromServer.isNotEmpty
+    final rawKey = keyFromServer != null && keyFromServer.isNotEmpty
         ? keyFromServer
         : computeCartLineKey(
             menuItemId: item.id,
@@ -73,10 +74,13 @@ OpenBillHydrateResult hydrateOpenTableBillIntoCartLines({
             unitPrice: up,
             catalogBasePrice: template.baseCatalogPrice,
           );
+    // Дозаказ (`~fu~`) сливаем с основной строкой — «ещё один донер» в корзине одной позицией.
+    final key = baseOrderLineKey(rawKey);
     final isKitchen = bl.isKitchenLine;
     final st = (bl.kitchenLineStatus ?? '').toLowerCase().trim();
     final locked = isKitchen && st == 'ready';
-    kitchenQtyLockedByLineKey[key] = locked;
+    kitchenQtyLockedByLineKey[key] =
+        (kitchenQtyLockedByLineKey[key] ?? false) && locked;
     final prev = lines[key];
     if (prev != null) {
       lines[key] = CartLine(
@@ -99,5 +103,30 @@ OpenBillHydrateResult hydrateOpenTableBillIntoCartLines({
     baselineQtyByLineKey: baseline,
     skippedLines: skipped,
     kitchenQtyLockedByLineKey: kitchenQtyLockedByLineKey,
+  );
+}
+
+/// Количества по ключам строк (дозаказ `~fu~` сливается с основной строкой).
+Map<String, int> baselineQtyByLineKeyFromBillLines(List<PosTableBillLine> lines) {
+  final baseline = <String, int>{};
+  for (final bl in lines) {
+    final rawKey = bl.lineKey?.trim();
+    final key = rawKey != null && rawKey.isNotEmpty
+        ? baseOrderLineKey(rawKey)
+        : (bl.menuItemId?.trim() ?? '');
+    if (key.isEmpty) continue;
+    baseline[key] = (baseline[key] ?? 0) + bl.quantity;
+  }
+  return baseline;
+}
+
+/// База только для строк, которые уже есть в корзине (без удаления остальных позиций счёта).
+Map<String, int> intersectBillBaselineWithCart({
+  required Map<String, int> billBaseline,
+  required Set<String> cartLineKeys,
+}) {
+  if (billBaseline.isEmpty || cartLineKeys.isEmpty) return const {};
+  return Map.fromEntries(
+    billBaseline.entries.where((e) => cartLineKeys.contains(e.key)),
   );
 }

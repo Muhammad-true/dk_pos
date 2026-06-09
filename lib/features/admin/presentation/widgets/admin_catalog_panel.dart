@@ -103,23 +103,21 @@ class AdminCatalogPanel extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      l10n.adminCatalogManageTitle,
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                  ),
-                  IconButton.filledTonal(
+              child: LayoutBuilder(
+                builder: (context, c) {
+                  final narrow = c.maxWidth < 560;
+                  final title = Text(
+                    l10n.adminCatalogManageTitle,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  );
+                  final refresh = IconButton.filledTonal(
                     tooltip: l10n.actionRetry,
                     onPressed: () => context
                         .read<CatalogAdminBloc>()
                         .add(const CatalogLoadRequested()),
                     icon: const Icon(Icons.refresh_rounded),
-                  ),
-                  const SizedBox(width: 8),
-                  BlocBuilder<CatalogAdminBloc, CatalogAdminState>(
+                  );
+                  final addBtn = BlocBuilder<CatalogAdminBloc, CatalogAdminState>(
                     buildWhen: (p, c) =>
                         p.status != c.status || p.categories != c.categories,
                     builder: (context, state) {
@@ -136,8 +134,31 @@ class AdminCatalogPanel extends StatelessWidget {
                         label: Text(l10n.adminCategoryAdd),
                       );
                     },
-                  ),
-                ],
+                  );
+                  if (narrow) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(child: title),
+                            refresh,
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        addBtn,
+                      ],
+                    );
+                  }
+                  return Row(
+                    children: [
+                      Expanded(child: title),
+                      refresh,
+                      const SizedBox(width: 8),
+                      addBtn,
+                    ],
+                  );
+                },
               ),
             ),
             Expanded(

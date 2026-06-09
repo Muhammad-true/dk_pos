@@ -69,6 +69,15 @@ class MenuState extends Equatable {
 
   bool get canGoBack => pathIds.isNotEmpty;
 
+  /// Ключ видимого каталога для синхронизации с экраном клиента.
+  String get customerDisplayCatalogKey {
+    if (loading) return 'loading';
+    if (pathIds.isEmpty) return 'welcome';
+    final childIds = currentChildCategories.map((c) => c.id).join(',');
+    final itemIds = currentItems.map((i) => i.id).join(',');
+    return '${pathIds.join("/")}|c:$childIds|i:$itemIds';
+  }
+
   MenuState copyWith({
     bool? loading,
     String? error,

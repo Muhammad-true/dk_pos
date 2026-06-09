@@ -10,15 +10,24 @@ import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/features/admin/data/admin_combo_row.dart';
 import 'package:dk_pos/features/admin/data/admin_menu_item_row.dart';
 import 'package:dk_pos/features/admin/data/admin_screen_page_row.dart';
+import 'package:dk_pos/features/admin/data/admin_screen_row.dart';
 import 'package:dk_pos/features/admin/data/combos_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/menu_items_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/screen_page_item_row.dart';
 import 'package:dk_pos/features/admin/data/screens_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/upload_repository.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_tv_master_detail_layout.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/tv_layout_type_catalog.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/tv_layout_type_picker.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/tv_video_bg_media_editor.dart';
+import 'package:dk_pos/features/admin/presentation/screens/admin_tv_preview_page.dart';
+import 'package:dk_pos/features/admin/data/menu_display_preview_repository.dart';
+import 'package:dk_pos/app/locale/locale_bloc.dart';
+import 'package:dk_pos/core/locale/api_locale.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
+import 'package:dk_digitial_menu/models/tv_layout_config.dart';
 
-const _kTv2PageTypes = ['split', 'drinks', 'carousel', 'list', 'product_grid', 'video_bg'];
 const _kRoles = ['hero', 'list', 'hotdog'];
 
 bool _tv2EditorIsList(String t) => t.toLowerCase().trim() == 'list';
@@ -72,6 +81,10 @@ double _previewProductGridAspect(Map<String, dynamic>? cfg) {
   };
 }
 
+TvProductGridTypography _readProductGridTypography(Map<String, dynamic>? cfg) {
+  return TvProductGridTypography.fromConfig(cfg);
+}
+
 Widget _productGridPreviewCells(
   BuildContext context,
   List<ScreenPageItemRow> rows,
@@ -85,6 +98,17 @@ Widget _productGridPreviewCells(
       : math.min(rows.length, maxCells);
   const gap = 4.0;
   final aspect = _previewProductGridAspect(pageConfig);
+  final cardSize = _readProductGridCardSize(pageConfig);
+  final typoCfg = _readProductGridTypography(pageConfig);
+  const previewCellW = 72.0;
+  final previewCellH = previewCellW / aspect;
+  final typo = resolveTvProductGridTypography(
+    typography: typoCfg,
+    cellWidth: previewCellW,
+    cellHeight: previewCellH,
+    screenShortSide: 400,
+    cardSize: cardSize,
+  );
   return GridView.builder(
     physics: const NeverScrollableScrollPhysics(),
     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -132,11 +156,11 @@ Widget _productGridPreviewCells(
                           color: _kTv2PreviewRed,
                           borderRadius: BorderRadius.circular(999),
                         ),
-                        child: const Text(
-                          '—',
+                        child: Text(
+                          '25',
                           style: TextStyle(
                             color: Colors.white,
-                            fontSize: 7,
+                            fontSize: (typo.priceSize * 0.22).clamp(6.0, 11.0),
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -149,11 +173,11 @@ Widget _productGridPreviewCells(
                 Padding(
                   padding: const EdgeInsets.fromLTRB(3, 2, 3, 3),
                   child: Text(
-                    label,
+                    label.isNotEmpty ? label : 'Товар',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.labelSmall?.copyWith(
-                      fontSize: 8,
+                      fontSize: (typo.nameSize * 0.22).clamp(6.0, 12.0),
                       height: 1.05,
                       fontWeight: FontWeight.w700,
                     ),
@@ -210,10 +234,13 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
   List<AdminScreenPageRow> _pages = [];
   List<AdminMenuItemRow> _menuItems = [];
   final Map<int, _PageDetail> _detailByPageId = {};
+  final Set<int> _expandedPageIds = {};
+  final Map<int, ExpansionTileController> _expansionControllers = {};
   bool _loading = true;
   bool _savingPageOrder = false;
   String? _error;
   String _newPageType = 'split';
+  int? _selectedPageId;
   /// На узком экране Android включаем портрет, при выходе возвращаем все ориентации.
   bool _androidPhonePortraitLock = false;
 
@@ -247,6 +274,46 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
     super.dispose();
   }
 
+  ExpansionTileController _expansionControllerFor(int pageId) {
+    return _expansionControllers.putIfAbsent(
+      pageId,
+      ExpansionTileController.new,
+    );
+  }
+
+  void _reopenExpandedTile(int pageId) {
+    if (!_expandedPageIds.contains(pageId)) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_expandedPageIds.contains(pageId)) return;
+      _expansionControllerFor(pageId).expand();
+    });
+  }
+
+  void _syncPageListRowFromDetail(int pageId) {
+    final d = _detailByPageId[pageId];
+    if (d == null) return;
+    final i = _pages.indexWhere((p) => p.id == pageId);
+    if (i < 0) return;
+    setState(() {
+      _pages[i] = AdminScreenPageRow(
+        id: d.page.id,
+        pageType: d.page.pageType,
+        sortOrder: d.page.sortOrder,
+        itemsCount: d.items.length,
+        comboId: d.page.comboId,
+        config: d.page.config,
+        listTitle: d.page.listTitle,
+        secondListTitle: d.page.secondListTitle,
+      );
+    });
+    _reopenExpandedTile(pageId);
+  }
+
+  Future<void> _afterPageMutation(int pageId) async {
+    await _loadDetail(pageId);
+    _syncPageListRowFromDetail(pageId);
+  }
+
   Future<void> _reload() async {
     setState(() {
       _loading = true;
@@ -260,8 +327,22 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         _pages = pages;
         _menuItems = items;
         _detailByPageId.clear();
+        _expandedPageIds.removeWhere(
+          (id) => !pages.any((p) => p.id == id),
+        );
+        final alive = _pages.map((p) => p.id).toSet();
+        _expansionControllers.removeWhere((id, _) => !alive.contains(id));
+        if (_selectedPageId != null &&
+            !pages.any((p) => p.id == _selectedPageId)) {
+          _selectedPageId = pages.isEmpty ? null : pages.first.id;
+        } else if (_selectedPageId == null && pages.isNotEmpty) {
+          _selectedPageId = pages.first.id;
+        }
         _loading = false;
       });
+      for (final id in _expandedPageIds) {
+        _reopenExpandedTile(id);
+      }
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -451,9 +532,7 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         listTitle: {'ru': listRu.trim()},
         secondListTitle: {'ru': secondRu.trim()},
       );
-      _detailByPageId.remove(pageId);
-      await _loadDetail(pageId);
-      await _reload();
+      await _afterPageMutation(pageId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(l10n.adminTv2EditorTitlesSaved)),
@@ -492,9 +571,7 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       }
     }
     if (ok == 0) return;
-    _detailByPageId.remove(pageId);
-    await _loadDetail(pageId);
-    await _reload();
+    await _afterPageMutation(pageId);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -519,9 +596,7 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         pageId,
         itemRowId,
       );
-      _detailByPageId.remove(pageId);
-      await _loadDetail(pageId);
-      await _reload();
+      await _afterPageMutation(pageId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(l10n.adminTv2EditorItemRemoved)),
@@ -569,9 +644,7 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         pageId,
         updates,
       );
-      _detailByPageId.remove(pageId);
-      await _loadDetail(pageId);
-      await _reload();
+      await _afterPageMutation(pageId);
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
@@ -608,9 +681,7 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         pageId,
         config: base,
       );
-      _detailByPageId.remove(pageId);
-      await _loadDetail(pageId);
-      await _reload();
+      await _afterPageMutation(pageId);
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
@@ -629,9 +700,7 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         pageId,
         config: base,
       );
-      _detailByPageId.remove(pageId);
-      await _loadDetail(pageId);
-      await _reload();
+      await _afterPageMutation(pageId);
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
@@ -658,9 +727,13 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         pageId,
         config: base,
       );
-      _detailByPageId.remove(pageId);
-      await _loadDetail(pageId);
-      await _reload();
+      await _afterPageMutation(pageId);
+      if (mounted) {
+        final ln = AppLocalizations.of(context)!;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ln.adminTv2PageLayoutSaved)),
+        );
+      }
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
@@ -684,9 +757,7 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         pageId,
         config: base,
       );
-      _detailByPageId.remove(pageId);
-      await _loadDetail(pageId);
-      await _reload();
+      await _afterPageMutation(pageId);
     } on ApiException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
@@ -705,9 +776,7 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         pageId,
         config: base,
       );
-      _detailByPageId.remove(pageId);
-      await _loadDetail(pageId);
-      await _reload();
+      await _afterPageMutation(pageId);
       if (!mounted) return;
       await _pickItemDialog(pageId, 'hero', l10n);
     } on ApiException catch (e) {
@@ -732,9 +801,7 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         pageId,
         config: base,
       );
-      _detailByPageId.remove(pageId);
-      await _loadDetail(pageId);
-      await _reload();
+      await _afterPageMutation(pageId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(l10n.adminTv2EditorItemAdded)),
@@ -904,6 +971,89 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
     }
   }
 
+  Future<void> _openPreview(AppLocalizations l10n) async {
+    try {
+      final screens = await widget.screensRepo.fetchScreens();
+      AdminScreenRow? screen;
+      for (final s in screens) {
+        if (s.id == widget.screenId) {
+          screen = s;
+          break;
+        }
+      }
+      if (screen == null || !mounted) return;
+      final previewRepo = context.read<MenuDisplayPreviewRepository>();
+      final locale = context.read<LocaleBloc>().state.locale;
+      final lang = menuApiLanguageCode(locale.languageCode);
+      final body = <String, dynamic>{
+        'type': screen.type,
+        'name': screen.name,
+        'config': screen.config ?? <String, dynamic>{},
+        'lang': lang,
+        'screen_id': screen.id,
+      };
+      if (!mounted) return;
+      await Navigator.of(context, rootNavigator: true).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => AdminTvPreviewPage(
+            previewRepo: previewRepo,
+            screensRepo: widget.screensRepo,
+            requestBody: body,
+          ),
+        ),
+      );
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    }
+  }
+
+  Widget _buildTv2PageCard(
+    int i,
+    AppLocalizations l10n, {
+    bool detailOnly = false,
+  }) {
+    final p = _pages[i];
+    return _PageCard(
+      key: ValueKey<int>(p.id),
+      detailOnly: detailOnly,
+      reorderListIndex: i,
+      pageListRow: p,
+      detail: _detailByPageId[p.id],
+      expansionController: _expansionControllerFor(p.id),
+      onExpansionChanged: (open) {
+        setState(() {
+          if (open) {
+            _expandedPageIds.add(p.id);
+          } else {
+            _expandedPageIds.remove(p.id);
+          }
+        });
+        if (open) {
+          unawaited(_loadDetail(p.id));
+        }
+      },
+      l10n: l10n,
+      combosRepo: widget.combosRepo,
+      uploadRepo: widget.uploadRepo,
+      onExpand: () => _loadDetail(p.id),
+      onSaveTitles: (a, b) => _saveTitles(p.id, a, b, l10n),
+      onPickItem: (role) => _pickItemDialog(p.id, role, l10n),
+      onRemoveItem: (rowId) => _removeItem(p.id, rowId, l10n),
+      onReorderItems: (role, oldI, newI) =>
+          _reorderPageItems(p.id, role, oldI, newI, l10n),
+      onPatchTvVideoBg: (m) => _patchTvVideoBg(p.id, m),
+      onPatchPageLayout: (m) => _patchPageLayout(p.id, m),
+      onVideoBgPickHero: () => _videoBgPickHero(p.id, l10n),
+      onVideoBgApplyCombo: (cid) => _videoBgApplyCombo(p.id, cid, l10n),
+      onVideoBgSwitchToMenuMode: () => _videoBgSwitchToMenuMode(p.id),
+      onVideoBgSwitchToComboMode: () => _videoBgSwitchToComboMode(p.id),
+      onDeletePage: () => _confirmDeletePage(p, l10n),
+      roleLabel: (ln, role) => _roleLabelForPageType(ln, p.pageType, role),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -911,6 +1061,13 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
     return Scaffold(
       appBar: AppBar(
         title: Text(l10n.adminTv2EditorTitle),
+        actions: [
+          IconButton(
+            tooltip: l10n.adminTv2EditorPreviewOnTv,
+            icon: const Icon(Icons.live_tv_rounded),
+            onPressed: _loading ? null : () => _openPreview(l10n),
+          ),
+        ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -931,164 +1088,154 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
                     ),
                   ),
                 )
-              : ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    Text(
-                      l10n.adminTv2EditorSubtitle,
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                    const SizedBox(height: 16),
-                    Card(
-                      elevation: 0,
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final wide = constraints.maxWidth >= 840;
+                    final header = Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          l10n.adminTv2EditorSubtitle,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        const SizedBox(height: 16),
+                        ExpansionTile(
+                          tilePadding: EdgeInsets.zero,
+                          title: Text(
+                            l10n.adminTv2UserGuideTitle,
+                            style: Theme.of(context).textTheme.titleSmall,
+                          ),
                           children: [
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.lightbulb_outline_rounded,
-                                  size: 22,
-                                  color: Theme.of(context).colorScheme.primary,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    l10n.adminTv2UserGuideTitle,
-                                    style: Theme.of(context).textTheme.titleSmall,
-                                  ),
-                                ),
-                              ],
+                            Text(
+                              l10n.adminTv2UserGuide1,
+                              style: Theme.of(context).textTheme.bodySmall,
                             ),
-                            const SizedBox(height: 10),
-                            Text(l10n.adminTv2UserGuide1, style: Theme.of(context).textTheme.bodySmall),
                             const SizedBox(height: 6),
-                            Text(l10n.adminTv2UserGuide2, style: Theme.of(context).textTheme.bodySmall),
+                            Text(
+                              l10n.adminTv2UserGuide2,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
                             const SizedBox(height: 6),
-                            Text(l10n.adminTv2UserGuide3, style: Theme.of(context).textTheme.bodySmall),
+                            Text(
+                              l10n.adminTv2UserGuide3,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
                             const SizedBox(height: 6),
-                            Text(l10n.adminTv2UserGuide4, style: Theme.of(context).textTheme.bodySmall),
+                            Text(
+                              l10n.adminTv2UserGuide4,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              l10n.adminTv2UserGuidePhotoHint,
+                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    color: Theme.of(context).colorScheme.primary,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                            ),
                           ],
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            key: ValueKey<String>(_newPageType),
-                            isExpanded: true,
-                            initialValue: _newPageType,
-                            decoration: InputDecoration(
-                              labelText: l10n.adminScreenPageTypeLabel,
-                              border: const OutlineInputBorder(),
-                            ),
-                            items: [
-                              for (final t in _kTv2PageTypes)
-                                DropdownMenuItem(
-                                  value: t,
-                                  child: Text(
-                                    _tv2PageTypeLabel(l10n, t),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                            ],
-                            onChanged: (v) {
-                              if (v != null) setState(() => _newPageType = v);
-                            },
-                          ),
+                        const SizedBox(height: 16),
+                        Text(
+                          l10n.adminScreenPageTypeLabel,
+                          style: Theme.of(context).textTheme.titleSmall,
                         ),
-                        const SizedBox(width: 12),
-                        Flexible(
+                        const SizedBox(height: 8),
+                        TvLayoutTypePicker(
+                          options: tv2PageTypeOptions(l10n),
+                          selectedId: _newPageType,
+                          hint: l10n.adminTvPageTypePickerHint,
+                          crossAxisCount: constraints.maxWidth >= 720 ? 3 : 2,
+                          onSelected: (v) => setState(() => _newPageType = v),
+                        ),
+                        const SizedBox(height: 12),
+                        Align(
+                          alignment: Alignment.centerRight,
                           child: FilledButton.icon(
                             onPressed: () => _addPage(l10n),
                             icon: const Icon(Icons.add_rounded),
-                            label: Text(
-                              l10n.adminScreenPageAdd,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                            label: Text(l10n.adminScreenPageAdd),
                           ),
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 24),
-                    if (_pages.isEmpty)
-                      Text(l10n.adminTv2EditorNoPages)
-                    else ...[
-                      Text(
-                        l10n.adminTv2EditorReorderHint,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                      const SizedBox(height: 8),
-                      IgnorePointer(
-                        ignoring: _savingPageOrder,
-                        child: Opacity(
-                          opacity: _savingPageOrder ? 0.55 : 1,
-                          child: ReorderableListView(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            buildDefaultDragHandles: false,
-                            onReorder: (oldIndex, newIndex) =>
-                                _onReorderTv2Pages(oldIndex, newIndex, l10n),
-                            children: [
-                              for (var i = 0; i < _pages.length; i++)
-                                _PageCard(
-                                  key: ValueKey<int>(_pages[i].id),
-                                  reorderListIndex: i,
-                                  pageListRow: _pages[i],
-                                  detail: _detailByPageId[_pages[i].id],
-                                  l10n: l10n,
-                                  combosRepo: widget.combosRepo,
-                                  uploadRepo: widget.uploadRepo,
-                                  onExpand: () => _loadDetail(_pages[i].id),
-                                  onSaveTitles: (a, b) =>
-                                      _saveTitles(_pages[i].id, a, b, l10n),
-                                  onPickItem: (role) =>
-                                      _pickItemDialog(_pages[i].id, role, l10n),
-                                  onRemoveItem: (rowId) =>
-                                      _removeItem(_pages[i].id, rowId, l10n),
-                                  onReorderItems: (role, oldI, newI) =>
-                                      _reorderPageItems(
-                                        _pages[i].id,
-                                        role,
-                                        oldI,
-                                        newI,
-                                        l10n,
-                                      ),
-                                  onPatchTvVideoBg: (m) =>
-                                      _patchTvVideoBg(_pages[i].id, m),
-                                  onPatchPageLayout: (m) =>
-                                      _patchPageLayout(_pages[i].id, m),
-                                  onVideoBgPickHero: () =>
-                                      _videoBgPickHero(_pages[i].id, l10n),
-                                  onVideoBgApplyCombo: (cid) =>
-                                      _videoBgApplyCombo(_pages[i].id, cid, l10n),
-                                  onVideoBgSwitchToMenuMode: () =>
-                                      _videoBgSwitchToMenuMode(_pages[i].id),
-                                  onVideoBgSwitchToComboMode: () =>
-                                      _videoBgSwitchToComboMode(_pages[i].id),
-                                  onDeletePage: () =>
-                                      _confirmDeletePage(_pages[i], l10n),
-                                  roleLabel: (ln, role) =>
-                                      _roleLabelForPageType(
-                                        ln,
-                                        _pages[i].pageType,
-                                        role,
-                                      ),
-                                ),
-                            ],
+                    );
+
+                    if (_pages.isEmpty) {
+                      return ListView(
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          header,
+                          const SizedBox(height: 24),
+                          Text(l10n.adminTv2EditorNoPages),
+                        ],
+                      );
+                    }
+
+                    if (!wide) {
+                      return ListView(
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          header,
+                          const SizedBox(height: 24),
+                          Text(
+                            l10n.adminTv2EditorReorderHint,
+                            style: Theme.of(context).textTheme.bodySmall,
                           ),
-                        ),
+                          const SizedBox(height: 8),
+                          IgnorePointer(
+                            ignoring: _savingPageOrder,
+                            child: Opacity(
+                              opacity: _savingPageOrder ? 0.55 : 1,
+                              child: ReorderableListView(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                buildDefaultDragHandles: false,
+                                onReorder: (oldIndex, newIndex) =>
+                                    _onReorderTv2Pages(oldIndex, newIndex, l10n),
+                                children: [
+                                  for (var i = 0; i < _pages.length; i++)
+                                    _buildTv2PageCard(i, l10n),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    }
+
+                    final selectedIndex = _pages.indexWhere(
+                      (p) => p.id == _selectedPageId,
+                    );
+
+                    return AdminTvMasterDetailLayout(
+                      header: header,
+                      master: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            l10n.adminTv2EditorReorderHint,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 8),
+                          for (final p in _pages)
+                            AdminTvPageMasterTile(
+                              title:
+                                  '${l10n.adminTv2EditorPageLabel} #${p.id} · ${p.pageType}',
+                              subtitle: l10n.adminScreenPageItems(p.itemsCount),
+                              selected: p.id == _selectedPageId,
+                              onTap: () {
+                                setState(() => _selectedPageId = p.id);
+                                unawaited(_loadDetail(p.id));
+                              },
+                              onDelete: () => _confirmDeletePage(p, l10n),
+                            ),
+                        ],
                       ),
-                    ],
-                  ],
+                      detail: selectedIndex < 0
+                          ? null
+                          : _buildTv2PageCard(selectedIndex, l10n, detailOnly: true),
+                    );
+                  },
                 ),
     );
   }
@@ -1562,9 +1709,12 @@ class _PageDetail {
 class _PageCard extends StatefulWidget {
   const _PageCard({
     super.key,
+    this.detailOnly = false,
     required this.reorderListIndex,
     required this.pageListRow,
     required this.detail,
+    required this.expansionController,
+    required this.onExpansionChanged,
     required this.l10n,
     required this.combosRepo,
     required this.uploadRepo,
@@ -1584,9 +1734,12 @@ class _PageCard extends StatefulWidget {
   });
 
   /// Индекс в [ReorderableListView] для [ReorderableDragStartListener].
+  final bool detailOnly;
   final int reorderListIndex;
   final AdminScreenPageRow pageListRow;
   final _PageDetail? detail;
+  final ExpansionTileController expansionController;
+  final ValueChanged<bool> onExpansionChanged;
   final AppLocalizations l10n;
   final CombosAdminRepository combosRepo;
   final UploadRepository uploadRepo;
@@ -1613,6 +1766,53 @@ class _PageCardState extends State<_PageCard> {
   late final TextEditingController _listCtrl;
   late final TextEditingController _secondCtrl;
   String _addRole = 'list';
+  final Map<String, dynamic> _pendingLayoutPatch = {};
+  bool _layoutDirty = false;
+  bool _savingLayout = false;
+
+  Map<String, dynamic> _effectivePageConfig() {
+    final base = Map<String, dynamic>.from(
+      widget.detail?.page.config ?? widget.pageListRow.config ?? {},
+    );
+    for (final e in _pendingLayoutPatch.entries) {
+      if (e.value == null) {
+        base.remove(e.key);
+      } else {
+        base[e.key] = e.value;
+      }
+    }
+    return base;
+  }
+
+  void _mergeLayoutDraft(Map<String, dynamic> patch) {
+    setState(() {
+      for (final e in patch.entries) {
+        if (e.value == null) {
+          _pendingLayoutPatch.remove(e.key);
+        } else {
+          _pendingLayoutPatch[e.key] = e.value;
+        }
+      }
+      _layoutDirty = _pendingLayoutPatch.isNotEmpty;
+    });
+  }
+
+  Future<void> _savePageLayout() async {
+    if (!_layoutDirty || _pendingLayoutPatch.isEmpty || _savingLayout) {
+      return;
+    }
+    setState(() => _savingLayout = true);
+    try {
+      await widget.onPatchPageLayout(Map<String, dynamic>.from(_pendingLayoutPatch));
+      if (!mounted) return;
+      setState(() {
+        _pendingLayoutPatch.clear();
+        _layoutDirty = false;
+      });
+    } finally {
+      if (mounted) setState(() => _savingLayout = false);
+    }
+  }
 
   void _onPreviewTitles() {
     if (mounted) setState(() {});
@@ -1666,7 +1866,7 @@ class _PageCardState extends State<_PageCard> {
     final listOnly = _tv2EditorIsCatalogPage(p.pageType);
     final productGrid = _tv2EditorIsProductGrid(p.pageType);
     final videoBg = pt == 'video_bg';
-    final pageCfg = widget.detail?.page.config;
+    final pageCfg = _effectivePageConfig();
     final roles = _tv2EditorRoles(p.pageType, pageCfg);
 
     final subtitleHint = videoBg
@@ -1677,12 +1877,262 @@ class _PageCardState extends State<_PageCard> {
                 ? l10n.adminTv2EditorPageHintList
                 : l10n.adminTv2EditorPageHintSplit;
 
+    final editorBody = Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (!videoBg) ...[
+            TextField(
+              controller: _listCtrl,
+              decoration: InputDecoration(
+                labelText: listOnly
+                    ? (_tv2EditorIsProductGrid(p.pageType)
+                        ? l10n.adminTv2EditorProductGridTitleRu
+                        : l10n.adminTv2EditorListGridTitleRu)
+                    : l10n.adminTv2EditorListTitleRu,
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            if (!listOnly) ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: _secondCtrl,
+                decoration: InputDecoration(
+                  labelText: l10n.adminTv2EditorSecondTitleRu,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+            FilledButton(
+              onPressed: () => widget.onSaveTitles(_listCtrl.text, _secondCtrl.text),
+              child: Text(l10n.adminTv2EditorSaveTitles),
+            ),
+            if (productGrid) ...[
+              const Divider(height: 24),
+              _ProductGridLayoutEditor(
+                l10n: l10n,
+                config: pageCfg,
+                itemCount: items
+                    .where((e) => e.role.toLowerCase().trim() == 'list')
+                    .length,
+                onDraftChanged: _mergeLayoutDraft,
+              ),
+            ],
+            if (!videoBg) ...[
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                key: ValueKey<String>(
+                  'ptr-${_readPageTransition(pageCfg)}-$_layoutDirty',
+                ),
+                isExpanded: true,
+                initialValue: _readPageTransition(pageCfg),
+                decoration: InputDecoration(
+                  labelText: l10n.adminTv2PageTransitionPerPage,
+                  helperText: l10n.adminTv2PageTransitionPerPageHint,
+                  border: const OutlineInputBorder(),
+                ),
+                items: [
+                  DropdownMenuItem(
+                    value: '',
+                    child: Text(l10n.adminTv2PageTransitionInherit),
+                  ),
+                  DropdownMenuItem(
+                    value: 'fade',
+                    child: Text(l10n.adminTvTransitionFade),
+                  ),
+                  DropdownMenuItem(
+                    value: 'slideUp',
+                    child: Text(l10n.adminTvTransitionSlideUp),
+                  ),
+                  DropdownMenuItem(
+                    value: 'slide',
+                    child: Text(l10n.adminTvTransitionSlide),
+                  ),
+                  DropdownMenuItem(
+                    value: 'crossFade',
+                    child: Text(l10n.adminTvTransitionCrossFade),
+                  ),
+                  DropdownMenuItem(
+                    value: 'scale',
+                    child: Text(l10n.adminTvTransitionScale),
+                  ),
+                  DropdownMenuItem(
+                    value: 'none',
+                    child: Text(l10n.adminTvTransitionNone),
+                  ),
+                ],
+                onChanged: (v) => _mergeLayoutDraft({
+                  'pageTransition': (v == null || v.isEmpty) ? null : v,
+                }),
+              ),
+            ],
+            if (_layoutDirty) ...[
+              const SizedBox(height: 8),
+              Text(
+                l10n.adminTv2PageLayoutUnsavedHint,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: _savingLayout ? null : _savePageLayout,
+                icon: _savingLayout
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.save_outlined),
+                label: Text(l10n.adminTv2PageLayoutSaveButton),
+              ),
+            ],
+            const Divider(height: 24),
+            _Tv2OptionalBackgroundVideoEditor(
+              l10n: l10n,
+              config: pageCfg,
+              uploadRepo: widget.uploadRepo,
+              onPatchTvVideoBg: widget.onPatchTvVideoBg,
+            ),
+          ],
+          if (videoBg) ...[
+            _VideoBgPageEditor(
+              l10n: l10n,
+              config: widget.detail?.page.config,
+              combosRepo: widget.combosRepo,
+              uploadRepo: widget.uploadRepo,
+              onPatchTvVideoBg: widget.onPatchTvVideoBg,
+              onVideoBgPickHero: widget.onVideoBgPickHero,
+              onVideoBgApplyCombo: widget.onVideoBgApplyCombo,
+              onVideoBgSwitchToMenuMode: widget.onVideoBgSwitchToMenuMode,
+              onVideoBgSwitchToComboMode: widget.onVideoBgSwitchToComboMode,
+            ),
+            const SizedBox(height: 16),
+            _Tv2LayoutMiniPreview(
+              pageType: p.pageType,
+              listTitle: _listCtrl.text.trim(),
+              secondTitle: listOnly ? '' : _secondCtrl.text.trim(),
+              items: items,
+              l10n: l10n,
+              pageConfig: widget.detail?.page.config,
+            ),
+          ],
+          if (roles.isNotEmpty) ...[
+            const Divider(height: 24),
+            Text(
+              l10n.adminTv2EditorItemsSection,
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            _Tv2LayoutMiniPreview(
+              pageType: p.pageType,
+              listTitle: _listCtrl.text.trim(),
+              secondTitle: listOnly ? '' : _secondCtrl.text.trim(),
+              items: items,
+              l10n: l10n,
+              pageConfig: widget.detail?.page.config,
+            ),
+            const SizedBox(height: 16),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                DropdownButtonFormField<String>(
+                  key: ValueKey<String>('${_addRole}_${roles.join()}'),
+                  isExpanded: true,
+                  initialValue: roles.contains(_addRole) ? _addRole : roles.first,
+                  decoration: InputDecoration(
+                    labelText: l10n.adminTv2EditorAddAsRole,
+                    border: const OutlineInputBorder(),
+                  ),
+                  items: [
+                    for (final r in roles)
+                      DropdownMenuItem(
+                        value: r,
+                        child: Text(
+                          widget.roleLabel(l10n, r),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setState(() => _addRole = v);
+                  },
+                ),
+                const SizedBox(height: 8),
+                FilledButton.tonal(
+                  onPressed: () => widget.onPickItem(_addRole),
+                  child: Text(l10n.adminTv2EditorAddFromMenu),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (items.isEmpty)
+              Text(
+                l10n.adminTv2EditorNoItemsOnPage,
+                style: Theme.of(context).textTheme.bodySmall,
+              )
+            else
+              _PageItemsReorderSection(
+                items: items,
+                roles: roles,
+                l10n: l10n,
+                roleLabel: widget.roleLabel,
+                onRemoveItem: widget.onRemoveItem,
+                onReorderItems: widget.onReorderItems,
+              ),
+          ],
+        ],
+      ),
+    );
+
+    if (widget.detailOnly) {
+      return Card(
+        margin: EdgeInsets.zero,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 8, 0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${l10n.adminTv2EditorPageLabel} #${p.id} · ${p.pageType}',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: l10n.actionDelete,
+                    icon: Icon(
+                      Icons.delete_outline_rounded,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                    onPressed: () => widget.onDeletePage(),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+              child: Text(
+                subtitleHint,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+            editorBody,
+          ],
+        ),
+      );
+    }
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: ExpansionTile(
-        onExpansionChanged: (open) {
-          if (open) widget.onExpand();
-        },
+        controller: widget.expansionController,
+        onExpansionChanged: widget.onExpansionChanged,
         title: Row(
           children: [
             ReorderableDragStartListener(
@@ -1714,198 +2164,7 @@ class _PageCardState extends State<_PageCard> {
           subtitleHint,
           style: Theme.of(context).textTheme.bodySmall,
         ),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (!videoBg) ...[
-                  TextField(
-                    controller: _listCtrl,
-                    decoration: InputDecoration(
-                      labelText: listOnly
-                          ? (_tv2EditorIsProductGrid(p.pageType)
-                              ? l10n.adminTv2EditorProductGridTitleRu
-                              : l10n.adminTv2EditorListGridTitleRu)
-                          : l10n.adminTv2EditorListTitleRu,
-                      border: const OutlineInputBorder(),
-                    ),
-                  ),
-                  if (!listOnly) ...[
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _secondCtrl,
-                      decoration: InputDecoration(
-                        labelText: l10n.adminTv2EditorSecondTitleRu,
-                        border: const OutlineInputBorder(),
-                      ),
-                    ),
-                  ],
-                  const SizedBox(height: 8),
-                  FilledButton(
-                    onPressed: () => widget.onSaveTitles(_listCtrl.text, _secondCtrl.text),
-                    child: Text(l10n.adminTv2EditorSaveTitles),
-                  ),
-                  if (productGrid) ...[
-                    const Divider(height: 24),
-                    _ProductGridLayoutEditor(
-                      l10n: l10n,
-                      config: pageCfg,
-                      itemCount: items
-                          .where((e) => e.role.toLowerCase().trim() == 'list')
-                          .length,
-                      onPatch: widget.onPatchPageLayout,
-                    ),
-                  ],
-                  if (!videoBg) ...[
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      key: ValueKey<String>(
-                        'ptr-${_readPageTransition(pageCfg)}',
-                      ),
-                      isExpanded: true,
-                      initialValue: _readPageTransition(pageCfg),
-                      decoration: InputDecoration(
-                        labelText: l10n.adminTv2PageTransitionPerPage,
-                        helperText: l10n.adminTv2PageTransitionPerPageHint,
-                        border: const OutlineInputBorder(),
-                      ),
-                      items: [
-                        DropdownMenuItem(
-                          value: '',
-                          child: Text(l10n.adminTv2PageTransitionInherit),
-                        ),
-                        DropdownMenuItem(
-                          value: 'fade',
-                          child: Text(l10n.adminTvTransitionFade),
-                        ),
-                        DropdownMenuItem(
-                          value: 'slideUp',
-                          child: Text(l10n.adminTvTransitionSlideUp),
-                        ),
-                        DropdownMenuItem(
-                          value: 'slide',
-                          child: Text(l10n.adminTvTransitionSlide),
-                        ),
-                        DropdownMenuItem(
-                          value: 'crossFade',
-                          child: Text(l10n.adminTvTransitionCrossFade),
-                        ),
-                        DropdownMenuItem(
-                          value: 'scale',
-                          child: Text(l10n.adminTvTransitionScale),
-                        ),
-                        DropdownMenuItem(
-                          value: 'none',
-                          child: Text(l10n.adminTvTransitionNone),
-                        ),
-                      ],
-                      onChanged: (v) => widget.onPatchPageLayout({
-                        'pageTransition':
-                            (v == null || v.isEmpty) ? null : v,
-                      }),
-                    ),
-                  ],
-                  const Divider(height: 24),
-                  _Tv2OptionalBackgroundVideoEditor(
-                    l10n: l10n,
-                    config: pageCfg,
-                    uploadRepo: widget.uploadRepo,
-                    onPatchTvVideoBg: widget.onPatchTvVideoBg,
-                  ),
-                ],
-                if (videoBg) ...[
-                  _VideoBgPageEditor(
-                    l10n: l10n,
-                    config: widget.detail?.page.config,
-                    combosRepo: widget.combosRepo,
-                    uploadRepo: widget.uploadRepo,
-                    onPatchTvVideoBg: widget.onPatchTvVideoBg,
-                    onVideoBgPickHero: widget.onVideoBgPickHero,
-                    onVideoBgApplyCombo: widget.onVideoBgApplyCombo,
-                    onVideoBgSwitchToMenuMode: widget.onVideoBgSwitchToMenuMode,
-                    onVideoBgSwitchToComboMode: widget.onVideoBgSwitchToComboMode,
-                  ),
-                  const SizedBox(height: 16),
-                  _Tv2LayoutMiniPreview(
-                    pageType: p.pageType,
-                    listTitle: _listCtrl.text.trim(),
-                    secondTitle: listOnly ? '' : _secondCtrl.text.trim(),
-                    items: items,
-                    l10n: l10n,
-                    pageConfig: widget.detail?.page.config,
-                  ),
-                ],
-                if (roles.isNotEmpty) ...[
-                  const Divider(height: 24),
-                  Text(
-                    l10n.adminTv2EditorItemsSection,
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                  const SizedBox(height: 8),
-                  _Tv2LayoutMiniPreview(
-                    pageType: p.pageType,
-                    listTitle: _listCtrl.text.trim(),
-                    secondTitle: listOnly ? '' : _secondCtrl.text.trim(),
-                    items: items,
-                    l10n: l10n,
-                    pageConfig: widget.detail?.page.config,
-                  ),
-                  const SizedBox(height: 16),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      DropdownButtonFormField<String>(
-                        key: ValueKey<String>('${_addRole}_${roles.join()}'),
-                        isExpanded: true,
-                        initialValue: roles.contains(_addRole) ? _addRole : roles.first,
-                        decoration: InputDecoration(
-                          labelText: l10n.adminTv2EditorAddAsRole,
-                          border: const OutlineInputBorder(),
-                        ),
-                        items: [
-                          for (final r in roles)
-                            DropdownMenuItem(
-                              value: r,
-                              child: Text(
-                                widget.roleLabel(l10n, r),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                        ],
-                        onChanged: (v) {
-                          if (v != null) setState(() => _addRole = v);
-                        },
-                      ),
-                      const SizedBox(height: 8),
-                      FilledButton.tonal(
-                        onPressed: () => widget.onPickItem(_addRole),
-                        child: Text(l10n.adminTv2EditorAddFromMenu),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  if (items.isEmpty)
-                    Text(
-                      l10n.adminTv2EditorNoItemsOnPage,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    )
-                  else
-                    _PageItemsReorderSection(
-                      items: items,
-                      roles: roles,
-                      l10n: l10n,
-                      roleLabel: widget.roleLabel,
-                      onRemoveItem: widget.onRemoveItem,
-                      onReorderItems: widget.onReorderItems,
-                    ),
-                ],
-              ],
-            ),
-          ),
-        ],
+        children: [editorBody],
       ),
     );
   }
@@ -2495,13 +2754,13 @@ class _ProductGridLayoutEditor extends StatefulWidget {
     required this.l10n,
     required this.config,
     required this.itemCount,
-    required this.onPatch,
+    required this.onDraftChanged,
   });
 
   final AppLocalizations l10n;
   final Map<String, dynamic>? config;
   final int itemCount;
-  final Future<void> Function(Map<String, dynamic> patch) onPatch;
+  final void Function(Map<String, dynamic> patch) onDraftChanged;
 
   @override
   State<_ProductGridLayoutEditor> createState() =>
@@ -2511,45 +2770,77 @@ class _ProductGridLayoutEditor extends StatefulWidget {
 class _ProductGridLayoutEditorState extends State<_ProductGridLayoutEditor> {
   late int _cols;
   late String _cardSize;
+  late TvProductGridSizeMode _nameMode;
+  late TvProductGridSizeMode _priceMode;
+  late double _nameSize;
+  late double _priceSize;
+  late double _textScale;
   double _dragAccum = 0;
 
   @override
   void initState() {
     super.initState();
-    _cols = _readProductGridColsFromCfg(widget.config);
-    _cardSize = _readProductGridCardSize(widget.config);
+    _syncFromConfig(widget.config);
   }
 
   @override
   void didUpdateWidget(covariant _ProductGridLayoutEditor oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.config != widget.config) {
-      _cols = _readProductGridColsFromCfg(widget.config);
-      _cardSize = _readProductGridCardSize(widget.config);
+      _syncFromConfig(widget.config);
     }
+  }
+
+  void _syncFromConfig(Map<String, dynamic>? cfg) {
+    _cols = _readProductGridColsFromCfg(cfg);
+    _cardSize = _readProductGridCardSize(cfg);
+    final t = _readProductGridTypography(cfg);
+    _nameMode = t.nameSizeMode;
+    _priceMode = t.priceSizeMode;
+    _nameSize = t.nameSize ?? 26;
+    _priceSize = t.priceSize ?? 24;
+    _textScale = t.textScale;
   }
 
   int get _displayCols =>
       _cols > 0 ? _cols : _previewProductGridCols(widget.config);
 
-  Future<void> _commitCols(int cols) async {
+  void _emitDraft() {
+    widget.onDraftChanged({
+      'tv2ProductGridColumns':
+          (_cols >= 2 && _cols <= 5) ? _cols : null,
+      'tv2ProductGridCardSize': _cardSize,
+      'tv2ProductGridNameSizeMode':
+          _nameMode == TvProductGridSizeMode.auto ? 'auto' : 'manual',
+      'tv2ProductGridNameSize':
+          _nameMode == TvProductGridSizeMode.manual ? _nameSize.round() : null,
+      'tv2ProductGridPriceSizeMode':
+          _priceMode == TvProductGridSizeMode.auto ? 'auto' : 'manual',
+      'tv2ProductGridPriceSize': _priceMode == TvProductGridSizeMode.manual
+          ? _priceSize.round()
+          : null,
+      'tv2ProductGridTextScale': _textScale == 1.0 ? null : _textScale,
+    });
+  }
+
+  void _commitCols(int cols) {
     setState(() => _cols = cols);
-    if (cols >= 2 && cols <= 5) {
-      await widget.onPatch({'tv2ProductGridColumns': cols});
-    } else {
-      await widget.onPatch({'tv2ProductGridColumns': null});
-    }
+    _emitDraft();
   }
 
   void _bumpCols(int delta) {
     var next = _cols <= 0 ? 3 : _cols;
     next = (next + delta).clamp(2, 5);
-    unawaited(_commitCols(next));
+    _commitCols(next);
   }
 
-  Future<void> _commitCardSize(String size) async {
+  void _commitCardSize(String size) {
     setState(() => _cardSize = size);
-    await widget.onPatch({'tv2ProductGridCardSize': size});
+    _emitDraft();
+  }
+
+  void _commitTypography() {
+    _emitDraft();
   }
 
   String _cardSizeLabel(AppLocalizations l10n, String size) {
@@ -2613,10 +2904,7 @@ class _ProductGridLayoutEditorState extends State<_ProductGridLayoutEditor> {
             ),
           ],
           selected: {_cardSize},
-          onSelectionChanged: (s) {
-            final v = s.first;
-            unawaited(_commitCardSize(v));
-          },
+          onSelectionChanged: (s) => _commitCardSize(s.first),
         ),
         Padding(
           padding: const EdgeInsets.only(top: 6),
@@ -2627,6 +2915,103 @@ class _ProductGridLayoutEditorState extends State<_ProductGridLayoutEditor> {
             ),
           ),
         ),
+        const SizedBox(height: 16),
+        Text(
+          l10n.adminTv2ProductGridTypographyTitle,
+          style: theme.textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          l10n.adminTv2ProductGridTypographyHint,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(l10n.adminTv2ProductGridNameSizeLabel, style: theme.textTheme.labelLarge),
+        const SizedBox(height: 6),
+        SegmentedButton<TvProductGridSizeMode>(
+          segments: [
+            ButtonSegment(
+              value: TvProductGridSizeMode.auto,
+              label: Text(l10n.adminTv2ProductGridSizeAuto),
+            ),
+            ButtonSegment(
+              value: TvProductGridSizeMode.manual,
+              label: Text(l10n.adminTv2ProductGridSizeManual),
+            ),
+          ],
+          selected: {_nameMode},
+          onSelectionChanged: (s) {
+            setState(() => _nameMode = s.first);
+            _commitTypography();
+          },
+        ),
+        if (_nameMode == TvProductGridSizeMode.manual) ...[
+          Slider(
+            value: _nameSize,
+            min: 14,
+            max: 48,
+            divisions: 34,
+            label: '${_nameSize.round()}',
+            onChanged: (v) => setState(() => _nameSize = v),
+            onChangeEnd: (_) => _commitTypography(),
+          ),
+        ],
+        const SizedBox(height: 8),
+        Text(l10n.adminTv2ProductGridPriceSizeLabel, style: theme.textTheme.labelLarge),
+        const SizedBox(height: 6),
+        SegmentedButton<TvProductGridSizeMode>(
+          segments: [
+            ButtonSegment(
+              value: TvProductGridSizeMode.auto,
+              label: Text(l10n.adminTv2ProductGridSizeAuto),
+            ),
+            ButtonSegment(
+              value: TvProductGridSizeMode.manual,
+              label: Text(l10n.adminTv2ProductGridSizeManual),
+            ),
+          ],
+          selected: {_priceMode},
+          onSelectionChanged: (s) {
+            setState(() => _priceMode = s.first);
+            _commitTypography();
+          },
+        ),
+        if (_priceMode == TvProductGridSizeMode.manual) ...[
+          Slider(
+            value: _priceSize,
+            min: 12,
+            max: 44,
+            divisions: 32,
+            label: '${_priceSize.round()}',
+            onChanged: (v) => setState(() => _priceSize = v),
+            onChangeEnd: (_) => _commitTypography(),
+          ),
+        ],
+        if (_nameMode == TvProductGridSizeMode.auto &&
+            _priceMode == TvProductGridSizeMode.auto) ...[
+          const SizedBox(height: 4),
+          Text(
+            l10n.adminTv2ProductGridTextScaleLabel,
+            style: theme.textTheme.labelLarge,
+          ),
+          Slider(
+            value: _textScale,
+            min: 0.75,
+            max: 1.35,
+            divisions: 12,
+            label: _textScale.toStringAsFixed(2),
+            onChanged: (v) => setState(() => _textScale = v),
+            onChangeEnd: (_) => _commitTypography(),
+          ),
+          Text(
+            l10n.adminTv2ProductGridTextScaleHint,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
         const SizedBox(height: 12),
         GestureDetector(
           onHorizontalDragUpdate: (d) {
@@ -2641,7 +3026,7 @@ class _ProductGridLayoutEditorState extends State<_ProductGridLayoutEditor> {
           onHorizontalDragEnd: (_) {
             _dragAccum = 0;
             final commit = _cols <= 0 ? 3 : _cols;
-            unawaited(_commitCols(commit));
+            _commitCols(commit);
           },
           child: AspectRatio(
             aspectRatio: 16 / 9,
@@ -2724,7 +3109,7 @@ class _ProductGridLayoutEditorState extends State<_ProductGridLayoutEditor> {
               icon: const Icon(Icons.add_rounded),
             ),
             TextButton(
-              onPressed: () => unawaited(_commitCols(0)),
+              onPressed: () => _commitCols(0),
               child: Text(l10n.adminScreenColsAuto),
             ),
           ],

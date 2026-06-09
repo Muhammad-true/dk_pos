@@ -88,6 +88,23 @@ class CartState extends Equatable {
 
   bool get hasMultipleChecks => checks.length > 1;
 
+  /// Отпечаток корзины для синхронизации с экраном клиента.
+  String get customerDisplayCartKey {
+    final parts = <String>[
+      activeCheckId,
+      't:$activeOrderTypeIndex',
+      'n:${lines.length}',
+      'q:$itemCount',
+      'sum:$total',
+      'pay:$payableTotal',
+      'disc:${paymentAdjustment?.totalDiscount ?? 0}',
+    ];
+    for (final line in sortedLines) {
+      parts.add('${line.lineKey}:${line.quantity}:${line.lineTotal}');
+    }
+    return parts.join('|');
+  }
+
   @override
   List<Object?> get props =>
       [checks, activeCheckId, lines, activeOrderTypeIndex, paymentAdjustment];

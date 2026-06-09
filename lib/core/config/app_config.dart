@@ -38,9 +38,33 @@ class AppConfig {
     _apiOriginOverride = null;
   }
 
+  /// Подсказка в поле IP (не используется для подключения).
+  static const String serverHostInputHint = '192.168.1.x';
+
+  /// @deprecated Используйте [serverHostInputHint]. Оставлено для совместимости UI.
+  static const String defaultServerHost = serverHostInputHint;
+
   static bool get isLocalhostApi {
     final host = Uri.tryParse(apiOrigin)?.host.toLowerCase();
     return host == '127.0.0.1' || host == 'localhost';
+  }
+
+  /// Хост для поля «IP сервера» на экране подключения.
+  static String serverInputHintHost({String? savedOrigin}) {
+    if (savedOrigin != null && savedOrigin.trim().isNotEmpty) {
+      final host = Uri.tryParse(savedOrigin.trim())?.host;
+      if (host != null && host.isNotEmpty) return host;
+    }
+    if (!isLocalhostApi) {
+      final host = Uri.tryParse(apiOrigin)?.host;
+      if (host != null &&
+          host.isNotEmpty &&
+          host != '127.0.0.1' &&
+          host != 'localhost') {
+        return host;
+      }
+    }
+    return '';
   }
 
   /// Второе окно (экран покупателя) на Windows. Отключите на терминале, где из‑за него зависает или закрывается приложение.
@@ -63,11 +87,11 @@ class AppConfig {
     return n.clamp(10, 120);
   }
 
-  /// Минимальный интервал между реакциями на realtime-события (мс).
+  /// Минимальный интервал между реакциями на realtime-события (мс). 0 = сразу.
   static int get cashierRealtimeMinGapMs {
     final n = _readInt('POS_CASHIER_REALTIME_MIN_GAP_MS');
-    if (n == null) return 2500;
-    return n.clamp(500, 10000);
+    if (n == null) return 0;
+    return n.clamp(0, 10000);
   }
 
   /// Период обновления счётчиков сборки/выдачи для бейджа кассы (сек).
@@ -77,16 +101,18 @@ class AppConfig {
     return n.clamp(10, 180);
   }
 
-  /// Включить модуль сборщика (очередь bundling/pickup).
-  /// По умолчанию выключен для упрощенного потока кухня -> касса.
-  /// В `.env`: `POS_ENABLE_EXPEDITOR=true`
+  /// Модуль сортировщика (очередь сборка/выдача). По умолчанию включён.
+  /// Отключить: `POS_ENABLE_EXPEDITOR=false` в `.env`.
   static bool get posEnableExpeditor {
     try {
       final raw = dotenv.maybeGet('POS_ENABLE_EXPEDITOR')?.trim().toLowerCase();
-      if (raw == null || raw.isEmpty) return false;
+      if (raw == null || raw.isEmpty) return true;
+      if (raw == '0' || raw == 'false' || raw == 'no' || raw == 'off') {
+        return false;
+      }
       return raw == '1' || raw == 'true' || raw == 'yes' || raw == 'on';
     } catch (_) {
-      return false;
+      return true;
     }
   }
 

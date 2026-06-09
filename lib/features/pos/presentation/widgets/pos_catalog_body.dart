@@ -1,28 +1,34 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:reorderable_grid_view/reorderable_grid_view.dart';
-
-import 'package:dk_digitial_menu/widgets/robust_network_image.dart';
-import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/app/pos_catalog_grid/pos_catalog_grid_cubit.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
+import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
 import 'package:dk_pos/features/menu/bloc/menu_bloc.dart';
 import 'package:dk_pos/features/pos/bloc/pos_hall_orders_cubit.dart';
 import 'package:dk_pos/features/menu/bloc/menu_event.dart';
 import 'package:dk_pos/features/menu/bloc/menu_state.dart';
 import 'package:dk_pos/features/pos/data/pos_catalog_local_order_store.dart';
+import 'package:dk_pos/features/pos/presentation/customer_display_window_service.dart';
+import 'package:dk_pos/features/pos/presentation/widgets/pos_product_image.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
 import 'package:dk_pos/shared/shared.dart';
 
+import 'pos_catalog_category_style.dart';
 import 'pos_menu_item_card.dart';
 import 'pos_modifier_sheet.dart';
 
 /// Иерархия категорий: назад, крошки, дочерние узлы, товары текущего уровня.
-///
+typedef PosCatalogAddItemCallback = Future<void> Function(
+  PosMenuItem item,
+  Rect sourceGlobalRect,
+);
+
 /// Порядок корневых категорий и товаров в выбранной категории можно менять
 /// удержанием и перетаскиванием; сохраняется на устройстве отдельно по роли
 /// (касса / официант и т.д.) — одинаково на Windows и Android.
@@ -37,7 +43,7 @@ class PosCatalogBody extends StatefulWidget {
 
   final MenuState menu;
   final double catalogPaneWidth;
-  final Future<void> Function(PosMenuItem item) onAddItem;
+  final PosCatalogAddItemCallback onAddItem;
 
   /// Режим «добавить к открытому счёту» — выше карточки, уже сетка.
   final bool orderAppendMode;
@@ -60,6 +66,29 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
   String? _orderPrefsScope;
 
   @override
+  void initState() {
+    super.initState();
+    _itemsScroll.addListener(_onItemsScroll);
+  }
+
+  void _onItemsScroll() {
+    if (!CustomerDisplayWindowService.instance.isMenuMode) return;
+    if (!_itemsScroll.hasClients) return;
+    CustomerDisplayWindowService.instance.noteCatalogScrollOffset(
+      _itemsScroll.offset,
+    );
+  }
+
+  @override
+  void didUpdateWidget(PosCatalogBody oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.menu.pathIds != widget.menu.pathIds && _itemsScroll.hasClients) {
+      _itemsScroll.jumpTo(0);
+      CustomerDisplayWindowService.instance.noteCatalogScrollOffset(0);
+    }
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final role = context.watch<AuthBloc>().state.user?.role;
@@ -75,6 +104,7 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
 
   @override
   void dispose() {
+    _itemsScroll.removeListener(_onItemsScroll);
     _rootCatScroll.dispose();
     _horizCatScroll.dispose();
     _itemsScroll.dispose();
@@ -139,6 +169,33 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
     return (edge * ramp).clamp(4.0, 36.0);
   }
 
+  void _pushCustomerDisplayCatalogSync(
+    BuildContext context, {
+    List<int>? pathIds,
+  }) {
+    final svc = CustomerDisplayWindowService.instance;
+    if (!svc.isOpen || !svc.isMenuMode) return;
+    final menu = context.read<MenuBloc>().state;
+    final cart = context.read<CartBloc>().state;
+    unawaited(
+      svc.pushMenuAndCartSync(menu: menu, cart: cart, pathIds: pathIds),
+    );
+  }
+
+  void _selectRootCategory(BuildContext context, int categoryId) {
+    final nextPath = [categoryId];
+    context.read<MenuBloc>().add(MenuCatalogPathSet(nextPath));
+    _pushCustomerDisplayCatalogSync(context, pathIds: nextPath);
+  }
+
+  void _goCatalogBack(BuildContext context) {
+    final menu = context.read<MenuBloc>().state;
+    if (menu.pathIds.isEmpty) return;
+    final nextPath = menu.pathIds.sublist(0, menu.pathIds.length - 1);
+    context.read<MenuBloc>().add(const MenuCatalogBack());
+    _pushCustomerDisplayCatalogSync(context, pathIds: nextPath);
+  }
+
   @override
   Widget build(BuildContext context) {
     final menu = widget.menu;
@@ -171,8 +228,7 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
                 if (menu.canGoBack)
                   IconButton(
                     tooltip: l10n.posCatalogBack,
-                    onPressed: () =>
-                        context.read<MenuBloc>().add(const MenuCatalogBack()),
+                    onPressed: () => _goCatalogBack(context),
                     icon: const Icon(Icons.arrow_back_rounded),
                   ),
                 Expanded(
@@ -200,8 +256,7 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
                     if (menu.canGoBack)
                       IconButton(
                         tooltip: l10n.posCatalogBack,
-                        onPressed: () =>
-                            context.read<MenuBloc>().add(const MenuCatalogBack()),
+                        onPressed: () => _goCatalogBack(context),
                         icon: const Icon(Icons.arrow_back_rounded),
                       ),
                     Expanded(
@@ -244,7 +299,7 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
           return PosMenuItemCard(
             key: ValueKey('pos_item_${item.id}'),
             item: item,
-            onAdd: () => widget.onAddItem(item),
+            onAdd: (sourceRect) => widget.onAddItem(item, sourceRect),
             onConfigure: () => _showItemConfigDialog(context, item),
           );
         },
@@ -338,7 +393,7 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
             final c = sideCats[i];
             final hasKids = c.children.isNotEmpty;
             final selected = activeRootId == c.id;
-            final cardColors = _categoryCardColors(i);
+            final cardColors = posCategoryCardColors(i);
             return ReorderableDelayedDragStartListener(
               key: ValueKey('pos_root_cat_${c.id}'),
               index: i,
@@ -346,9 +401,7 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
                 margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
                 elevation: selected ? 3 : 0,
                 child: InkWell(
-                  onTap: () => context.read<MenuBloc>().add(
-                        MenuCatalogPathSet([c.id]),
-                      ),
+                  onTap: () => _selectRootCategory(context, c.id),
                   child: Ink(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -418,7 +471,7 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
           final c = sideCats[i];
           final hasKids = c.children.isNotEmpty;
           final selected = activeRootId == c.id;
-          final cardColors = _categoryCardColors(i);
+          final cardColors = posCategoryCardColors(i);
           return ReorderableDelayedDragStartListener(
             key: ValueKey('pos_h_cat_${c.id}'),
             index: i,
@@ -426,9 +479,7 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
               padding: EdgeInsets.only(right: i < n - 1 ? 8 : 0),
               child: InkWell(
                 borderRadius: BorderRadius.circular(16),
-                onTap: () => context.read<MenuBloc>().add(
-                      MenuCatalogPathSet([c.id]),
-                    ),
+                onTap: () => _selectRootCategory(context, c.id),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   decoration: BoxDecoration(
@@ -607,9 +658,9 @@ class _CategoryAvatar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final imageUrl = _findCategoryPreviewImage(category);
-    final icon = _categoryIcon(category.name);
-    final colors = _categoryColors(category.name);
+    final previewPath = _findCategoryPreviewImagePath(category);
+    final icon = posCategoryIcon(category.name);
+    final colors = posCategoryColors(category.name);
 
     return Container(
       width: size,
@@ -617,7 +668,7 @@ class _CategoryAvatar extends StatelessWidget {
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(borderRadius),
         border: Border.all(color: scheme.outlineVariant),
-        gradient: imageUrl == null
+        gradient: previewPath == null
             ? LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
@@ -626,22 +677,12 @@ class _CategoryAvatar extends StatelessWidget {
             : null,
       ),
       clipBehavior: Clip.antiAlias,
-      child: imageUrl != null
-          ? Builder(
-              builder: (context) {
-                final dpr = MediaQuery.devicePixelRatioOf(context);
-                final px = (size * dpr).round().clamp(1, 4096);
-                return RobustNetworkImage(
-                  url: imageUrl,
-                  fit: BoxFit.cover,
-                  cacheWidth: px,
-                  errorWidget: _CategoryAvatarFallback(
-                    icon: icon,
-                    compact: compact,
-                    colors: colors,
-                  ),
-                );
-              },
+      child: previewPath != null
+          ? PosProductImage(
+              imagePath: previewPath,
+              padding: EdgeInsets.all(compact ? 4 : 6),
+              placeholderIconSize: compact ? 14 : 20,
+              filterQuality: FilterQuality.medium,
             )
           : _CategoryAvatarFallback(
               icon: icon,
@@ -682,69 +723,16 @@ class _CategoryAvatarFallback extends StatelessWidget {
   }
 }
 
-String? _findCategoryPreviewImage(PosCategory category) {
+String? _findCategoryPreviewImagePath(PosCategory category) {
   for (final item in category.items) {
     final path = item.imagePath?.trim();
-    if (path != null && path.isNotEmpty) {
-      final url = AppConfig.mediaUrl(path);
-      if (url.isNotEmpty) return url;
-    }
+    if (path != null && path.isNotEmpty) return path;
   }
   for (final child in category.children) {
-    final nested = _findCategoryPreviewImage(child);
+    final nested = _findCategoryPreviewImagePath(child);
     if (nested != null) return nested;
   }
   return null;
-}
-
-IconData _categoryIcon(String name) {
-  final value = name.toLowerCase();
-  if (value.contains('бург')) return Icons.lunch_dining_rounded;
-  if (value.contains('донер') || value.contains('шаур')) return Icons.kebab_dining_rounded;
-  if (value.contains('комбо')) return Icons.fastfood_rounded;
-  if (value.contains('напит')) return Icons.local_drink_rounded;
-  if (value.contains('соус')) return Icons.soup_kitchen_rounded;
-  if (value.contains('десерт')) return Icons.icecream_rounded;
-  if (value.contains('снек') || value.contains('закуск')) return Icons.tapas_rounded;
-  if (value.contains('карто')) return Icons.set_meal_rounded;
-  return Icons.restaurant_menu_rounded;
-}
-
-List<Color> _categoryColors(String name) {
-  final value = name.toLowerCase();
-  if (value.contains('бург')) {
-    return const [Color(0xFFE4002B), Color(0xFF9F0020)];
-  }
-  if (value.contains('донер') || value.contains('шаур')) {
-    return const [Color(0xFF00A86B), Color(0xFF0A6C4A)];
-  }
-  if (value.contains('комбо')) {
-    return const [Color(0xFFFF7A00), Color(0xFFC25700)];
-  }
-  if (value.contains('напит')) {
-    return const [Color(0xFF1D8BFF), Color(0xFF1353B7)];
-  }
-  if (value.contains('соус')) {
-    return const [Color(0xFFFFC21A), Color(0xFFC78B00)];
-  }
-  if (value.contains('десерт')) {
-    return const [Color(0xFF9B5CFF), Color(0xFF6630C2)];
-  }
-  return const [Color(0xFF5F6B7A), Color(0xFF394350)];
-}
-
-List<Color> _categoryCardColors(int index) {
-  const palette = [
-    [Color(0xFFE4002B), Color(0xFFB00022)],
-    [Color(0xFF14A44D), Color(0xFF0D6B32)],
-    [Color(0xFFFF8A00), Color(0xFFC96A00)],
-    [Color(0xFF2B8DFF), Color(0xFF1A5DD1)],
-    [Color(0xFFFFC107), Color(0xFFD69200)],
-    [Color(0xFFB06CFF), Color(0xFF7F3FE0)],
-    [Color(0xFF00B8A9), Color(0xFF00796B)],
-    [Color(0xFFFF6B6B), Color(0xFFC44545)],
-  ];
-  return palette[index % palette.length];
 }
 
 Future<void> _showItemConfigDialog(BuildContext context, PosMenuItem item) {

@@ -115,7 +115,11 @@ class _LoginScreenState extends State<LoginScreen> {
             p.status != c.status || p.loginError != c.loginError,
         builder: (context, state) {
           final loading = state.status == AuthStatus.authenticating;
-          final scheme = Theme.of(context).colorScheme;
+          final theme = Theme.of(context);
+          final scheme = theme.colorScheme;
+          final fieldStyle = theme.textTheme.bodyLarge?.copyWith(
+            color: scheme.onSurface,
+          );
           final btnStyle = FilledButton.styleFrom(
             minimumSize: const Size.fromHeight(52),
             padding: const EdgeInsets.symmetric(horizontal: 28),
@@ -179,11 +183,15 @@ class _LoginScreenState extends State<LoginScreen> {
                             DropdownButtonFormField<String>(
                               initialValue: null,
                               onChanged: null,
+                              dropdownColor: scheme.surfaceContainerHigh,
+                              style: fieldStyle,
                               decoration: InputDecoration(
                                 labelText: l10n.fieldUsername,
-                                border: const OutlineInputBorder(),
                               ),
-                              hint: const Text('Загрузка пользователей...'),
+                              hint: Text(
+                                'Загрузка пользователей...',
+                                style: fieldStyle,
+                              ),
                               items: const [],
                             )
                           else
@@ -191,15 +199,19 @@ class _LoginScreenState extends State<LoginScreen> {
                               key: ValueKey<String?>('login-user-${_selectedUsername ?? "none"}'),
                               initialValue: _selectedUsername,
                               isExpanded: true,
+                              dropdownColor: scheme.surfaceContainerHigh,
+                              style: fieldStyle,
                               decoration: InputDecoration(
                                 labelText: l10n.fieldUsername,
-                                border: const OutlineInputBorder(),
                               ),
                               items: _users
                                   .map(
                                     (u) => DropdownMenuItem<String>(
                                       value: u.username,
-                                      child: Text('${u.username} (${_roleLabel(u.role)})'),
+                                      child: Text(
+                                        '${u.username} (${_roleLabel(u.role)})',
+                                        style: fieldStyle,
+                                      ),
                                     ),
                                   )
                                   .toList(growable: false),
@@ -235,9 +247,9 @@ class _LoginScreenState extends State<LoginScreen> {
                             controller: _passCtrl,
                             obscureText: true,
                             onFieldSubmitted: (_) => _submit(),
+                            style: fieldStyle,
                             decoration: InputDecoration(
                               labelText: l10n.fieldPassword,
-                              border: const OutlineInputBorder(),
                             ),
                             validator: (v) => (v == null || v.isEmpty)
                                 ? l10n.fieldPasswordError

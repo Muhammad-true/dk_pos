@@ -50,6 +50,7 @@ PosTableBill posTableBillFromServerDto(LocalOpenTableBillDto d) {
         .toList(growable: false),
     total: d.total,
     orderTypeLabel: typeLabel,
+    orderNumber: d.number,
     tableNumber: parsed.number,
     tableZone: parsed.zone,
     createdAt: created ?? DateTime.now(),

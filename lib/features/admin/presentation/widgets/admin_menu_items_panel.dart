@@ -559,11 +559,10 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                 }
                 return Padding(
                   padding: const EdgeInsets.fromLTRB(4, 0, 4, 12),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: _catalogLocked
+                  child: LayoutBuilder(
+                    builder: (context, c) {
+                      final narrow = c.maxWidth < 560;
+                      final kitchenField = _catalogLocked
                             ? Padding(
                                 padding: const EdgeInsets.only(top: 10, right: 8),
                                 child: Text(
@@ -608,41 +607,84 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                                     onChanged: (v) => setState(
                                       () => _defaultKitchenStationId = v,
                                     ),
+                                  );
+                      final bulkActions = _bulkMode && _selectedIds.isNotEmpty
+                          ? Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: [
+                                FilledButton.tonal(
+                                  onPressed: () => _bulkAssignKitchen(context),
+                                  child: Text('Кухня (${_selectedIds.length})'),
+                                ),
+                                FilledButton.tonal(
+                                  onPressed: () => _bulkSetCustomPrice(context, true),
+                                  child: Text('Ручная цена ON (${_selectedIds.length})'),
+                                ),
+                                OutlinedButton(
+                                  onPressed: () => _bulkSetCustomPrice(context, false),
+                                  child: const Text('Ручная цена OFF'),
+                                ),
+                              ],
+                            )
+                          : null;
+                      if (narrow) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            kitchenField,
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                IconButton.filledTonal(
+                                  tooltip: _bulkMode
+                                      ? 'Отменить выбор'
+                                      : 'Выбрать несколько',
+                                  onPressed: () => setState(() {
+                                    _bulkMode = !_bulkMode;
+                                    if (!_bulkMode) _selectedIds.clear();
+                                  }),
+                                  icon: Icon(
+                                    _bulkMode
+                                        ? Icons.close_rounded
+                                        : Icons.checklist_rounded,
                                   ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton.filledTonal(
-                        tooltip: _bulkMode
-                            ? 'Отменить выбор'
-                            : 'Выбрать несколько',
-                        onPressed: () => setState(() {
-                          _bulkMode = !_bulkMode;
-                          if (!_bulkMode) _selectedIds.clear();
-                        }),
-                        icon: Icon(
-                          _bulkMode
-                              ? Icons.close_rounded
-                              : Icons.checklist_rounded,
-                        ),
-                      ),
-                      if (_bulkMode && _selectedIds.isNotEmpty) ...[
-                        const SizedBox(width: 4),
-                        FilledButton.tonal(
-                          onPressed: () => _bulkAssignKitchen(context),
-                          child: Text('Кухня (${_selectedIds.length})'),
-                        ),
-                        const SizedBox(width: 4),
-                        FilledButton.tonal(
-                          onPressed: () => _bulkSetCustomPrice(context, true),
-                          child: Text('Ручная цена ON (${_selectedIds.length})'),
-                        ),
-                        const SizedBox(width: 4),
-                        OutlinedButton(
-                          onPressed: () => _bulkSetCustomPrice(context, false),
-                          child: const Text('Ручная цена OFF'),
-                        ),
-                      ],
-                    ],
+                                ),
+                              ],
+                            ),
+                            if (bulkActions != null) ...[
+                              const SizedBox(height: 8),
+                              bulkActions,
+                            ],
+                          ],
+                        );
+                      }
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: kitchenField),
+                          const SizedBox(width: 8),
+                          IconButton.filledTonal(
+                            tooltip: _bulkMode
+                                ? 'Отменить выбор'
+                                : 'Выбрать несколько',
+                            onPressed: () => setState(() {
+                              _bulkMode = !_bulkMode;
+                              if (!_bulkMode) _selectedIds.clear();
+                            }),
+                            icon: Icon(
+                              _bulkMode
+                                  ? Icons.close_rounded
+                                  : Icons.checklist_rounded,
+                            ),
+                          ),
+                          if (bulkActions != null) ...[
+                            const SizedBox(width: 8),
+                            Expanded(child: bulkActions),
+                          ],
+                        ],
+                      );
+                    },
                   ),
                 );
               },

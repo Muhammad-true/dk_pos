@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/core/formatting/money_format.dart';
@@ -16,6 +17,7 @@ import 'package:dk_pos/features/pos/presentation/utils/pos_catalog_navigation.da
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
 import 'package:dk_pos/features/pos/bloc/pos_hall_orders_cubit.dart';
 import 'package:dk_pos/features/pos/data/open_table_bill_from_server.dart';
+import 'package:dk_digitial_menu/core/app_file_logger.dart';
 import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
 
 import 'open_table_bill_cart_hydrate.dart';
@@ -23,11 +25,42 @@ import 'pos_bill_channel_chips.dart';
 import 'pos_bill_line_remove_reason_dialog.dart';
 import 'pos_checkout_flow.dart';
 
-double _openBillsDialogWidth(BuildContext context) =>
-    math.min(520, MediaQuery.sizeOf(context).width * 0.96);
+double _openBillsDialogWidth(BuildContext context) {
+  final w = MediaQuery.sizeOf(context).width;
+  if (WindowLayout(width: w).isCompact) return w - 8;
+  final cols = WindowLayout(width: w).cardGridColumns(minCellWidth: 220);
+  if (cols >= 2) return math.min(1120, w * 0.96);
+  return math.min(760, w * 0.98);
+}
 
-double _billDetailDialogWidth(BuildContext context) =>
-    math.min(540, MediaQuery.sizeOf(context).width * 0.96);
+double _openBillsDialogHeight(BuildContext context) {
+  final h = MediaQuery.sizeOf(context).height;
+  if (WindowLayout(width: MediaQuery.sizeOf(context).width).isCompact) {
+    return h * 0.92;
+  }
+  return math.min(660, h * 0.88);
+}
+
+double _billDetailDialogWidth(BuildContext context) {
+  final w = MediaQuery.sizeOf(context).width;
+  if (WindowLayout(width: w).isCompact) return w - 8;
+  return math.min(680, w * 0.96);
+}
+
+double _billDetailDialogHeight(BuildContext context) {
+  final h = MediaQuery.sizeOf(context).height;
+  if (WindowLayout(width: MediaQuery.sizeOf(context).width).isCompact) {
+    return h * 0.9;
+  }
+  return math.min(620, h * 0.82);
+}
+
+EdgeInsets _billsDialogInsetPadding(BuildContext context) {
+  if (WindowLayout.of(context).isCompact) {
+    return const EdgeInsets.symmetric(horizontal: 4, vertical: 6);
+  }
+  return const EdgeInsets.symmetric(horizontal: 24, vertical: 24);
+}
 
 /// [posHostContext] — контекст под деревом [PosScreen] (есть [MenuBloc], [CartBloc]).
 /// Не использовать контекст самого диалога после `pop`: он становится unmounted.
@@ -60,6 +93,7 @@ class _OpenBillsDialog extends StatelessWidget {
         final open = state.openBills;
 
         return AlertDialog(
+          insetPadding: _billsDialogInsetPadding(context),
           backgroundColor: scheme.surfaceContainerLow,
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -84,7 +118,7 @@ class _OpenBillsDialog extends StatelessWidget {
           ),
           content: SizedBox(
             width: _openBillsDialogWidth(context),
-            height: math.min(460, MediaQuery.sizeOf(context).height * 0.78),
+            height: _openBillsDialogHeight(context),
             child: open.isEmpty
                 ? Center(
                     child: Text(
@@ -96,14 +130,39 @@ class _OpenBillsDialog extends StatelessWidget {
                       ),
                     ),
                   )
-                : ListView.separated(
-                    itemCount: open.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (_, i) {
-                      final bill = open[i];
-                      return _BillListTile(
-                        bill: bill,
-                        onOpen: () => _showBillDetail(posHostContext, bill),
+                : LayoutBuilder(
+                    builder: (context, constraints) {
+                      final cols = WindowLayout(width: constraints.maxWidth)
+                          .cardGridColumns(minCellWidth: 240);
+                      if (cols <= 1) {
+                        return ListView.separated(
+                          itemCount: open.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 8),
+                          itemBuilder: (_, i) {
+                            final bill = open[i];
+                            return _BillListTile(
+                              bill: bill,
+                              onOpen: () => _showBillDetail(posHostContext, bill),
+                            );
+                          },
+                        );
+                      }
+                      return GridView.builder(
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: cols,
+                          mainAxisSpacing: 10,
+                          crossAxisSpacing: 10,
+                          childAspectRatio: cols >= 3 ? 2.4 : 2.2,
+                        ),
+                        itemCount: open.length,
+                        itemBuilder: (_, i) {
+                          final bill = open[i];
+                          return _BillListTile(
+                            bill: bill,
+                            compact: true,
+                            onOpen: () => _showBillDetail(posHostContext, bill),
+                          );
+                        },
                       );
                     },
                   ),
@@ -137,7 +196,9 @@ Future<void> _refreshOpenBillsHall(BuildContext posHostContext) async {
     if (!posHostContext.mounted) return;
     final bills = dtos.map(posTableBillFromServerDto).toList();
     posHostContext.read<PosHallOrdersCubit>().mergeHydrateFromServer(bills);
-  } catch (_) {}
+  } catch (e, st) {
+    AppFileLogger.instance.error('hall_orders', 'dialog refresh failed', e, st);
+  }
 }
 
 class _BillDetailDialog extends StatefulWidget {
@@ -230,6 +291,7 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
         lines: nl,
         total: nt,
         orderTypeLabel: _bill.orderTypeLabel,
+        orderNumber: _bill.orderNumber,
         tableNumber: _bill.tableNumber,
         tableZone: _bill.tableZone,
         createdAt: _bill.createdAt,
@@ -258,6 +320,7 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
         lines: nl,
         total: nt,
         orderTypeLabel: _bill.orderTypeLabel,
+        orderNumber: _bill.orderNumber,
         tableNumber: _bill.tableNumber,
         tableZone: _bill.tableZone,
         createdAt: _bill.createdAt,
@@ -343,16 +406,33 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
     final scheme = theme.colorScheme;
 
     return AlertDialog(
+      insetPadding: _billsDialogInsetPadding(context),
       backgroundColor: scheme.surfaceContainerLow,
-      title: Text(
-        _bill.tableSummary,
-        style: theme.textTheme.titleLarge?.copyWith(
-          fontWeight: FontWeight.w800,
-        ),
+      title: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_bill.displayOrderNumber.isNotEmpty) ...[
+            Text(
+              '№ ${_bill.displayOrderNumber}',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: scheme.primary,
+              ),
+            ),
+            const SizedBox(height: 4),
+          ],
+          Text(
+            _bill.tableSummary,
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
       ),
       content: SizedBox(
         width: _billDetailDialogWidth(context),
-        height: math.min(520, MediaQuery.sizeOf(context).height * 0.62),
+        height: _billDetailDialogHeight(context),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -504,6 +584,20 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
           onPressed: _busy
               ? null
               : () async {
+                  setState(() => _busy = true);
+                  try {
+                    await _refreshOpenBillsHall(widget.posHostContext);
+                    if (!widget.posHostContext.mounted) return;
+                    final fresh = widget.posHostContext
+                        .read<PosHallOrdersCubit>()
+                        .findOpenBillByOrderId(_bill.id);
+                    if (fresh != null) {
+                      _bill = fresh;
+                    }
+                  } finally {
+                    if (mounted) setState(() => _busy = false);
+                  }
+                  if (!widget.posHostContext.mounted) return;
                   final nav = Navigator.of(context, rootNavigator: true);
                   nav.pop();
                   nav.pop();
@@ -692,10 +786,15 @@ class _BillLineSwipeTile extends StatelessWidget {
 }
 
 class _BillListTile extends StatelessWidget {
-  const _BillListTile({required this.bill, required this.onOpen});
+  const _BillListTile({
+    required this.bill,
+    required this.onOpen,
+    this.compact = false,
+  });
 
   final PosTableBill bill;
   final VoidCallback onOpen;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -708,6 +807,16 @@ class _BillListTile extends StatelessWidget {
       null => scheme.primary,
     };
 
+    final billIcon = bill.isDelivery ||
+            (bill.tableNumber == null &&
+                bill.orderTypeLabel.toLowerCase().contains('доставк'))
+        ? Icons.delivery_dining_rounded
+        : bill.tableNumber != null
+            ? (zone == PosTableZone.veranda
+                ? Icons.deck_rounded
+                : Icons.table_restaurant_rounded)
+            : Icons.receipt_long_rounded;
+
     return Material(
       color: scheme.surfaceContainer,
       borderRadius: BorderRadius.circular(16),
@@ -715,69 +824,125 @@ class _BillListTile extends StatelessWidget {
         onTap: onOpen,
         borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: zoneAccent.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(
-                    color: zoneAccent.withValues(alpha: 0.45),
-                  ),
-                ),
-                alignment: Alignment.center,
-                child: Icon(
-                  bill.isDelivery ||
-                      (bill.tableNumber == null &&
-                          bill.orderTypeLabel.toLowerCase().contains('доставк'))
-                      ? Icons.delivery_dining_rounded
-                      : bill.tableNumber != null
-                      ? (zone == PosTableZone.veranda
-                          ? Icons.deck_rounded
-                          : Icons.table_restaurant_rounded)
-                      : Icons.receipt_long_rounded,
-                  color: zoneAccent,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
+          padding: EdgeInsets.all(compact ? 12 : 14),
+          child: compact
+              ? Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    Row(
+                      children: [
+                        Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: zoneAccent.withValues(alpha: 0.16),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: zoneAccent.withValues(alpha: 0.45),
+                            ),
+                          ),
+                          alignment: Alignment.center,
+                          child: Icon(billIcon, color: zoneAccent, size: 22),
+                        ),
+                        const Spacer(),
+                        Text(
+                          formatSomoni(bill.total),
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: scheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (bill.displayOrderNumber.isNotEmpty)
+                      Text(
+                        '№ ${bill.displayOrderNumber}',
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          color: scheme.primary,
+                        ),
+                      ),
                     Text(
                       bill.tableSummary,
                       style: theme.textTheme.titleSmall?.copyWith(
                         fontWeight: FontWeight.w800,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 4),
                     Text(
-                      [
-                        '${bill.lines.length} поз.',
-                        bill.orderTypeLabel,
-                        if (bill.isHandedOutUnpaid) 'выдан',
-                      ].join(' • '),
+                      '${bill.lines.length} поз. · ${bill.orderTypeLabel}',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 6),
-                    PosBillChannelChips(bill: bill),
+                  ],
+                )
+              : Row(
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: zoneAccent.withValues(alpha: 0.16),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: zoneAccent.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      alignment: Alignment.center,
+                      child: Icon(billIcon, color: zoneAccent),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (bill.displayOrderNumber.isNotEmpty) ...[
+                            Text(
+                              '№ ${bill.displayOrderNumber}',
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontWeight: FontWeight.w800,
+                                color: scheme.primary,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                          ],
+                          Text(
+                            bill.tableSummary,
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            [
+                              '${bill.lines.length} поз.',
+                              bill.orderTypeLabel,
+                              if (bill.isHandedOutUnpaid) 'выдан',
+                            ].join(' • '),
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          PosBillChannelChips(bill: bill),
+                        ],
+                      ),
+                    ),
+                    Text(
+                      formatSomoni(bill.total),
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: scheme.primary,
+                      ),
+                    ),
                   ],
                 ),
-              ),
-              Text(
-                formatSomoni(bill.total),
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  color: scheme.primary,
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );

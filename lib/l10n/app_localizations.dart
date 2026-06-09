@@ -658,6 +658,84 @@ abstract class AppLocalizations {
   /// **'ТВ4 — приветствие и оплата (config)'**
   String get adminScreenTypeTv4;
 
+  /// No description provided for @adminScreenTypeCarouselShort.
+  ///
+  /// In ru, this message translates to:
+  /// **'ТВ1 — карусель'**
+  String get adminScreenTypeCarouselShort;
+
+  /// No description provided for @adminScreenTypeTv2Short.
+  ///
+  /// In ru, this message translates to:
+  /// **'ТВ2 — меню'**
+  String get adminScreenTypeTv2Short;
+
+  /// No description provided for @adminScreenTypeTv3Short.
+  ///
+  /// In ru, this message translates to:
+  /// **'ТВ3 — акции'**
+  String get adminScreenTypeTv3Short;
+
+  /// No description provided for @adminScreenTypeTv4Short.
+  ///
+  /// In ru, this message translates to:
+  /// **'ТВ4 — очередь'**
+  String get adminScreenTypeTv4Short;
+
+  /// No description provided for @adminScreenTypeCustomerDisplayShort.
+  ///
+  /// In ru, this message translates to:
+  /// **'Экран покупателя'**
+  String get adminScreenTypeCustomerDisplayShort;
+
+  /// No description provided for @adminScreenTypeCarouselDesc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Классическая карусель категорий и товаров с tv1_page.'**
+  String get adminScreenTypeCarouselDesc;
+
+  /// No description provided for @adminScreenTypeTv2Desc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Гибкие страницы: split, сетка, list, видеофон.'**
+  String get adminScreenTypeTv2Desc;
+
+  /// No description provided for @adminScreenTypeTv3Desc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Промо-слайды: товар, комбо, фото или видео на весь экран.'**
+  String get adminScreenTypeTv3Desc;
+
+  /// No description provided for @adminScreenTypeTv4Desc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Приветствие, QR оплаты и доска очереди заказов.'**
+  String get adminScreenTypeTv4Desc;
+
+  /// No description provided for @adminScreenTypeCustomerDisplayDesc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Второй монитор у кассы: меню, корзина, оплата.'**
+  String get adminScreenTypeCustomerDisplayDesc;
+
+  /// No description provided for @adminTvPageTypePickerHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Выберите макет, затем нажмите «Добавить страницу».'**
+  String get adminTvPageTypePickerHint;
+
+  /// No description provided for @adminTv2EditorPreviewOnTv.
+  ///
+  /// In ru, this message translates to:
+  /// **'Предпросмотр на ТВ'**
+  String get adminTv2EditorPreviewOnTv;
+
+  /// No description provided for @adminTv2UserGuidePhotoHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Фото блюд показываются целиком (без обрезки). Загружайте PNG на прозрачном или светлом фоне.'**
+  String get adminTv2UserGuidePhotoHint;
+
   /// No description provided for @adminScreenActive.
   ///
   /// In ru, this message translates to:
@@ -969,6 +1047,30 @@ abstract class AppLocalizations {
   /// In ru, this message translates to:
   /// **'Комбо (слайд)'**
   String get adminTv3PageTypePromoCombo;
+
+  /// No description provided for @adminTv3PageTypePromoProductDesc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Крупное фото товара, слоган и цена.'**
+  String get adminTv3PageTypePromoProductDesc;
+
+  /// No description provided for @adminTv3PageTypePromoComboDesc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Комбо-набор с составом и ценой.'**
+  String get adminTv3PageTypePromoComboDesc;
+
+  /// No description provided for @adminTv3PageTypePromoVideoBgDesc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Видео на весь экран с текстом поверх.'**
+  String get adminTv3PageTypePromoVideoBgDesc;
+
+  /// No description provided for @adminTv3PageTypePromoPhotoBgDesc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Фото на весь экран с текстом поверх.'**
+  String get adminTv3PageTypePromoPhotoBgDesc;
 
   /// No description provided for @adminTv3PromoSelectCombo.
   ///
@@ -1648,6 +1750,72 @@ abstract class AppLocalizations {
   /// **'Крупный'**
   String get adminTv2ProductGridCardSizeLarge;
 
+  /// No description provided for @adminTv2ProductGridTypographyTitle.
+  ///
+  /// In ru, this message translates to:
+  /// **'Название и цена в сетке'**
+  String get adminTv2ProductGridTypographyTitle;
+
+  /// No description provided for @adminTv2ProductGridTypographyHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'По умолчанию «Авто» — размер подстраивается под диагональ ТВ и размер карточки. Ручной режим — фиксированный размер в пикселях.'**
+  String get adminTv2ProductGridTypographyHint;
+
+  /// No description provided for @adminTv2ProductGridNameSizeLabel.
+  ///
+  /// In ru, this message translates to:
+  /// **'Название товара'**
+  String get adminTv2ProductGridNameSizeLabel;
+
+  /// No description provided for @adminTv2ProductGridPriceSizeLabel.
+  ///
+  /// In ru, this message translates to:
+  /// **'Цена'**
+  String get adminTv2ProductGridPriceSizeLabel;
+
+  /// No description provided for @adminTv2ProductGridSizeAuto.
+  ///
+  /// In ru, this message translates to:
+  /// **'Авто'**
+  String get adminTv2ProductGridSizeAuto;
+
+  /// No description provided for @adminTv2ProductGridSizeManual.
+  ///
+  /// In ru, this message translates to:
+  /// **'Вручную'**
+  String get adminTv2ProductGridSizeManual;
+
+  /// No description provided for @adminTv2ProductGridTextScaleLabel.
+  ///
+  /// In ru, this message translates to:
+  /// **'Масштаб текста (авто)'**
+  String get adminTv2ProductGridTextScaleLabel;
+
+  /// No description provided for @adminTv2ProductGridTextScaleHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Чуть увеличить или уменьшить авто-размер под ваш зал.'**
+  String get adminTv2ProductGridTextScaleHint;
+
+  /// No description provided for @adminTv2PageLayoutSaveButton.
+  ///
+  /// In ru, this message translates to:
+  /// **'Сохранить настройки страницы'**
+  String get adminTv2PageLayoutSaveButton;
+
+  /// No description provided for @adminTv2PageLayoutSaved.
+  ///
+  /// In ru, this message translates to:
+  /// **'Настройки страницы сохранены'**
+  String get adminTv2PageLayoutSaved;
+
+  /// No description provided for @adminTv2PageLayoutUnsavedHint.
+  ///
+  /// In ru, this message translates to:
+  /// **'Есть несохранённые изменения — нажмите «Сохранить настройки страницы».'**
+  String get adminTv2PageLayoutUnsavedHint;
+
   /// No description provided for @adminTv2PageTransitionPerPage.
   ///
   /// In ru, this message translates to:
@@ -1875,6 +2043,42 @@ abstract class AppLocalizations {
   /// In ru, this message translates to:
   /// **'Фон (видео)'**
   String get adminTv2PageTypeVideoBg;
+
+  /// No description provided for @adminTv2PageTypeSplitDesc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Слева крупное фото, справа две колонки категорий.'**
+  String get adminTv2PageTypeSplitDesc;
+
+  /// No description provided for @adminTv2PageTypeDrinksDesc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Сетка напитков с фото и ценами по объёмам.'**
+  String get adminTv2PageTypeDrinksDesc;
+
+  /// No description provided for @adminTv2PageTypeCarouselDesc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Крупное фото товара и полоса с названием внизу.'**
+  String get adminTv2PageTypeCarouselDesc;
+
+  /// No description provided for @adminTv2PageTypeListDesc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Герой сверху и сетка позиций категории.'**
+  String get adminTv2PageTypeListDesc;
+
+  /// No description provided for @adminTv2PageTypeProductGridDesc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Плитка товаров с фото, названием и ценой.'**
+  String get adminTv2PageTypeProductGridDesc;
+
+  /// No description provided for @adminTv2PageTypeVideoBgDesc.
+  ///
+  /// In ru, this message translates to:
+  /// **'Видео или фото на весь экран + карточка оффера.'**
+  String get adminTv2PageTypeVideoBgDesc;
 
   /// No description provided for @adminTv2OptionalVideoTitle.
   ///
@@ -2767,7 +2971,7 @@ abstract class AppLocalizations {
   /// No description provided for @roleExpeditor.
   ///
   /// In ru, this message translates to:
-  /// **'Сборщик'**
+  /// **'Сортировщик'**
   String get roleExpeditor;
 
   /// No description provided for @roleWaiter.
@@ -2833,7 +3037,7 @@ abstract class AppLocalizations {
   /// No description provided for @expeditorTitle.
   ///
   /// In ru, this message translates to:
-  /// **'Сборка и выдача'**
+  /// **'Сортировка и выдача'**
   String get expeditorTitle;
 
   /// No description provided for @expeditorSectionBundling.

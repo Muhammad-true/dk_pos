@@ -4,6 +4,7 @@ import 'package:dk_digitial_menu/core/app_config.dart' as dm_app_config;
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/config/server_endpoint_store.dart';
 import 'package:dk_pos/core/network/dio_factory.dart';
+import 'package:dk_pos/core/network/lan_backend_scanner.dart';
 import 'package:dk_pos/features/license/local_setup_api.dart';
 
 class LocalServerDiscoveryResult {
@@ -22,12 +23,109 @@ class LocalServerDiscoveryResult {
 
 /// Подбор URL локального backend без пересборки POS.
 class LocalServerDiscovery {
+  static const Duration _quickProbeTimeout = Duration(seconds: 4);
+  static const Duration _autoProbeTimeout = Duration(seconds: 8);
+
+  static const String _localhostOrigin = 'http://127.0.0.1:3000';
+
+  /// Быстрый старт: сохранённый → localhost → .env → скан подсети Wi‑Fi.
+  static Future<LocalServerDiscoveryResult> resolveQuick() async {
+    final saved = await ServerEndpointStore.read();
+    final envOrigin = AppConfig.apiOrigin;
+    final tryFirst = <String>[
+      if (saved != null && saved.isNotEmpty) saved,
+      _localhostOrigin,
+      if (!AppConfig.isLocalhostApi &&
+          envOrigin != saved &&
+          envOrigin != _localhostOrigin)
+        envOrigin,
+    ];
+
+    for (final origin in tryFirst) {
+      if (await _probeHealth(origin, timeout: _quickProbeTimeout)) {
+        final persist = origin != saved;
+        await _applyOrigin(origin, persist: persist);
+        return LocalServerDiscoveryResult(ok: true, appliedOrigin: origin);
+      }
+    }
+
+    await restoreSavedOrClearOverride();
+
+    final scanned = await LanBackendScanner.findBackendOrigin(
+      tryFirst: tryFirst,
+      probeTimeout: const Duration(seconds: 2),
+      batchSize: 24,
+    );
+    if (scanned != null) {
+      await _applyOrigin(scanned, persist: true);
+      return LocalServerDiscoveryResult(ok: true, appliedOrigin: scanned);
+    }
+
+    await restoreSavedOrClearOverride();
+    return LocalServerDiscoveryResult(
+      ok: false,
+      needsManualInput: true,
+      message:
+          'Сервер не найден в сети. Введите IP кассового ПК (порт 3000) '
+          'или нажмите «Автопоиск в сети».',
+    );
+  }
+
+  /// Полный автопоиск: сохранённый → localhost → .env → скан подсети → setup API.
+  static Future<LocalServerDiscoveryResult> resolveAuto() async {
+    final saved = await ServerEndpointStore.read();
+    final envOrigin = AppConfig.apiOrigin;
+    final tryFirst = <String>[
+      if (saved != null && saved.isNotEmpty) saved,
+      _localhostOrigin,
+      if (!AppConfig.isLocalhostApi &&
+          envOrigin != saved &&
+          envOrigin != _localhostOrigin)
+        envOrigin,
+    ];
+
+    for (final origin in tryFirst) {
+      if (await _probeHealth(origin, timeout: _autoProbeTimeout)) {
+        final persist = origin != saved;
+        await _applyOrigin(origin, persist: persist);
+        return LocalServerDiscoveryResult(ok: true, appliedOrigin: origin);
+      }
+    }
+
+    await restoreSavedOrClearOverride();
+
+    final scanned = await LanBackendScanner.findBackendOrigin(
+      tryFirst: tryFirst,
+      probeTimeout: _autoProbeTimeout,
+      batchSize: 32,
+    );
+    if (scanned != null) {
+      final best = await _bestOriginViaSetup(scanned) ?? scanned;
+      await _applyOrigin(best, persist: true);
+      return LocalServerDiscoveryResult(ok: true, appliedOrigin: best);
+    }
+
+    if (await _probeHealth(_localhostOrigin, timeout: _autoProbeTimeout)) {
+      final best = await _bestOriginViaSetup(_localhostOrigin) ?? _localhostOrigin;
+      await _applyOrigin(best, persist: true);
+      return LocalServerDiscoveryResult(ok: true, appliedOrigin: best);
+    }
+
+    await restoreSavedOrClearOverride();
+    return const LocalServerDiscoveryResult(
+      ok: false,
+      needsManualInput: true,
+      message:
+          'Автопоиск не нашёл сервер. Введите IP кассового ПК и нажмите «Подключить».',
+    );
+  }
+
   static Future<LocalServerDiscoveryResult> resolveAndApply({
     String? manualInput,
   }) async {
     if (manualInput != null && manualInput.trim().isNotEmpty) {
       final normalized = AppConfig.normalizeServerConnectionInput(manualInput);
-      if (await _probeHealth(normalized)) {
+      if (await _probeHealth(normalized, timeout: _autoProbeTimeout)) {
         await _applyOrigin(normalized, persist: true);
         return LocalServerDiscoveryResult(ok: true, appliedOrigin: normalized);
       }
@@ -39,40 +137,13 @@ class LocalServerDiscovery {
       );
     }
 
-    final saved = await ServerEndpointStore.read();
-    if (saved != null && saved.isNotEmpty && await _probeHealth(saved)) {
-      await _applyOrigin(saved, persist: false);
-      return LocalServerDiscoveryResult(ok: true, appliedOrigin: saved);
-    }
-
-    final envOrigin = AppConfig.apiOrigin;
-    if (!AppConfig.isLocalhostApi && await _probeHealth(envOrigin)) {
-      await _applyOrigin(envOrigin, persist: true);
-      return LocalServerDiscoveryResult(ok: true, appliedOrigin: envOrigin);
-    }
-
-    const localhost = 'http://127.0.0.1:3000';
-    if (await _probeHealth(localhost)) {
-      final best = await _bestOriginViaSetup(localhost) ?? localhost;
-      await _applyOrigin(best, persist: true);
-      return LocalServerDiscoveryResult(ok: true, appliedOrigin: best);
-    }
-
-    if (envOrigin != localhost && await _probeHealth(envOrigin)) {
-      await _applyOrigin(envOrigin, persist: true);
-      return LocalServerDiscoveryResult(ok: true, appliedOrigin: envOrigin);
-    }
-
-    await restoreSavedOrClearOverride();
-    return const LocalServerDiscoveryResult(
-      ok: false,
-      needsManualInput: true,
-      message:
-          'Укажите IP компьютера с backend (порт 3000). После активации лицензии адрес сохранится для этой кассы.',
-    );
+    return resolveQuick();
   }
 
-  static Future<bool> _probeHealth(String origin) async {
+  static Future<bool> _probeHealth(
+    String origin, {
+    Duration timeout = _autoProbeTimeout,
+  }) async {
     AppConfig.setApiOriginOverride(origin);
     dm_app_config.AppConfig.setApiOriginOverride(origin);
     try {
@@ -81,8 +152,8 @@ class LocalServerDiscovery {
         'api/health',
         options: Options(
           validateStatus: (_) => true,
-          sendTimeout: const Duration(seconds: 8),
-          receiveTimeout: const Duration(seconds: 8),
+          sendTimeout: timeout,
+          receiveTimeout: timeout,
         ),
       );
       return (res.statusCode ?? 0) == 200;
@@ -109,17 +180,20 @@ class LocalServerDiscovery {
       await _applyOrigin(connectedOrigin, persist: false);
       final setup = await LocalSetupApi(createDio()).fetchNetwork();
       final suggested = setup.apiBaseUrlSuggested?.trim();
-      if (suggested == null || suggested.isEmpty) return null;
+      if (suggested == null || suggested.isEmpty) return connectedOrigin;
       final normalized = AppConfig.normalizeServerConnectionInput(suggested);
+      if (normalized == connectedOrigin) return connectedOrigin;
       final host = Uri.tryParse(normalized)?.host.toLowerCase();
       if (host == 'localhost' || host == '127.0.0.1') {
         return connectedOrigin;
       }
-      if (await _probeHealth(normalized)) {
+      if (await _probeHealth(normalized, timeout: _autoProbeTimeout)) {
         return normalized;
       }
+      await _applyOrigin(connectedOrigin, persist: false);
       return connectedOrigin;
     } catch (_) {
+      await _applyOrigin(connectedOrigin, persist: false);
       return connectedOrigin;
     }
   }

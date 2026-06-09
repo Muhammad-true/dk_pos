@@ -17,6 +17,7 @@ import 'package:dk_pos/features/admin/data/kitchen_station_row.dart';
 import 'package:dk_pos/features/admin/data/kitchen_buttons_repository.dart';
 import 'package:dk_pos/features/admin/data/kitchen_stations_repository.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
+import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_list_row_card.dart';
 
 class AdminUsersPanel extends StatelessWidget {
@@ -203,118 +204,107 @@ class AdminUsersPanel extends StatelessWidget {
                             ? const Center(child: CircularProgressIndicator())
                             : LayoutBuilder(
                                 builder: (context, c) {
-                                  final wide = c.maxWidth >= 720;
+                                  final cols = WindowLayout(width: c.maxWidth)
+                                      .hubGridColumns(minCellWidth: 340);
                                   final fmt = DateFormat.yMMMd().add_Hm();
-                                  if (wide) {
-                                    return SingleChildScrollView(
-                                      scrollDirection: Axis.horizontal,
-                                      child: SingleChildScrollView(
-                                        child: DataTable(
-                                          columns: [
-                                            DataColumn(
-                                              label: Text(l10n.fieldUsername),
+                                  if (cols > 1) {
+                                    return GridView.builder(
+                                      padding: const EdgeInsets.only(
+                                        top: 4,
+                                        bottom: 20,
+                                      ),
+                                      physics: kAdminListScrollPhysics,
+                                      gridDelegate:
+                                          SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: cols,
+                                        mainAxisSpacing: 10,
+                                        crossAxisSpacing: 10,
+                                        childAspectRatio: cols >= 3 ? 2.2 : 2.5,
+                                      ),
+                                      itemCount: state.users.length,
+                                      itemBuilder: (context, i) {
+                                        final u = state.users[i];
+                                        final sub =
+                                            '${u.isActive == 1 ? 'активен' : 'отключен'} · ${_roleLabel(l10n, u.role)} · ${u.kitchenStationName ?? 'без кухни'} · ${u.kitchenButtonName ?? 'без кнопки'} · ${u.createdAt != null ? fmt.format(u.createdAt!.toLocal()) : '—'}';
+                                        return AdminListRowCard(
+                                          child: ListTile(
+                                            dense: true,
+                                            contentPadding:
+                                                const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 4,
                                             ),
-                                            DataColumn(
-                                              label: Text(l10n.fieldRole),
+                                            title: Text(
+                                              u.username,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .titleSmall
+                                                  ?.copyWith(
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
                                             ),
-                                            const DataColumn(
-                                              label: Text('Активен'),
-                                            ),
-                                            const DataColumn(
-                                              label: Text('Кухня'),
-                                            ),
-                                            const DataColumn(
-                                              label: Text('Кнопка'),
-                                            ),
-                                            DataColumn(
-                                              label: Text(
-                                                l10n.adminUsersColumnCreated,
+                                            subtitle: Padding(
+                                              padding:
+                                                  const EdgeInsets.only(top: 2),
+                                              child: Text(
+                                                sub,
+                                                maxLines: 2,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .bodySmall
+                                                    ?.copyWith(
+                                                      color: Theme.of(context)
+                                                          .colorScheme
+                                                          .onSurfaceVariant,
+                                                    ),
                                               ),
                                             ),
-                                            DataColumn(
-                                              label: Text(l10n.adminUsersActions),
-                                            ),
-                                          ],
-                                          rows: state.users.map((u) {
-                                            return DataRow(
-                                              cells: [
-                                                DataCell(Text(u.username)),
-                                                DataCell(
-                                                  Text(_roleLabel(l10n, u.role)),
-                                                ),
-                                                DataCell(
-                                                  Switch(
-                                                    value: u.isActive == 1,
-                                                    onChanged: u.id == selfId
-                                                        ? null
-                                                        : (v) => _toggleUserActive(
-                                                              context,
-                                                              u,
-                                                              v,
-                                                            ),
-                                                  ),
-                                                ),
-                                                DataCell(
-                                                  Text(u.kitchenStationName ?? '—'),
-                                                ),
-                                                DataCell(
-                                                  Text(u.kitchenButtonName ?? '—'),
-                                                ),
-                                                DataCell(
-                                                  Text(
-                                                    u.createdAt != null
-                                                        ? fmt.format(
-                                                            u.createdAt!
-                                                                .toLocal(),
-                                                          )
-                                                        : 'вЂ”',
-                                                  ),
-                                                ),
-                                                DataCell(
-                                                  Row(
-                                                    mainAxisSize:
-                                                        MainAxisSize.min,
-                                                    children: [
-                                                      IconButton(
-                                                        tooltip:
-                                                            l10n.adminUsersEdit,
-                                                        icon: const Icon(
-                                                          Icons.edit_outlined,
-                                                        ),
-                                                        onPressed: () =>
-                                                            _openUserForm(
-                                                          context,
-                                                          l10n,
-                                                          u,
-                                                        ),
-                                                      ),
-                                                      if (u.id != selfId)
-                                                        IconButton(
-                                                          tooltip: l10n
-                                                              .adminUsersDelete,
-                                                          icon: Icon(
-                                                            Icons
-                                                                .delete_outline_rounded,
-                                                            color: Theme.of(
-                                                                    context)
-                                                                .colorScheme
-                                                                .error,
-                                                          ),
-                                                          onPressed: () =>
-                                                              _confirmDelete(
+                                            trailing: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Switch(
+                                                  value: u.isActive == 1,
+                                                  onChanged: u.id == selfId
+                                                      ? null
+                                                      : (v) => _toggleUserActive(
                                                             context,
-                                                            l10n,
                                                             u,
+                                                            v,
                                                           ),
-                                                        ),
-                                                    ],
+                                                ),
+                                                IconButton(
+                                                  icon: const Icon(
+                                                    Icons.edit_outlined,
+                                                  ),
+                                                  onPressed: () => _openUserForm(
+                                                    context,
+                                                    l10n,
+                                                    u,
                                                   ),
                                                 ),
+                                                if (u.id != selfId)
+                                                  IconButton(
+                                                    icon: Icon(
+                                                      Icons.delete_outline_rounded,
+                                                      color: Theme.of(context)
+                                                          .colorScheme
+                                                          .error,
+                                                    ),
+                                                    onPressed: () =>
+                                                        _confirmDelete(
+                                                      context,
+                                                      l10n,
+                                                      u,
+                                                    ),
+                                                  ),
                                               ],
-                                            );
-                                          }).toList(),
-                                        ),
-                                      ),
+                                            ),
+                                          ),
+                                        );
+                                      },
                                     );
                                   }
                                   return ListView.builder(

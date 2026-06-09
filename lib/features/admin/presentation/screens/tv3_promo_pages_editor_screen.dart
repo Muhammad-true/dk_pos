@@ -15,6 +15,9 @@ import 'package:dk_pos/features/admin/data/upload_repository.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
 
 import 'package:dk_pos/features/admin/data/admin_combo_row.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_tv_master_detail_layout.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/tv_layout_type_catalog.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/tv_layout_type_picker.dart';
 
 /// Страницы акций ТВ3: товар, комбо, полноэкранное видео или фото с подписями.
 class Tv3PromoPagesEditorScreen extends StatefulWidget {
@@ -48,6 +51,7 @@ class _Tv3PromoPagesEditorScreenState extends State<Tv3PromoPagesEditorScreen> {
   String? _error;
   String _newPageType = 'promo_product';
   int? _newPageComboId;
+  int? _selectedPageId;
   late final TextEditingController _cScreenPromoSlogan;
   bool _savingSlogan = false;
 
@@ -90,6 +94,12 @@ class _Tv3PromoPagesEditorScreenState extends State<Tv3PromoPagesEditorScreen> {
         _combos = combos;
         _detailByPageId.clear();
         _cScreenPromoSlogan.text = rawSlogan?.toString() ?? '';
+        if (_selectedPageId != null &&
+            !pages.any((p) => p.id == _selectedPageId)) {
+          _selectedPageId = pages.isEmpty ? null : pages.first.id;
+        } else if (_selectedPageId == null && pages.isNotEmpty) {
+          _selectedPageId = pages.first.id;
+        }
         _loading = false;
       });
     } on ApiException catch (e) {
@@ -654,139 +664,305 @@ class _Tv3PromoPagesEditorScreenState extends State<Tv3PromoPagesEditorScreen> {
                     ),
                   ),
                 )
-              : ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    Text(
-                      l10n.adminTv3PromoEditorSubtitle,
-                      style: Theme.of(context).textTheme.bodyMedium,
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: _cScreenPromoSlogan,
-                      maxLength: 120,
-                      decoration: InputDecoration(
-                        labelText: l10n.adminTv3PromoSloganLabel,
-                        helperText: l10n.adminTv3PromoSloganHint,
-                        border: const OutlineInputBorder(),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: FilledButton(
-                        onPressed: _savingSlogan ? null : () => _saveScreenPromoSlogan(l10n),
-                        child: Text(l10n.adminTv3PromoSloganSave),
-                      ),
-                    ),
-                    const SizedBox(height: 24),
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final wide = constraints.maxWidth >= 840;
+                    final header = Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            key: ValueKey<String>(_newPageType),
-                            initialValue: _newPageType,
-                            decoration: InputDecoration(
-                              labelText: l10n.adminScreenPageTypeLabel,
-                              border: const OutlineInputBorder(),
-                            ),
-                            onChanged: (v) {
-                              if (v != null) {
-                                setState(() {
-                                  _newPageType = v;
-                                  if (v != 'promo_combo') _newPageComboId = null;
-                                });
-                              }
-                            },
-                            items: [
-                              DropdownMenuItem(
-                                value: 'promo_product',
-                                child: Text(l10n.adminTv3PageTypePromoProduct),
-                              ),
-                              DropdownMenuItem(
-                                value: 'promo_combo',
-                                child: Text(l10n.adminTv3PageTypePromoCombo),
-                              ),
-                              DropdownMenuItem(
-                                value: 'promo_video_bg',
-                                child: Text(l10n.adminTv3PageTypePromoVideoBg),
-                              ),
-                              DropdownMenuItem(
-                                value: 'promo_photo_bg',
-                                child: Text(l10n.adminTv3PageTypePromoPhotoBg),
-                              ),
-                            ],
+                        Text(
+                          l10n.adminTv3PromoEditorSubtitle,
+                          style: Theme.of(context).textTheme.bodyMedium,
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: _cScreenPromoSlogan,
+                          maxLength: 120,
+                          decoration: InputDecoration(
+                            labelText: l10n.adminTv3PromoSloganLabel,
+                            helperText: l10n.adminTv3PromoSloganHint,
+                            border: const OutlineInputBorder(),
                           ),
                         ),
-                        const SizedBox(width: 12),
-                        if (_newPageType == 'promo_combo')
-                          Expanded(
-                            child: DropdownButtonFormField<int>(
-                              key: ValueKey<int?>(_newPageComboId),
-                              initialValue: _newPageComboId,
-                              decoration: InputDecoration(
-                                labelText: l10n.adminTv3PromoSelectCombo,
-                                border: const OutlineInputBorder(),
-                              ),
-                              items: [
-                                for (final c in _combos)
-                                  DropdownMenuItem(
-                                    value: c.id,
-                                    child: Text(
-                                      c.nameRu.isEmpty ? '#${c.id}' : c.nameRu,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                              ],
-                              onChanged: (v) => setState(() => _newPageComboId = v),
-                            ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: FilledButton(
+                            onPressed:
+                                _savingSlogan ? null : () => _saveScreenPromoSlogan(l10n),
+                            child: Text(l10n.adminTv3PromoSloganSave),
                           ),
-                        const SizedBox(width: 12),
-                        Flexible(
+                        ),
+                        const SizedBox(height: 24),
+                        Text(
+                          l10n.adminScreenPageTypeLabel,
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        const SizedBox(height: 8),
+                        TvLayoutTypePicker(
+                          options: tv3PageTypeOptions(l10n),
+                          selectedId: _newPageType,
+                          hint: l10n.adminTvPageTypePickerHint,
+                          crossAxisCount: constraints.maxWidth >= 720 ? 2 : 1,
+                          onSelected: (v) {
+                            setState(() {
+                              _newPageType = v;
+                              if (v != 'promo_combo') _newPageComboId = null;
+                            });
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        if (_newPageType == 'promo_combo')
+                          DropdownButtonFormField<int>(
+                            key: ValueKey<int?>(_newPageComboId),
+                            initialValue: _newPageComboId,
+                            decoration: InputDecoration(
+                              labelText: l10n.adminTv3PromoSelectCombo,
+                              border: const OutlineInputBorder(),
+                            ),
+                            items: [
+                              for (final c in _combos)
+                                DropdownMenuItem(
+                                  value: c.id,
+                                  child: Text(
+                                    c.nameRu.isEmpty ? '#${c.id}' : c.nameRu,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                            ],
+                            onChanged: (v) => setState(() => _newPageComboId = v),
+                          ),
+                        if (_newPageType == 'promo_combo') const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
                           child: FilledButton.icon(
                             onPressed: () => _addPage(l10n),
                             icon: const Icon(Icons.add_rounded),
                             label: Text(l10n.adminScreenPageAdd),
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      l10n.adminTv3PromoOpenCombosHint,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    const SizedBox(height: 8),
-                    if (_pages.isEmpty)
-                      Text(l10n.adminTv2EditorNoPages)
-                    else ...[
-                      Text(
-                        l10n.adminTv3PromoReorderHint,
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                      const SizedBox(height: 8),
-                      IgnorePointer(
-                        ignoring: _savingPageOrder,
-                        child: Opacity(
-                          opacity: _savingPageOrder ? 0.55 : 1,
-                          child: ReorderableListView(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            buildDefaultDragHandles: false,
-                            onReorder: (oldIndex, newIndex) =>
-                                _onReorderTv3Pages(oldIndex, newIndex, l10n),
-                            children: [
-                              for (var i = 0; i < _pages.length; i++)
-                                _buildPageCard(context, i, _pages[i], l10n),
-                            ],
-                          ),
+                        const SizedBox(height: 8),
+                        Text(
+                          l10n.adminTv3PromoOpenCombosHint,
+                          style: Theme.of(context).textTheme.bodySmall,
                         ),
+                      ],
+                    );
+
+                    if (_pages.isEmpty) {
+                      return ListView(
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          header,
+                          const SizedBox(height: 16),
+                          Text(l10n.adminTv2EditorNoPages),
+                        ],
+                      );
+                    }
+
+                    if (!wide) {
+                      return ListView(
+                        padding: const EdgeInsets.all(16),
+                        children: [
+                          header,
+                          const SizedBox(height: 16),
+                          Text(
+                            l10n.adminTv3PromoReorderHint,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 8),
+                          IgnorePointer(
+                            ignoring: _savingPageOrder,
+                            child: Opacity(
+                              opacity: _savingPageOrder ? 0.55 : 1,
+                              child: ReorderableListView(
+                                shrinkWrap: true,
+                                physics: const NeverScrollableScrollPhysics(),
+                                buildDefaultDragHandles: false,
+                                onReorder: (oldIndex, newIndex) =>
+                                    _onReorderTv3Pages(oldIndex, newIndex, l10n),
+                                children: [
+                                  for (var i = 0; i < _pages.length; i++)
+                                    _buildPageCard(context, i, _pages[i], l10n),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    }
+
+                    AdminScreenPageRow? selected;
+                    for (final p in _pages) {
+                      if (p.id == _selectedPageId) {
+                        selected = p;
+                        break;
+                      }
+                    }
+
+                    return AdminTvMasterDetailLayout(
+                      header: header,
+                      master: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            l10n.adminTv3PromoReorderHint,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                          const SizedBox(height: 8),
+                          for (final p in _pages)
+                            AdminTvPageMasterTile(
+                              title:
+                                  '${l10n.adminTv2EditorPageLabel} #${p.id} · ${p.pageType}',
+                              subtitle: _pageSubtitle(p, l10n),
+                              selected: p.id == _selectedPageId,
+                              onTap: () {
+                                setState(() => _selectedPageId = p.id);
+                                _loadDetail(p.id);
+                              },
+                              onDelete: () => _confirmDeletePage(
+                                p,
+                                _pageSubtitle(p, l10n),
+                                l10n,
+                              ),
+                            ),
+                        ],
                       ),
-                    ],
-                  ],
+                      detail: selected == null
+                          ? null
+                          : Card(
+                              child: _buildPageEditorContent(selected, l10n),
+                            ),
+                    );
+                  },
                 ),
+    );
+  }
+
+  String _pageSubtitle(AdminScreenPageRow p, AppLocalizations l10n) {
+    final pt = p.pageType.toLowerCase();
+    final isCombo = pt == 'promo_combo';
+    final isMediaBg = pt == 'promo_video_bg' || pt == 'promo_photo_bg';
+    if (isCombo) return l10n.adminTv3PageTypePromoCombo;
+    if (isMediaBg) {
+      return pt == 'promo_video_bg'
+          ? l10n.adminTv3PageTypePromoVideoBg
+          : l10n.adminTv3PageTypePromoPhotoBg;
+    }
+    return l10n.adminTv3PageTypePromoProduct;
+  }
+
+  Widget _buildPageEditorContent(AdminScreenPageRow p, AppLocalizations l10n) {
+    final detail = _detailByPageId[p.id];
+    final items = detail?.items ?? const <ScreenPageItemRow>[];
+    final hero = items.where((e) => e.role == 'hero').toList();
+    final pt = p.pageType.toLowerCase();
+    final isCombo = pt == 'promo_combo';
+    final isMediaBg = pt == 'promo_video_bg' || pt == 'promo_photo_bg';
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (!isMediaBg)
+            DropdownButtonFormField<String>(
+              key: ValueKey<String>('${p.id}-theme-${_tv3PromoVariantForPage(p)}'),
+              initialValue: _tv3PromoVariantForPage(p),
+              decoration: InputDecoration(
+                labelText: l10n.adminTv3PromoSlideThemeLabel,
+                border: const OutlineInputBorder(),
+              ),
+              items: [
+                DropdownMenuItem(
+                  value: 'standard',
+                  child: Text(l10n.adminTv3PromoSlideThemeRedBg),
+                ),
+                DropdownMenuItem(
+                  value: 'inverted',
+                  child: Text(l10n.adminTv3PromoSlideThemeWhiteBg),
+                ),
+              ],
+              onChanged: (v) {
+                if (v != null) _setPromoVariant(p.id, v);
+              },
+            ),
+          if (!isMediaBg) const SizedBox(height: 12),
+          _Tv3PagePromoLineEditor(
+            key: ValueKey<String>('promo-line-${p.id}'),
+            label: l10n.adminTv3PagePromoLineLabel,
+            hint: l10n.adminTv3PagePromoLineHint,
+            saveLabel: l10n.actionSave,
+            initial: _pagePromoLineFromConfig(detail?.page.config),
+            onSave: (v) => _patchTv3PageConfig(p.id, {'promoTopLine': v.trim()}),
+          ),
+          const SizedBox(height: 12),
+          if (isMediaBg)
+            _Tv3MediaFullBleedEditor(
+              key: ValueKey<int>(p.id),
+              pageType: p.pageType,
+              config: detail?.page.config,
+              heroRows: items.where((e) => e.role == 'hero').toList(),
+              combos: _combos.where((c) => c.isActive == 1).toList(),
+              l10n: l10n,
+              uploadRepo: widget.uploadRepo,
+              onPatchConfig: (patch) => _patchTv3PageConfig(p.id, patch),
+              onSwitchMenu: () => _tv3MediaSwitchMenuMode(p.id),
+              onSwitchCombo: () => _tv3MediaSwitchComboMode(p.id),
+              onPickHero: () => _tv3MediaPickHeroForMedia(p.id, l10n),
+              onRemoveHero: (rowId) => _removeItem(p.id, rowId, l10n),
+              onApplyCombo: (cid) => _tv3MediaApplyCombo(p.id, cid, l10n),
+            )
+          else if (isCombo) ...[
+            DropdownButtonFormField<int>(
+              key: ValueKey<String>('${p.id}-${p.comboId}'),
+              initialValue: p.comboId,
+              decoration: InputDecoration(
+                labelText: l10n.adminTv3PromoSelectCombo,
+                border: const OutlineInputBorder(),
+              ),
+              items: [
+                for (final c in _combos)
+                  DropdownMenuItem(
+                    value: c.id,
+                    child: Text(
+                      c.nameRu.isEmpty ? '#${c.id}' : c.nameRu,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
+              onChanged: (v) {
+                if (v != null) _setCombo(p.id, v);
+              },
+            ),
+          ] else ...[
+            FilledButton.tonal(
+              onPressed: () => _addHero(p.id, l10n),
+              child: Text(l10n.adminTv3PromoAddHero),
+            ),
+            const SizedBox(height: 8),
+            if (hero.isEmpty)
+              Text(
+                l10n.adminTv3PromoHeroEmpty,
+                style: Theme.of(context).textTheme.bodySmall,
+              )
+            else
+              ...hero.map(
+                (e) => ListTile(
+                  dense: true,
+                  title: Text(e.name.ru),
+                  subtitle: Text(e.menuItemId),
+                  trailing: IconButton(
+                    icon: const Icon(Icons.delete_outline_rounded),
+                    onPressed: () => _removeItem(p.id, e.id, l10n),
+                  ),
+                ),
+              ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -796,19 +972,7 @@ class _Tv3PromoPagesEditorScreenState extends State<Tv3PromoPagesEditorScreen> {
     AdminScreenPageRow p,
     AppLocalizations l10n,
   ) {
-    final detail = _detailByPageId[p.id];
-    final items = detail?.items ?? const <ScreenPageItemRow>[];
-    final hero = items.where((e) => e.role == 'hero').toList();
-    final pt = p.pageType.toLowerCase();
-    final isCombo = pt == 'promo_combo';
-    final isMediaBg = pt == 'promo_video_bg' || pt == 'promo_photo_bg';
-    final subtitle = isCombo
-        ? l10n.adminTv3PageTypePromoCombo
-        : isMediaBg
-            ? (pt == 'promo_video_bg'
-                ? l10n.adminTv3PageTypePromoVideoBg
-                : l10n.adminTv3PageTypePromoPhotoBg)
-            : l10n.adminTv3PageTypePromoProduct;
+    final subtitle = _pageSubtitle(p, l10n);
 
     return Card(
       key: ValueKey<int>(p.id),
@@ -848,111 +1012,7 @@ class _Tv3PromoPagesEditorScreenState extends State<Tv3PromoPagesEditorScreen> {
           subtitle,
           style: Theme.of(context).textTheme.bodySmall,
         ),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (!isMediaBg)
-                  DropdownButtonFormField<String>(
-                    key: ValueKey<String>('${p.id}-theme-${_tv3PromoVariantForPage(p)}'),
-                    initialValue: _tv3PromoVariantForPage(p),
-                    decoration: InputDecoration(
-                      labelText: l10n.adminTv3PromoSlideThemeLabel,
-                      border: const OutlineInputBorder(),
-                    ),
-                    items: [
-                      DropdownMenuItem(
-                        value: 'standard',
-                        child: Text(l10n.adminTv3PromoSlideThemeRedBg),
-                      ),
-                      DropdownMenuItem(
-                        value: 'inverted',
-                        child: Text(l10n.adminTv3PromoSlideThemeWhiteBg),
-                      ),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) _setPromoVariant(p.id, v);
-                    },
-                  ),
-                if (!isMediaBg) const SizedBox(height: 12),
-                _Tv3PagePromoLineEditor(
-                  key: ValueKey<String>('promo-line-${p.id}'),
-                  label: l10n.adminTv3PagePromoLineLabel,
-                  hint: l10n.adminTv3PagePromoLineHint,
-                  saveLabel: l10n.actionSave,
-                  initial: _pagePromoLineFromConfig(detail?.page.config),
-                  onSave: (v) => _patchTv3PageConfig(p.id, {'promoTopLine': v.trim()}),
-                ),
-                const SizedBox(height: 12),
-                if (isMediaBg)
-                  _Tv3MediaFullBleedEditor(
-                    key: ValueKey<int>(p.id),
-                    pageType: p.pageType,
-                    config: detail?.page.config,
-                    heroRows: items.where((e) => e.role == 'hero').toList(),
-                    combos: _combos.where((c) => c.isActive == 1).toList(),
-                    l10n: l10n,
-                    uploadRepo: widget.uploadRepo,
-                    onPatchConfig: (patch) => _patchTv3PageConfig(p.id, patch),
-                    onSwitchMenu: () => _tv3MediaSwitchMenuMode(p.id),
-                    onSwitchCombo: () => _tv3MediaSwitchComboMode(p.id),
-                    onPickHero: () => _tv3MediaPickHeroForMedia(p.id, l10n),
-                    onRemoveHero: (rowId) => _removeItem(p.id, rowId, l10n),
-                    onApplyCombo: (cid) => _tv3MediaApplyCombo(p.id, cid, l10n),
-                  )
-                else if (isCombo) ...[
-                  DropdownButtonFormField<int>(
-                    key: ValueKey<String>('${p.id}-${p.comboId}'),
-                    initialValue: p.comboId,
-                    decoration: InputDecoration(
-                      labelText: l10n.adminTv3PromoSelectCombo,
-                      border: const OutlineInputBorder(),
-                    ),
-                    items: [
-                      for (final c in _combos)
-                        DropdownMenuItem(
-                          value: c.id,
-                          child: Text(
-                            c.nameRu.isEmpty ? '#${c.id}' : c.nameRu,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                    ],
-                    onChanged: (v) {
-                      if (v != null) _setCombo(p.id, v);
-                    },
-                  ),
-                ] else ...[
-                  FilledButton.tonal(
-                    onPressed: () => _addHero(p.id, l10n),
-                    child: Text(l10n.adminTv3PromoAddHero),
-                  ),
-                  const SizedBox(height: 8),
-                  if (hero.isEmpty)
-                    Text(
-                      l10n.adminTv3PromoHeroEmpty,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    )
-                  else
-                    ...hero.map(
-                      (e) => ListTile(
-                        dense: true,
-                        title: Text(e.name.ru),
-                        subtitle: Text(e.menuItemId),
-                        trailing: IconButton(
-                          icon: const Icon(Icons.delete_outline_rounded),
-                          onPressed: () => _removeItem(p.id, e.id, l10n),
-                        ),
-                      ),
-                    ),
-                ],
-              ],
-            ),
-          ),
-        ],
+        children: [_buildPageEditorContent(p, l10n)],
       ),
     );
   }

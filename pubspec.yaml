@@ -2,7 +2,7 @@
 description: "POS Doner Kebab: Bloc, репозитории, тема, ru/en/tj."
 publish_to: 'none'
 
-version: 1.0.45+11
+version: 1.0.51+4
 
 environment:
   sdk: ^3.9.2

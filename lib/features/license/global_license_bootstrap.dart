@@ -144,9 +144,12 @@ class GlobalLicenseBootstrap {
     final storage = LicenseStorage();
     await storage.ensureDeviceId();
 
-    final discovery = await LocalServerDiscovery.resolveAndApply(
-      manualInput: serverManualInput,
-    );
+    var discovery = serverManualInput != null && serverManualInput.trim().isNotEmpty
+        ? await LocalServerDiscovery.resolveAndApply(manualInput: serverManualInput)
+        : await LocalServerDiscovery.resolveQuick();
+    if (!discovery.ok && serverManualInput == null) {
+      discovery = await LocalServerDiscovery.resolveAuto();
+    }
     if (!discovery.ok) {
       return GlobalLicenseStartupBlocked(
         discovery.message ??
@@ -179,9 +182,9 @@ class GlobalLicenseBootstrap {
     final deviceId = await storage.ensureDeviceId();
     final trimmed = licenseKeyPlain.trim();
 
-    final discovery = await LocalServerDiscovery.resolveAndApply(
-      manualInput: serverManualInput,
-    );
+    final discovery = serverManualInput != null && serverManualInput.trim().isNotEmpty
+        ? await LocalServerDiscovery.resolveAndApply(manualInput: serverManualInput)
+        : await LocalServerDiscovery.resolveQuick();
     if (!discovery.ok) {
       throw LicenseApiException(
         discovery.message ?? 'Локальный сервер недоступен',

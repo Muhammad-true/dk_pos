@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'package:dk_pos/core/config/app_config.dart';
+import 'package:dk_digitial_menu/core/app_file_logger.dart';
 
 class LocalOrdersRealtimeEvent {
   const LocalOrdersRealtimeEvent({
@@ -43,10 +44,12 @@ class LocalOrdersRealtime {
       },
       onError: (error, stack) {
         if (_disposed || _controller.isClosed) return;
+        AppFileLogger.instance.error('orders_ws', 'stream error', error, stack);
         _controller.addError(error, stack);
       },
       onDone: () {
         if (!_disposed && !_controller.isClosed) {
+          AppFileLogger.instance.warn('orders_ws', 'socket closed');
           _controller.add(
             const LocalOrdersRealtimeEvent(
               type: 'socket.done',

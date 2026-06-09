@@ -8,14 +8,17 @@ class PosQueueSectionLabel extends StatelessWidget {
     super.key,
     required this.label,
     required this.tone,
+    this.count,
   });
 
   final String label;
   final Color tone;
+  final int? count;
 
   @override
   Widget build(BuildContext context) {
-       return Row(
+    final theme = Theme.of(context);
+    return Row(
       children: [
         Container(
           width: PosQueueLayout.sectionBarWidth(context),
@@ -26,14 +29,32 @@ class PosQueueSectionLabel extends StatelessWidget {
           ),
         ),
         SizedBox(width: PosQueueLayout.sectionGap(context)),
-        Text(
-          label,
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w800,
-                color: tone,
-                fontSize: PosQueueLayout.sectionFont(context),
-              ),
+        Expanded(
+          child: Text(
+            label,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: tone,
+              fontSize: PosQueueLayout.sectionFont(context),
+            ),
+          ),
         ),
+        if (count != null && count! > 0)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: tone.withValues(alpha: 0.14),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: tone.withValues(alpha: 0.35)),
+            ),
+            child: Text(
+              '$count',
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w900,
+                color: tone,
+              ),
+            ),
+          ),
       ],
     );
   }

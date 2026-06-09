@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'package:dk_pos/core/config/app_config.dart';
+import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/features/admin/data/admin_reports_repository.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_server_env_section.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_server_network_section.dart';
@@ -477,61 +478,103 @@ class _AdminKitchenOpsPanelState extends State<AdminKitchenOpsPanel> {
                                     'Инцидентов нет. Если импорт/маппинг сломается, здесь появится причина и ID заказа.',
                                     style: text.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
                                   ),
-                                for (final row in failures.take(12))
-                                  Container(
-                                    margin: const EdgeInsets.only(top: 8),
-                                    decoration: BoxDecoration(
-                                      color: row.resolvedAt == null
-                                          ? scheme.errorContainer.withValues(alpha: 0.28)
-                                          : scheme.surfaceContainerHighest.withValues(alpha: 0.18),
-                                      borderRadius: BorderRadius.circular(10),
-                                      border: Border.all(
-                                        color: row.resolvedAt == null
-                                            ? scheme.error.withValues(alpha: 0.35)
-                                            : scheme.outlineVariant.withValues(alpha: 0.35),
-                                      ),
-                                    ),
-                                    child: ListTile(
-                                      dense: true,
-                                      title: Text(
-                                        'Global order #${row.globalSiteOrderId} • ${row.reason}',
-                                        style: const TextStyle(fontWeight: FontWeight.w700),
-                                      ),
-                                      subtitle: Text(
-                                        '${row.detail ?? 'Без деталей'}\n'
-                                        'attempts=${row.attemptCount}, last=${row.lastSeenAt ?? '—'}, resolved=${row.resolvedAt ?? 'нет'}',
-                                      ),
-                                      trailing: Wrap(
-                                        spacing: 6,
+                                LayoutBuilder(
+                                  builder: (context, constraints) {
+                                    final items = failures.take(12).toList();
+                                    if (items.isEmpty) return const SizedBox.shrink();
+                                    final cols = WindowLayout(width: constraints.maxWidth)
+                                        .hubGridColumns(minCellWidth: 300);
+                                    Widget failureCard(AdminSiteOrderImportFailureRow row) {
+                                      return Container(
+                                        decoration: BoxDecoration(
+                                          color: row.resolvedAt == null
+                                              ? scheme.errorContainer.withValues(alpha: 0.28)
+                                              : scheme.surfaceContainerHighest.withValues(alpha: 0.18),
+                                          borderRadius: BorderRadius.circular(10),
+                                          border: Border.all(
+                                            color: row.resolvedAt == null
+                                                ? scheme.error.withValues(alpha: 0.35)
+                                                : scheme.outlineVariant.withValues(alpha: 0.35),
+                                          ),
+                                        ),
+                                        child: Padding(
+                                          padding: const EdgeInsets.all(12),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                                            children: [
+                                              Text(
+                                                'Global order #${row.globalSiteOrderId}',
+                                                style: const TextStyle(fontWeight: FontWeight.w800),
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(row.reason),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                row.detail ?? 'Без деталей',
+                                                style: text.bodySmall,
+                                                maxLines: 3,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                              const SizedBox(height: 8),
+                                              Wrap(
+                                                spacing: 6,
+                                                runSpacing: 6,
+                                                children: [
+                                                  OutlinedButton(
+                                                    onPressed: _syncBusy
+                                                        ? null
+                                                        : () => _runSyncAction(
+                                                              () => context
+                                                                  .read<AdminReportsRepository>()
+                                                                  .retrySiteOrderFailures(
+                                                                    globalSiteOrderId: row.globalSiteOrderId,
+                                                                  ),
+                                                            ),
+                                                    child: const Text('Retry'),
+                                                  ),
+                                                  OutlinedButton(
+                                                    onPressed: _syncBusy || row.resolvedAt != null
+                                                        ? null
+                                                        : () => _runSyncAction(
+                                                              () => context
+                                                                  .read<AdminReportsRepository>()
+                                                                  .resolveSiteOrderFailure(
+                                                                    globalSiteOrderId: row.globalSiteOrderId,
+                                                                  ),
+                                                            ),
+                                                    child: const Text('Resolve'),
+                                                  ),
+                                                ],
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                    if (cols <= 1) {
+                                      return Column(
                                         children: [
-                                          OutlinedButton(
-                                            onPressed: _syncBusy
-                                                ? null
-                                                : () => _runSyncAction(
-                                                      () => context
-                                                          .read<AdminReportsRepository>()
-                                                          .retrySiteOrderFailures(
-                                                            globalSiteOrderId: row.globalSiteOrderId,
-                                                          ),
-                                                    ),
-                                            child: const Text('Retry'),
-                                          ),
-                                          OutlinedButton(
-                                            onPressed: _syncBusy || row.resolvedAt != null
-                                                ? null
-                                                : () => _runSyncAction(
-                                                      () => context
-                                                          .read<AdminReportsRepository>()
-                                                          .resolveSiteOrderFailure(
-                                                            globalSiteOrderId: row.globalSiteOrderId,
-                                                          ),
-                                                    ),
-                                            child: const Text('Resolve'),
-                                          ),
+                                          for (var i = 0; i < items.length; i++) ...[
+                                            if (i > 0) const SizedBox(height: 8),
+                                            failureCard(items[i]),
+                                          ],
                                         ],
+                                      );
+                                    }
+                                    return GridView.builder(
+                                      shrinkWrap: true,
+                                      physics: const NeverScrollableScrollPhysics(),
+                                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: cols,
+                                        mainAxisSpacing: 10,
+                                        crossAxisSpacing: 10,
+                                        childAspectRatio: cols >= 3 ? 1.5 : 1.35,
                                       ),
-                                    ),
-                                  ),
+                                      itemCount: items.length,
+                                      itemBuilder: (_, i) => failureCard(items[i]),
+                                    );
+                                  },
+                                ),
                               ],
                             );
                           },
@@ -636,11 +679,18 @@ class _AdminKitchenOpsPanelState extends State<AdminKitchenOpsPanel> {
                       const SizedBox(height: 10),
                       _OpsCard(
                         title: 'Аудит кухни по поварам и кнопкам',
-                        child: Column(
-                          children: [
-                            for (final row in kitchenUsers)
-                              Container(
-                                margin: const EdgeInsets.symmetric(vertical: 3),
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            if (kitchenUsers.isEmpty) {
+                              return const Padding(
+                                padding: EdgeInsets.all(12),
+                                child: Text('Нет данных за выбранный период'),
+                              );
+                            }
+                            final cols = WindowLayout(width: constraints.maxWidth)
+                                .hubGridColumns(minCellWidth: 320);
+                            Widget auditCard(AdminKitchenUserOpsRow row) {
+                              return Container(
                                 decoration: BoxDecoration(
                                   color: _isProblemUser(row)
                                       ? Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.35)
@@ -652,51 +702,78 @@ class _AdminKitchenOpsPanelState extends State<AdminKitchenOpsPanel> {
                                         : Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.40),
                                   ),
                                 ),
-                                child: ListTile(
-                                  dense: true,
-                                  leading: CircleAvatar(
-                                    backgroundColor: _kitchenButtonColor(
-                                      row.kitchenButtonColorHex,
-                                    ),
-                                    child: const Icon(
-                                      Icons.pan_tool_alt_rounded,
-                                      size: 16,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                  title: Text(
-                                    row.username,
-                                    style: const TextStyle(fontWeight: FontWeight.w700),
-                                  ),
-                                  subtitle: Text(
-                                    'Кнопка: ${row.kitchenButtonName.isEmpty ? 'не назначена' : row.kitchenButtonName}\n'
-                                    'Принял: ${row.ordersAcceptedCount} зак / ${row.itemsAccepted} поз\n'
-                                    'Готово: ${row.ordersReadyCount} зак / ${row.itemsReady} поз'
-                                    '${_isProblemUser(row) ? '\nВнимание: проверьте разрыв «принял/готово»' : ''}',
-                                  ),
-                                  trailing: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    crossAxisAlignment: CrossAxisAlignment.end,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        _fmtHm(row.spentSeconds),
-                                        style: const TextStyle(fontWeight: FontWeight.w700),
+                                      Row(
+                                        children: [
+                                          CircleAvatar(
+                                            radius: 16,
+                                            backgroundColor: _kitchenButtonColor(row.kitchenButtonColorHex),
+                                            child: const Icon(Icons.pan_tool_alt_rounded, size: 16, color: Colors.white),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Expanded(
+                                            child: Text(
+                                              row.username,
+                                              style: const TextStyle(fontWeight: FontWeight.w800),
+                                            ),
+                                          ),
+                                          Text(
+                                            _fmtHm(row.spentSeconds),
+                                            style: const TextStyle(fontWeight: FontWeight.w700),
+                                          ),
+                                        ],
                                       ),
-                                      const SizedBox(height: 2),
+                                      const SizedBox(height: 8),
                                       Text(
-                                        'ср: ${_fmtAvgSecPerItem(spentSeconds: row.spentSeconds, itemsReady: row.itemsReady)}',
+                                        'Кнопка: ${row.kitchenButtonName.isEmpty ? 'не назначена' : row.kitchenButtonName}',
                                         style: Theme.of(context).textTheme.bodySmall,
+                                      ),
+                                      Text(
+                                        'Принял: ${row.ordersAcceptedCount} зак / ${row.itemsAccepted} поз',
+                                        style: Theme.of(context).textTheme.bodySmall,
+                                      ),
+                                      Text(
+                                        'Готово: ${row.ordersReadyCount} зак / ${row.itemsReady} поз',
+                                        style: Theme.of(context).textTheme.bodySmall,
+                                      ),
+                                      Text(
+                                        'Ср.: ${_fmtAvgSecPerItem(spentSeconds: row.spentSeconds, itemsReady: row.itemsReady)}',
+                                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                                              fontWeight: FontWeight.w700,
+                                            ),
                                       ),
                                     ],
                                   ),
                                 ),
+                              );
+                            }
+                            if (cols <= 1) {
+                              return Column(
+                                children: [
+                                  for (var i = 0; i < kitchenUsers.length; i++) ...[
+                                    if (i > 0) const SizedBox(height: 6),
+                                    auditCard(kitchenUsers[i]),
+                                  ],
+                                ],
+                              );
+                            }
+                            return GridView.builder(
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: cols,
+                                mainAxisSpacing: 8,
+                                crossAxisSpacing: 8,
+                                childAspectRatio: cols >= 3 ? 1.45 : 1.55,
                               ),
-                            if (kitchenUsers.isEmpty)
-                              const Padding(
-                                padding: EdgeInsets.all(12),
-                                child: Text('Нет данных за выбранный период'),
-                              ),
-                          ],
+                              itemCount: kitchenUsers.length,
+                              itemBuilder: (_, i) => auditCard(kitchenUsers[i]),
+                            );
+                          },
                         ),
                       ),
                       const SizedBox(height: 10),

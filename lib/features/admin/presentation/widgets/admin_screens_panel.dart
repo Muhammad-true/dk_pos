@@ -21,10 +21,10 @@ import 'package:dk_pos/features/admin/data/upload_repository.dart';
 import 'package:dk_pos/features/admin/presentation/screens/customer_display_designer_screen.dart';
 import 'package:dk_pos/features/admin/presentation/screens/admin_tv_preview_page.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_list_row_card.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/tv_layout_type_catalog.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/tv_layout_type_picker.dart';
 
 const _kScreenTypes = ['carousel', 'tv2', 'tv3', 'tv4', 'customer_display'];
-
-const _kTv2PageTypes = ['split', 'drinks', 'carousel', 'list', 'product_grid', 'video_bg'];
 
 /// Ключи конфига, которые задаёт конструктор шаблона (остальное — в «доп. JSON»).
 const _kTemplateStripKeys = <String>{
@@ -868,35 +868,14 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
                       (v == null || v.trim().isEmpty) ? l10n.adminScreenSlugError : null,
                 ),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  key: ValueKey('screen_type_$_type'),
-                  initialValue: _type,
-                  isExpanded: true,
-                  selectedItemBuilder: (context) => _kScreenTypes
-                      .map(
-                        (t) => Text(
-                          _typeLabel(l10n, t),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      )
-                      .toList(),
-                  decoration: InputDecoration(
-                    labelText: l10n.adminScreenType,
-                    border: const OutlineInputBorder(),
-                  ),
-                  items: _kScreenTypes
-                      .map(
-                        (t) => DropdownMenuItem(
-                          value: t,
-                          child: Text(_typeLabel(l10n, t)),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: _saving
-                      ? null
+                TvLayoutTypePicker(
+                  title: l10n.adminScreenType,
+                  options: tvScreenTypeOptions(l10n),
+                  selectedId: _type,
+                  crossAxisCount: 1,
+                  onSelected: _saving
+                      ? (_) {}
                       : (v) {
-                          if (v == null) return;
                           setState(() {
                             _type = v;
                             if (v == 'tv2' && widget.existing != null) {
@@ -967,38 +946,14 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              DropdownButtonFormField<String>(
-                                key: ValueKey('new_tv2_page_$_newTv2PageType'),
-                                initialValue: _newTv2PageType,
-                                isExpanded: true,
-                                selectedItemBuilder: (context) => _kTv2PageTypes
-                                    .map(
-                                      (t) => Text(
-                                        _tv2PageTypeLabel(l10n, t),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    )
-                                    .toList(),
-                                decoration: InputDecoration(
-                                  labelText: l10n.adminScreenPageTypeLabel,
-                                  border: const OutlineInputBorder(),
-                                ),
-                                items: _kTv2PageTypes
-                                    .map(
-                                      (t) => DropdownMenuItem(
-                                        value: t,
-                                        child: Text(_tv2PageTypeLabel(l10n, t)),
-                                      ),
-                                    )
-                                    .toList(),
-                                onChanged: _saving
-                                    ? null
-                                    : (v) {
-                                        if (v != null) {
-                                          setState(() => _newTv2PageType = v);
-                                        }
-                                      },
+                              TvLayoutTypePicker(
+                                options: tv2PageTypeOptions(l10n),
+                                selectedId: _newTv2PageType,
+                                hint: l10n.adminTvPageTypePickerHint,
+                                crossAxisCount: 2,
+                                onSelected: _saving
+                                    ? (_) {}
+                                    : (v) => setState(() => _newTv2PageType = v),
                               ),
                               const SizedBox(height: 8),
                               FilledButton.tonalIcon(
@@ -1209,23 +1164,6 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
         ),
       ],
     );
-  }
-
-  String _typeLabel(AppLocalizations l10n, String t) {
-    switch (t) {
-      case 'carousel':
-        return l10n.adminScreenTypeCarousel;
-      case 'tv2':
-        return l10n.adminScreenTypeTv2;
-      case 'tv3':
-        return l10n.adminScreenTypeTv3;
-      case 'tv4':
-        return l10n.adminScreenTypeTv4;
-      case 'customer_display':
-        return 'Customer Display';
-      default:
-        return t;
-    }
   }
 
   String _tv2PageTypeLabel(AppLocalizations l10n, String t) {

@@ -6,6 +6,7 @@ import 'package:dk_pos/app/pos_theme/pos_theme_toggle_button.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/auth/bloc/auth_event.dart';
 import 'package:dk_pos/features/expeditor/presentation/widgets/expeditor_queue_panel.dart';
+import 'package:dk_pos/features/orders/presentation/pos_queue_layout.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
 import 'package:dk_pos/theme/pos_workspace_theme.dart';
 
@@ -25,10 +26,16 @@ class _ExpeditorScreenState extends State<ExpeditorScreen> {
     final l10n = context.appL10n;
     final theme = Theme.of(context);
 
+    final isPhone = PosQueueLayout.isPhone(context);
+
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: Text(l10n.expeditorTitle),
+        title: Text(
+          l10n.expeditorTitle,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           const PosThemeToggleIconButton(),
           IconButton(
@@ -36,11 +43,18 @@ class _ExpeditorScreenState extends State<ExpeditorScreen> {
             onPressed: () => _panelKey.currentState?.reloadFromAppBar(),
             icon: const Icon(Icons.refresh_rounded),
           ),
-          TextButton.icon(
-            onPressed: () => context.read<AuthBloc>().add(const AuthLogoutRequested()),
-            icon: const Icon(Icons.logout_rounded),
-            label: Text(l10n.actionExit),
-          ),
+          if (isPhone)
+            IconButton(
+              tooltip: l10n.actionExit,
+              onPressed: () => context.read<AuthBloc>().add(const AuthLogoutRequested()),
+              icon: const Icon(Icons.logout_rounded),
+            )
+          else
+            TextButton.icon(
+              onPressed: () => context.read<AuthBloc>().add(const AuthLogoutRequested()),
+              icon: const Icon(Icons.logout_rounded),
+              label: Text(l10n.actionExit),
+            ),
         ],
       ),
       body: DecoratedBox(

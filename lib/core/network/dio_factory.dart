@@ -7,9 +7,10 @@ Dio createDio() {
   return Dio(
     BaseOptions(
       baseUrl: base.endsWith('/') ? base : '$base/',
-      connectTimeout: const Duration(seconds: 20),
-      // Синк каталога/глобала может занимать заметно дольше 20с на слабой сети.
-      receiveTimeout: const Duration(seconds: 90),
+      // Локальная сеть (Wi‑Fi): быстрый fail вместо ожидания «как через интернет».
+      connectTimeout: const Duration(seconds: 5),
+      receiveTimeout: const Duration(seconds: 15),
+      sendTimeout: const Duration(seconds: 15),
       headers: {
         'Accept': 'application/json',
         'Content-Type': 'application/json',

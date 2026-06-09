@@ -350,12 +350,18 @@ class _AdminScreenState extends State<AdminScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final root = WindowLayout(width: constraints.maxWidth);
-        final narrowActions = constraints.maxWidth < 420;
+        final narrowActions = root.isCompact;
+        final useRail = root.showAdminRail;
+        final railExtended = root.extendedAdminRail;
+        final railWidth = railExtended ? 256.0 : 80.0;
+        final contentAreaWidth = useRail
+            ? constraints.maxWidth - railWidth - 1
+            : constraints.maxWidth;
 
         final body = _AdminTabBody(
           index: _index,
           l10n: l10n,
-          maxBodyWidth: root.adminBodyMaxWidth(constraints.maxWidth),
+          maxBodyWidth: root.adminBodyMaxWidth(contentAreaWidth),
         );
 
         final content = AnimatedSwitcher(
@@ -373,46 +379,53 @@ class _AdminScreenState extends State<AdminScreen> {
 
         return Scaffold(
           key: _scaffoldKey,
-          drawer: _AdminNavDrawer(
-            index: _index,
-            l10n: l10n,
-            syncIncidentCount: _syncIncidentCount,
-            onNavTap: (i) {
-              setState(() => _index = i);
-              Navigator.of(context).pop();
-              if (i == 4) {
-                _refreshSyncIncidentCount();
-              }
-            },
-            onLogout: () {
-              Navigator.of(context).pop();
-              _logout(context);
-            },
-          ),
-          appBar: AppBar(
-            automaticallyImplyLeading: false,
-            leading: Tooltip(
-              message: _syncIncidentCount > 0
-                  ? 'Меню · проблем синхронизации: $_syncIncidentCount (откройте «Смены и кухня»)'
-                  : l10n.tooltipAppMenu,
-              child: Badge(
-                isLabelVisible: _syncIncidentCount > 0,
-                backgroundColor: Colors.red,
-                textColor: Colors.white,
-                label: Text(
-                  _syncIncidentCount > 99 ? '99+' : '$_syncIncidentCount',
-                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800),
-                ),
-                child: IconButton(
-                  icon: const Icon(Icons.menu_rounded),
-                  tooltip: '',
-                  onPressed: () {
-                    _refreshSyncIncidentCount();
-                    _scaffoldKey.currentState?.openDrawer();
+          drawer: useRail
+              ? null
+              : _AdminNavDrawer(
+                  index: _index,
+                  l10n: l10n,
+                  syncIncidentCount: _syncIncidentCount,
+                  onNavTap: (i) {
+                    setState(() => _index = i);
+                    Navigator.of(context).pop();
+                    if (i == 4) {
+                      _refreshSyncIncidentCount();
+                    }
+                  },
+                  onLogout: () {
+                    Navigator.of(context).pop();
+                    _logout(context);
                   },
                 ),
-              ),
-            ),
+          appBar: AppBar(
+            automaticallyImplyLeading: !useRail,
+            leading: useRail
+                ? null
+                : Tooltip(
+                    message: _syncIncidentCount > 0
+                        ? 'Меню · проблем синхронизации: $_syncIncidentCount (откройте «Смены и кухня»)'
+                        : l10n.tooltipAppMenu,
+                    child: Badge(
+                      isLabelVisible: _syncIncidentCount > 0,
+                      backgroundColor: Colors.red,
+                      textColor: Colors.white,
+                      label: Text(
+                        _syncIncidentCount > 99 ? '99+' : '$_syncIncidentCount',
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      child: IconButton(
+                        icon: const Icon(Icons.menu_rounded),
+                        tooltip: '',
+                        onPressed: () {
+                          _refreshSyncIncidentCount();
+                          _scaffoldKey.currentState?.openDrawer();
+                        },
+                      ),
+                    ),
+                  ),
             title: Text(titles[_index], overflow: TextOverflow.ellipsis),
             actions: [
               IconButton(
@@ -469,9 +482,164 @@ class _AdminScreenState extends State<AdminScreen> {
                       ),
             ],
           ),
-          body: content,
+          body: useRail
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _AdminNavigationRail(
+                      index: _index,
+                      l10n: l10n,
+                      extended: railExtended,
+                      syncIncidentCount: _syncIncidentCount,
+                      onNavTap: (i) {
+                        setState(() => _index = i);
+                        if (i == 4) {
+                          _refreshSyncIncidentCount();
+                        }
+                      },
+                      onLogout: () => _logout(context),
+                    ),
+                    const VerticalDivider(width: 1),
+                    Expanded(child: content),
+                  ],
+                )
+              : content,
         );
       },
+    );
+  }
+}
+
+class _AdminNavigationRail extends StatelessWidget {
+  const _AdminNavigationRail({
+    required this.index,
+    required this.l10n,
+    required this.extended,
+    required this.syncIncidentCount,
+    required this.onNavTap,
+    required this.onLogout,
+  });
+
+  final int index;
+  final AppLocalizations l10n;
+  final bool extended;
+  final int syncIncidentCount;
+  final ValueChanged<int> onNavTap;
+  final VoidCallback onLogout;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    NavigationRailDestination dest({
+      required int i,
+      required IconData icon,
+      required IconData selectedIcon,
+      required String label,
+      int? badge,
+    }) {
+      final iconWidget = badge != null && badge > 0
+          ? Badge(
+              isLabelVisible: true,
+              backgroundColor: Colors.red,
+              label: Text(
+                badge > 99 ? '99+' : '$badge',
+                style: const TextStyle(fontSize: 9),
+              ),
+              child: Icon(selectedIcon),
+            )
+          : Icon(icon);
+      return NavigationRailDestination(
+        icon: iconWidget,
+        selectedIcon: Icon(selectedIcon),
+        label: Text(label),
+      );
+    }
+
+    return NavigationRail(
+      extended: extended,
+      selectedIndex: index,
+      onDestinationSelected: onNavTap,
+      labelType: extended
+          ? NavigationRailLabelType.none
+          : NavigationRailLabelType.all,
+      leading: extended
+          ? Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    Icons.admin_panel_settings_rounded,
+                    size: 32,
+                    color: scheme.primary,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    l10n.adminTitle,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w800,
+                        ),
+                  ),
+                ],
+              ),
+            )
+          : null,
+      trailing: extended
+          ? Padding(
+              padding: const EdgeInsets.only(bottom: 16),
+              child: IconButton.filledTonal(
+                tooltip: l10n.actionExit,
+                onPressed: onLogout,
+                icon: Icon(Icons.logout_rounded, color: scheme.error),
+              ),
+            )
+          : null,
+      destinations: [
+        dest(
+          i: 0,
+          icon: Icons.space_dashboard_outlined,
+          selectedIcon: Icons.space_dashboard_rounded,
+          label: l10n.adminNavOverview,
+        ),
+        dest(
+          i: 1,
+          icon: Icons.people_outline_rounded,
+          selectedIcon: Icons.people_rounded,
+          label: l10n.adminNavUsers,
+        ),
+        dest(
+          i: 2,
+          icon: Icons.restaurant_menu_outlined,
+          selectedIcon: Icons.restaurant_menu_rounded,
+          label: l10n.adminNavCatalog,
+        ),
+        dest(
+          i: 3,
+          icon: Icons.receipt_long_outlined,
+          selectedIcon: Icons.receipt_long_rounded,
+          label: l10n.adminNavOrders,
+        ),
+        dest(
+          i: 4,
+          icon: Icons.schedule_outlined,
+          selectedIcon: Icons.schedule_rounded,
+          label: 'Смены',
+          badge: syncIncidentCount > 0 ? syncIncidentCount : null,
+        ),
+        dest(
+          i: 5,
+          icon: Icons.loyalty_outlined,
+          selectedIcon: Icons.loyalty_rounded,
+          label: 'Лояльность',
+        ),
+        dest(
+          i: 6,
+          icon: Icons.settings_outlined,
+          selectedIcon: Icons.settings_rounded,
+          label: l10n.adminNavSettings,
+        ),
+      ],
     );
   }
 }
@@ -857,24 +1025,47 @@ class _AdminTabBody extends StatelessWidget {
       alignment: Alignment.topCenter,
       child: ConstrainedBox(
         constraints: BoxConstraints(maxWidth: maxBodyWidth),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-          child: switch (index) {
-            0 => Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                AdminSectionCard(
-                  icon: Icons.insights_rounded,
-                  title: l10n.adminDashboardHeadline,
-                  body: l10n.adminDashboardBody,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final cols = WindowLayout(width: constraints.maxWidth)
+                .hubGridColumns(minCellWidth: 320);
+            final overviewCards = <Widget>[
+              AdminSectionCard(
+                icon: Icons.insights_rounded,
+                title: l10n.adminDashboardHeadline,
+                body: l10n.adminDashboardBody,
+              ),
+              const _AdminSyncQuickCard(),
+              const _AdminInventoryReceiveCard(),
+            ];
+
+            if (cols <= 1) {
+              return SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var i = 0; i < overviewCards.length; i++) ...[
+                      overviewCards[i],
+                      if (i != overviewCards.length - 1) const SizedBox(height: 12),
+                    ],
+                  ],
                 ),
-                const SizedBox(height: 12),
-                const _AdminSyncQuickCard(),
-                const SizedBox(height: 12),
-                const _AdminInventoryReceiveCard(),
-              ],
-            ),
-            _ => const SizedBox.shrink(),
+              );
+            }
+
+            return SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+              child: GridView.count(
+                crossAxisCount: cols,
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: cols >= 3 ? 1.35 : 1.15,
+                children: overviewCards,
+              ),
+            );
           },
         ),
       ),

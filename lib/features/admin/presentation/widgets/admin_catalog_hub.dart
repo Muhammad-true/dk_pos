@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/features/admin/bloc/screens_admin_bloc.dart';
 import 'package:dk_pos/features/admin/bloc/screens_admin_event.dart';
 import 'package:dk_pos/features/admin/bloc/catalog_admin_bloc.dart';
@@ -157,105 +158,155 @@ class _AdminCatalogHubState extends State<AdminCatalogHub> {
           future: _syncFuture,
           builder: (context, snap) {
             final readOnly = snap.data?.globalCatalogLocalEditDisabled ?? false;
-            return ListView(
-              padding: const EdgeInsets.fromLTRB(0, 4, 0, 24),
-              children: [
-                if (readOnly) ...[
-                  Material(
-                    color: scheme.secondaryContainer,
-                    borderRadius: BorderRadius.circular(12),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(Icons.cloud_download_rounded, color: scheme.onSecondaryContainer),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              'Каталог (названия, цены, категории) — в глобальной админке и pull. На точке: «Товары» — кухня; «ТВ1 — слайды» — слайд карусели по категории (categories.tv1_page); у товара можно своё tv1_page. Создание категорий здесь недоступно.',
-                              style: textTheme.bodySmall?.copyWith(
-                                color: scheme.onSecondaryContainer,
-                                height: 1.35,
+
+            final tiles = <_HubTileConfig>[
+              _HubTileConfig(
+                icon: Icons.category_rounded,
+                iconColor: scheme.primary,
+                title: l10n.adminCatalogTabCategories,
+                subtitle: l10n.adminCatalogHubCategoriesHint,
+                muted: readOnly,
+                onTap: () {
+                  if (readOnly) {
+                    _showGlobalOnlyHint(context);
+                  } else {
+                    _openCategories(context);
+                  }
+                },
+              ),
+              _HubTileConfig(
+                icon: Icons.fastfood_rounded,
+                iconColor: scheme.tertiary,
+                title: l10n.adminCatalogTabProducts,
+                subtitle: readOnly
+                    ? 'Распределение по кухням на этой точке (каталог — через pull)'
+                    : l10n.adminCatalogHubProductsHint,
+                onTap: () => _openProducts(
+                  context,
+                  restrictGlobalCatalogEdits: readOnly,
+                ),
+              ),
+              _HubTileConfig(
+                icon: Icons.layers_rounded,
+                iconColor: scheme.secondary,
+                title: l10n.adminCatalogTabCombos,
+                subtitle: l10n.adminCatalogHubCombosHint,
+                onTap: () => _openCombos(context),
+              ),
+              _HubTileConfig(
+                icon: Icons.tv_rounded,
+                iconColor: scheme.error,
+                title: l10n.adminCatalogTabScreens,
+                subtitle: l10n.adminCatalogHubScreensHint,
+                onTap: () => _openScreens(context),
+              ),
+              _HubTileConfig(
+                icon: Icons.view_carousel_rounded,
+                iconColor: scheme.primary,
+                title: 'ТВ1 — слайды',
+                subtitle:
+                    'Слайд по категории: товары подтянутся автоматически (переопределение — у товара)',
+                onTap: () => _openTv1Slides(context),
+              ),
+              _HubTileConfig(
+                icon: Icons.settings_remote_rounded,
+                iconColor: scheme.primary,
+                title: 'Настройки ТВ',
+                subtitle:
+                    'Режим очереди, звук, TTS, экраны ТВ4 и оформление доски — без правки .env на приставке',
+                onTap: () => _openTvSettings(context),
+              ),
+            ];
+
+            return LayoutBuilder(
+              builder: (context, constraints) {
+                final cols = WindowLayout(width: constraints.maxWidth)
+                    .hubGridColumns(minCellWidth: 280);
+                final useGrid = cols > 1;
+
+                return CustomScrollView(
+                  slivers: [
+                    SliverPadding(
+                      padding: const EdgeInsets.fromLTRB(0, 4, 0, 0),
+                      sliver: SliverList(
+                        delegate: SliverChildListDelegate([
+                          if (readOnly) ...[
+                            Material(
+                              color: scheme.secondaryContainer,
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Icon(
+                                      Icons.cloud_download_rounded,
+                                      color: scheme.onSecondaryContainer,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        'Каталог (названия, цены, категории) — в глобальной админке и pull. На точке: «Товары» — кухня; «ТВ1 — слайды» — слайд карусели по категории (categories.tv1_page); у товара можно своё tv1_page. Создание категорий здесь недоступно.',
+                                        style: textTheme.bodySmall?.copyWith(
+                                          color: scheme.onSecondaryContainer,
+                                          height: 1.35,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
+                            const SizedBox(height: 16),
+                          ],
+                          Text(
+                            l10n.adminCatalogHubLead,
+                            style: textTheme.bodyMedium?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                              height: 1.4,
+                            ),
                           ),
-                        ],
+                          const SizedBox(height: 20),
+                        ]),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-                Text(
-                  l10n.adminCatalogHubLead,
-                  style: textTheme.bodyMedium?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                    height: 1.4,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                _HubTile(
-                  icon: Icons.category_rounded,
-                  iconColor: scheme.primary,
-                  title: l10n.adminCatalogTabCategories,
-                  subtitle: l10n.adminCatalogHubCategoriesHint,
-                  muted: readOnly,
-                  onTap: () {
-                    if (readOnly) {
-                      _showGlobalOnlyHint(context);
-                    } else {
-                      _openCategories(context);
-                    }
-                  },
-                ),
-                const SizedBox(height: 12),
-                _HubTile(
-                  icon: Icons.fastfood_rounded,
-                  iconColor: scheme.tertiary,
-                  title: l10n.adminCatalogTabProducts,
-                  subtitle: readOnly
-                      ? 'Распределение по кухням на этой точке (каталог — через pull)'
-                      : l10n.adminCatalogHubProductsHint,
-                  onTap: () => _openProducts(
-                    context,
-                    restrictGlobalCatalogEdits: readOnly,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                _HubTile(
-                  icon: Icons.layers_rounded,
-                  iconColor: scheme.secondary,
-                  title: l10n.adminCatalogTabCombos,
-                  subtitle: l10n.adminCatalogHubCombosHint,
-                  onTap: () => _openCombos(context),
-                ),
-                const SizedBox(height: 12),
-                _HubTile(
-                  icon: Icons.tv_rounded,
-                  iconColor: scheme.error,
-                  title: l10n.adminCatalogTabScreens,
-                  subtitle: l10n.adminCatalogHubScreensHint,
-                  onTap: () => _openScreens(context),
-                ),
-                const SizedBox(height: 12),
-                _HubTile(
-                  icon: Icons.view_carousel_rounded,
-                  iconColor: scheme.primary,
-                  title: 'ТВ1 — слайды',
-                  subtitle:
-                      'Слайд по категории: товары подтянутся автоматически (переопределение — у товара)',
-                  onTap: () => _openTv1Slides(context),
-                ),
-                const SizedBox(height: 12),
-                _HubTile(
-                  icon: Icons.settings_remote_rounded,
-                  iconColor: scheme.primary,
-                  title: 'Настройки ТВ',
-                  subtitle:
-                      'Режим очереди, звук, TTS, экраны ТВ4 и оформление доски — без правки .env на приставке',
-                  onTap: () => _openTvSettings(context),
-                ),
-              ],
+                    if (useGrid)
+                      SliverPadding(
+                        padding: const EdgeInsets.only(bottom: 24),
+                        sliver: SliverGrid(
+                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: cols,
+                            mainAxisSpacing: 12,
+                            crossAxisSpacing: 12,
+                            childAspectRatio: cols >= 3 ? 1.55 : 1.75,
+                          ),
+                          delegate: SliverChildBuilderDelegate(
+                            (context, i) => _HubTile(
+                              config: tiles[i],
+                              vertical: true,
+                            ),
+                            childCount: tiles.length,
+                          ),
+                        ),
+                      )
+                    else
+                      SliverPadding(
+                        padding: const EdgeInsets.only(bottom: 24),
+                        sliver: SliverList(
+                          delegate: SliverChildBuilderDelegate(
+                            (context, i) => Padding(
+                              padding: EdgeInsets.only(
+                                bottom: i == tiles.length - 1 ? 0 : 12,
+                              ),
+                              child: _HubTile(config: tiles[i]),
+                            ),
+                            childCount: tiles.length,
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
             );
           },
         ),
@@ -289,8 +340,8 @@ class _CatalogSubScaffold extends StatelessWidget {
   }
 }
 
-class _HubTile extends StatelessWidget {
-  const _HubTile({
+class _HubTileConfig {
+  const _HubTileConfig({
     required this.icon,
     required this.iconColor,
     required this.title,
@@ -305,63 +356,100 @@ class _HubTile extends StatelessWidget {
   final String subtitle;
   final VoidCallback onTap;
   final bool muted;
+}
+
+class _HubTile extends StatelessWidget {
+  const _HubTile({
+    required this.config,
+    this.vertical = false,
+  });
+
+  final _HubTileConfig config;
+  final bool vertical;
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
+    final iconBox = Container(
+      width: vertical ? 48 : 52,
+      height: vertical ? 48 : 52,
+      decoration: BoxDecoration(
+        color: config.iconColor.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Icon(config.icon, color: config.iconColor, size: vertical ? 26 : 28),
+    );
+
+    final texts = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          config.title,
+          style: textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+          maxLines: vertical ? 2 : 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          config.subtitle,
+          style: textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+            height: 1.35,
+          ),
+          maxLines: vertical ? 3 : 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
+    );
+
     return Material(
       color: scheme.surfaceContainerHighest,
       borderRadius: BorderRadius.circular(16),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: onTap,
+        onTap: config.onTap,
         child: Opacity(
-          opacity: muted ? 0.5 : 1,
+          opacity: config.muted ? 0.5 : 1,
           child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
-          child: Row(
-            children: [
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: iconColor.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(icon, color: iconColor, size: 28),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
+            padding: EdgeInsets.symmetric(
+              horizontal: vertical ? 16 : 18,
+              vertical: vertical ? 16 : 18,
+            ),
+            child: vertical
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      iconBox,
+                      const SizedBox(height: 12),
+                      texts,
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 14,
+                          color: scheme.onSurfaceVariant.withValues(alpha: 0.65),
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                        height: 1.35,
+                    ],
+                  )
+                : Row(
+                    children: [
+                      iconBox,
+                      const SizedBox(width: 16),
+                      Expanded(child: texts),
+                      Icon(
+                        Icons.arrow_forward_ios_rounded,
+                        size: 16,
+                        color: scheme.onSurfaceVariant.withValues(alpha: 0.65),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              Icon(
-                Icons.arrow_forward_ios_rounded,
-                size: 16,
-                color: scheme.onSurfaceVariant.withValues(alpha: 0.65),
-              ),
-            ],
+                    ],
+                  ),
           ),
-        ),
         ),
       ),
     );

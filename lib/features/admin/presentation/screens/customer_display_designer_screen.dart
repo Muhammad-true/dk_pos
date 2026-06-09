@@ -194,7 +194,7 @@ class _CustomerDisplayDesignerScreenState
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
     final w = mq.size.width;
-    final isWide = w >= 1200;
+    final isWide = w >= 840;
     final phoneLayout = w < 600;
 
     Widget screen() {

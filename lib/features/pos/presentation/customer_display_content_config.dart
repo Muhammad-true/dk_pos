@@ -4,12 +4,14 @@ class CustomerDisplayContentConfig {
     required this.cards,
     this.rotationSeconds = 7,
     this.transitionDurationMs = 950,
+    this.typing = const CustomerDisplayTypingConfig(),
   });
 
   final CustomerDisplayLeftConfig left;
   final List<CustomerDisplayPromoCardConfig> cards;
   final int rotationSeconds;
   final int transitionDurationMs;
+  final CustomerDisplayTypingConfig typing;
 
   bool get hasCards => cards.isNotEmpty;
 
@@ -37,6 +39,7 @@ class CustomerDisplayContentConfig {
         3000,
         950,
       ),
+      typing: CustomerDisplayTypingConfig.fromJson(json['typing']),
     );
   }
 
@@ -45,6 +48,7 @@ class CustomerDisplayContentConfig {
     'cards': cards.map((card) => card.toJson()).toList(growable: false),
     'rotationSeconds': rotationSeconds,
     'transitionDurationMs': transitionDurationMs,
+    'typing': typing.toJson(),
   };
 
   CustomerDisplayContentConfig copyWith({
@@ -52,24 +56,33 @@ class CustomerDisplayContentConfig {
     List<CustomerDisplayPromoCardConfig>? cards,
     int? rotationSeconds,
     int? transitionDurationMs,
+    CustomerDisplayTypingConfig? typing,
   }) {
     return CustomerDisplayContentConfig(
       left: left ?? this.left,
       cards: cards ?? this.cards,
       rotationSeconds: rotationSeconds ?? this.rotationSeconds,
       transitionDurationMs: transitionDurationMs ?? this.transitionDurationMs,
+      typing: typing ?? this.typing,
     );
   }
 
+  CustomerDisplayContentConfig withTypingOverlay(
+    CustomerDisplayTypingConfig? overlay,
+  ) {
+    if (overlay == null || !overlay.hasMessages) return this;
+    return copyWith(typing: overlay);
+  }
+
   static CustomerDisplayContentConfig fallback() {
-    return const CustomerDisplayContentConfig(
-      left: CustomerDisplayLeftConfig(
+    return CustomerDisplayContentConfig(
+      left: const CustomerDisplayLeftConfig(
         headline: 'Добро пожаловать',
         brandTitle: 'Doner Kebab',
         description:
             'Соберите заказ на кассе, и здесь сразу появится экран клиента с чеком.',
       ),
-      cards: [
+      cards: const [
         CustomerDisplayPromoCardConfig(
           id: 'site',
           title: 'Станьте ближе к нам',
@@ -83,7 +96,7 @@ class CustomerDisplayContentConfig {
         CustomerDisplayPromoCardConfig(
           id: 'bank',
           title: 'Оплата по QR-коду',
-          body: 'Отсканируйте код и оплатите через банк.',
+          body: 'Онлайн перевод или по номеру телефона',
           logoPath: 'assets/img/bank/dc.png',
           qrMode: CustomerDisplayQrMode.image,
           qrImagePath: 'assets/img/bank/photo_5337234839905702752_y.jpg',
@@ -92,7 +105,22 @@ class CustomerDisplayContentConfig {
       ],
       rotationSeconds: 7,
       transitionDurationMs: 950,
+      typing: CustomerDisplayTypingConfig.fallback(),
     );
+  }
+
+  /// Карточка оплаты банком (QR) для экрана клиента.
+  CustomerDisplayPromoCardConfig? get bankPaymentCard {
+    for (final card in cards) {
+      if (card.id.trim().toLowerCase() == 'bank') return card;
+    }
+    for (final card in cards) {
+      if (card.qrMode == CustomerDisplayQrMode.image &&
+          (card.qrImagePath ?? '').trim().isNotEmpty) {
+        return card;
+      }
+    }
+    return null;
   }
 
   static CustomerDisplayContentConfig? fromScreenConfig(Map<String, dynamic>? config) {
@@ -105,6 +133,77 @@ class CustomerDisplayContentConfig {
       return CustomerDisplayContentConfig.fromJson(Map<String, dynamic>.from(nested));
     }
     return CustomerDisplayContentConfig.fromJson(config);
+  }
+}
+
+/// Тексты с эффектом «печати» внизу экрана приветствия.
+class CustomerDisplayTypingConfig {
+  const CustomerDisplayTypingConfig({
+    this.messages = const [],
+    this.pauseSeconds = 12,
+    this.charDelayMs = 42,
+  });
+
+  final List<String> messages;
+  final int pauseSeconds;
+  final int charDelayMs;
+
+  bool get hasMessages =>
+      messages.any((message) => message.trim().isNotEmpty);
+
+  List<String> get effectiveMessages => messages
+      .map((m) => m.trim())
+      .where((m) => m.isNotEmpty)
+      .toList(growable: false);
+
+  factory CustomerDisplayTypingConfig.fromJson(dynamic json) {
+    if (json is! Map) return const CustomerDisplayTypingConfig();
+    final map = json is Map<String, dynamic>
+        ? json
+        : Map<String, dynamic>.from(json);
+    final raw = map['messages'];
+    final parsed = <String>[];
+    if (raw is List) {
+      for (final entry in raw) {
+        final text = entry?.toString().trim() ?? '';
+        if (text.isNotEmpty) parsed.add(text);
+      }
+    }
+    return CustomerDisplayTypingConfig(
+      messages: parsed,
+      pauseSeconds: _readClampedInt(map['pauseSeconds'], 3, 180, 12),
+      charDelayMs: _readClampedInt(map['charDelayMs'], 18, 120, 42),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+        'messages': effectiveMessages,
+        'pauseSeconds': pauseSeconds,
+        'charDelayMs': charDelayMs,
+      };
+
+  CustomerDisplayTypingConfig copyWith({
+    List<String>? messages,
+    int? pauseSeconds,
+    int? charDelayMs,
+  }) {
+    return CustomerDisplayTypingConfig(
+      messages: messages ?? this.messages,
+      pauseSeconds: pauseSeconds ?? this.pauseSeconds,
+      charDelayMs: charDelayMs ?? this.charDelayMs,
+    );
+  }
+
+  static CustomerDisplayTypingConfig fallback() {
+    return const CustomerDisplayTypingConfig(
+      messages: [
+        'Соберите заказ на кассе — здесь сразу появится ваш чек.',
+        'Выберите блюда у кассира, и мы покажем заказ на этом экране.',
+        'Оплата удобная: наличные, карта или QR-код банка.',
+      ],
+      pauseSeconds: 12,
+      charDelayMs: 42,
+    );
   }
 }
 

@@ -7,11 +7,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'package:dk_pos/core/cache/pos_menu_image_prefetch.dart';
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_content_config.dart';
+import 'package:dk_pos/features/pos/presentation/customer_display_sync_state.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_customer_display_panel.dart';
+import 'package:dk_pos/theme/app_theme.dart';
+import 'package:dk_pos/theme/pos_workspace_theme.dart';
 
-class CustomerDisplayWindowApp extends StatelessWidget {
+class CustomerDisplayWindowApp extends StatefulWidget {
   const CustomerDisplayWindowApp({
     super.key,
     required this.windowController,
@@ -22,23 +26,47 @@ class CustomerDisplayWindowApp extends StatelessWidget {
   final Map<String, dynamic> arguments;
 
   @override
+  State<CustomerDisplayWindowApp> createState() =>
+      _CustomerDisplayWindowAppState();
+}
+
+class _CustomerDisplayWindowAppState extends State<CustomerDisplayWindowApp> {
+  late CustomerDisplayThemeSnapshot _themeSnapshot;
+
+  @override
+  void initState() {
+    super.initState();
+    final rawTheme = widget.arguments['theme'];
+    _themeSnapshot = rawTheme is Map
+        ? CustomerDisplayThemeSnapshot.fromJson(
+            Map<String, dynamic>.from(rawTheme),
+          )
+        : const CustomerDisplayThemeSnapshot();
+  }
+
+  void _onThemeChanged(CustomerDisplayThemeSnapshot next) {
+    if (_themeSnapshot.mode == next.mode &&
+        _themeSnapshot.accentColor.toARGB32() == next.accentColor.toARGB32()) {
+      return;
+    }
+    setState(() => _themeSnapshot = next);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final theme = buildPosWorkspaceTheme(
+      buildAppTheme(),
+      _themeSnapshot.mode,
+      _themeSnapshot.accentColor,
+    );
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        brightness: Brightness.dark,
-        colorScheme: const ColorScheme.dark(
-          primary: Color(0xFFE4002B),
-          onPrimary: Colors.white,
-          secondary: Color(0xFFFFD166),
-          onSecondary: Color(0xFF2C1600),
-          surface: Color(0xFF111318),
-          onSurface: Colors.white,
-        ),
-      ),
+      theme: theme,
       home: CustomerDisplayWindowScreen(
-        windowController: windowController,
-        arguments: arguments,
+        windowController: widget.windowController,
+        arguments: widget.arguments,
+        onThemeChanged: _onThemeChanged,
       ),
     );
   }
@@ -49,10 +77,12 @@ class CustomerDisplayWindowScreen extends StatefulWidget {
     super.key,
     required this.windowController,
     required this.arguments,
+    this.onThemeChanged,
   });
 
   final WindowController windowController;
   final Map<String, dynamic> arguments;
+  final ValueChanged<CustomerDisplayThemeSnapshot>? onThemeChanged;
 
   @override
   State<CustomerDisplayWindowScreen> createState() =>
@@ -63,8 +93,13 @@ class _CustomerDisplayWindowScreenState
     extends State<CustomerDisplayWindowScreen> {
   CustomerDisplayCartData _cart = const CustomerDisplayCartData();
   CustomerDisplayContentConfig? _idleContentConfig;
+  CustomerDisplayViewMode _viewMode = CustomerDisplayViewMode.idle;
+  CustomerDisplayMenuSnapshot? _menu;
+  CustomerDisplayCartAddPulse? _cartAddPulse;
   Timer? _pollTimer;
+  StreamSubscription<FileSystemEvent>? _fileWatchSub;
   int? _lastUpdatedAt;
+  int _lastSyncRevision = 0;
   bool _isFullscreen = false;
   bool _windowConfigured = false;
 
@@ -99,6 +134,7 @@ class _CustomerDisplayWindowScreenState
     if (!mounted) return;
     setState(() => _isFullscreen = _fullscreenMode);
     await _loadCartFromFile();
+    _startFileWatch();
     _startPolling();
   }
 
@@ -118,7 +154,25 @@ class _CustomerDisplayWindowScreenState
   @override
   void dispose() {
     _pollTimer?.cancel();
+    unawaited(_fileWatchSub?.cancel());
+    _fileWatchSub = null;
     super.dispose();
+  }
+
+  void _startFileWatch() {
+    final path = _syncFilePath;
+    if (path == null || path.isEmpty) return;
+    try {
+      _fileWatchSub?.cancel();
+      _fileWatchSub = File(path).watch().listen((event) {
+        if (event.type == FileSystemEvent.modify ||
+            event.type == FileSystemEvent.create) {
+          unawaited(_loadCartFromFile());
+        }
+      });
+    } catch (e, stack) {
+      debugPrint('CustomerDisplayWindowScreen._startFileWatch: $e\n$stack');
+    }
   }
 
   Future<dynamic> _handleWindowCall(MethodCall call) async {
@@ -126,17 +180,21 @@ class _CustomerDisplayWindowScreenState
       await widget.windowController.close();
       return true;
     }
+    if (call.method == 'customer_display.reload') {
+      await _loadCartFromFile(force: true);
+      return true;
+    }
     return null;
   }
 
   void _startPolling() {
     _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(const Duration(milliseconds: 700), (_) {
+    _pollTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
       _loadCartFromFile();
     });
   }
 
-  Future<void> _loadCartFromFile() async {
+  Future<void> _loadCartFromFile({bool force = false}) async {
     final path = _syncFilePath;
     if (path == null || path.isEmpty) return;
     final file = File(path);
@@ -147,18 +205,70 @@ class _CustomerDisplayWindowScreenState
       if (decoded is! Map<String, dynamic>) return;
       _applyApiOriginFromSync(decoded);
       final updatedAt = (decoded['updatedAt'] as num?)?.toInt() ?? 0;
-      if (_lastUpdatedAt == updatedAt) return;
+      final syncRevision = (decoded['syncRevision'] as num?)?.toInt() ?? 0;
+      if (!force &&
+          syncRevision > 0 &&
+          syncRevision <= _lastSyncRevision) {
+        return;
+      }
+      if (!force &&
+          syncRevision <= 0 &&
+          _lastUpdatedAt == updatedAt) {
+        return;
+      }
       final cartJson = decoded['cart'];
-      if (cartJson is! Map<String, dynamic>) return;
+      final cart = cartJson is Map<String, dynamic>
+          ? CustomerDisplayCartData.fromJson(cartJson)
+          : (cartJson is Map
+              ? CustomerDisplayCartData.fromJson(
+                  Map<String, dynamic>.from(cartJson),
+                )
+              : const CustomerDisplayCartData());
       final displayConfigJson = decoded['displayConfig'];
+      final menuJson = decoded['menu'];
+      final themeJson = decoded['theme'];
       if (!mounted) return;
+      if (themeJson is Map) {
+        widget.onThemeChanged?.call(
+          CustomerDisplayThemeSnapshot.fromJson(
+            Map<String, dynamic>.from(themeJson),
+          ),
+        );
+      }
+      final pulseJson = decoded['cartAddPulse'];
+      final nextPulse = pulseJson is Map<String, dynamic>
+          ? CustomerDisplayCartAddPulse.fromJson(pulseJson)
+          : (pulseJson is Map
+              ? CustomerDisplayCartAddPulse.fromJson(
+                  Map<String, dynamic>.from(pulseJson),
+                )
+              : null);
+
+      final nextMenu = menuJson is Map<String, dynamic>
+          ? CustomerDisplayMenuSnapshot.fromJson(menuJson)
+          : (menuJson is Map
+              ? CustomerDisplayMenuSnapshot.fromJson(
+                  Map<String, dynamic>.from(menuJson),
+                )
+              : null);
       setState(() {
         _lastUpdatedAt = updatedAt;
-        _cart = CustomerDisplayCartData.fromJson(cartJson);
+        if (syncRevision > 0) {
+          _lastSyncRevision = syncRevision;
+        }
+        _cart = cart;
+        _viewMode = parseCustomerDisplayViewMode(decoded['viewMode']?.toString());
+        _menu = nextMenu;
         _idleContentConfig = displayConfigJson is Map<String, dynamic>
             ? CustomerDisplayContentConfig.fromJson(displayConfigJson)
             : null;
+        if (nextPulse != null && nextPulse.seq > 0) {
+          _cartAddPulse = nextPulse;
+        }
       });
+      if (nextMenu != null && nextMenu.products.isNotEmpty) {
+        unawaited(prefetchCustomerDisplayProducts(nextMenu.products));
+      }
     } catch (_) {
       // Игнорируем частично записанный файл и пробуем снова на следующем тике.
     }
@@ -227,6 +337,10 @@ class _CustomerDisplayWindowScreenState
             child: PosCustomerDisplayPanel(
               cart: _cart,
               idleContentConfig: _idleContentConfig,
+              viewMode: _viewMode,
+              menu: _menu,
+              cartAddPulse: _cartAddPulse,
+              syncFilePath: _syncFilePath,
             ),
           ),
           Positioned(

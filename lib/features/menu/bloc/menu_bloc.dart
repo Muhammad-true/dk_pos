@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import 'package:dk_pos/core/cache/pos_menu_image_prefetch.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/features/menu/data/menu_repository.dart';
 
@@ -27,6 +30,7 @@ class MenuBloc extends Bloc<MenuEvent, MenuState> {
           pathIds: const [],
         ),
       );
+      unawaited(prefetchPosMenuCatalog(list));
     } on ApiException catch (e) {
       emit(state.copyWith(loading: false, error: e.message));
     } catch (e) {
@@ -38,19 +42,34 @@ class MenuBloc extends Bloc<MenuEvent, MenuState> {
     final children = state.currentChildCategories;
     if (event.childIndex < 0 || event.childIndex >= children.length) return;
     final id = children[event.childIndex].id;
-    emit(state.copyWith(pathIds: [...state.pathIds, id]));
+    final next = state.copyWith(pathIds: [...state.pathIds, id]);
+    emit(next);
+    _prefetchVisibleItems(next);
   }
 
   void _onBack(MenuCatalogBack event, Emitter<MenuState> emit) {
     if (state.pathIds.isEmpty) return;
-    emit(
-      state.copyWith(
-        pathIds: state.pathIds.sublist(0, state.pathIds.length - 1),
-      ),
+    final next = state.copyWith(
+      pathIds: state.pathIds.sublist(0, state.pathIds.length - 1),
     );
+    emit(next);
+    _prefetchVisibleItems(next);
   }
 
   void _onPathSet(MenuCatalogPathSet event, Emitter<MenuState> emit) {
-    emit(state.copyWith(pathIds: [...event.pathIds]));
+    final next = state.copyWith(pathIds: [...event.pathIds]);
+    emit(next);
+    _prefetchVisibleItems(next);
+  }
+
+  void _prefetchVisibleItems(MenuState menu) {
+    final items = menu.currentItems;
+    if (items.isEmpty) return;
+    unawaited(
+      prefetchPosMenuCatalog(
+        menu.categoryRoots,
+        priorityItems: items,
+      ),
+    );
   }
 }

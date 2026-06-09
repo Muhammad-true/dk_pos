@@ -9,6 +9,48 @@ ThemeData buildPosWorkspaceTheme(ThemeData base, PosScreenTheme mode, Color acce
       : _buildPosLightTheme(base, accentColor);
 }
 
+/// Градиент фона экрана клиента (следует теме кассы).
+List<Color> customerDisplayBackgroundGradient(ThemeData theme) {
+  final s = theme.colorScheme;
+  final sc = theme.scaffoldBackgroundColor;
+  if (theme.brightness == Brightness.dark) {
+    return [
+      Color.lerp(const Color(0xFF120A0A), s.surface, 0.4)!,
+      s.surface,
+      const Color(0xFF090909),
+    ];
+  }
+  return [
+    Color.lerp(const Color(0xFFFFF4F6), s.surfaceContainerLow, 0.55)!,
+    sc,
+    Color.lerp(s.surfaceContainerLow, sc, 0.35)!,
+  ];
+}
+
+/// Полупрозрачная панель на экране клиента.
+Color customerDisplayGlassFill(ThemeData theme) {
+  if (theme.brightness == Brightness.dark) {
+    return Colors.white.withValues(alpha: 0.06);
+  }
+  return theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.92);
+}
+
+Color customerDisplayGlassBorder(ThemeData theme) {
+  if (theme.brightness == Brightness.dark) {
+    return Colors.white.withValues(alpha: 0.10);
+  }
+  return theme.colorScheme.outlineVariant;
+}
+
+/// Поверхность чека / карточки товара на экране клиента.
+Color customerDisplayCardSurface(ThemeData theme) {
+  return theme.colorScheme.surfaceContainerLowest;
+}
+
+Color customerDisplayCardBorder(ThemeData theme) {
+  return theme.colorScheme.outlineVariant;
+}
+
 /// Вертикальный градиент под контент (касса, кухня, сборка).
 List<Color> posWorkspaceBodyGradient(ThemeData theme) {
   final s = theme.colorScheme;
@@ -100,6 +142,36 @@ ThemeData _buildPosDarkTheme(ThemeData base, Color accentColor) {
       style: TextButton.styleFrom(foregroundColor: scheme.onSurface),
     ),
     dividerColor: scheme.outlineVariant,
+    inputDecorationTheme: _posInputDecorationTheme(scheme, textTheme),
+    dropdownMenuTheme: DropdownMenuThemeData(
+      textStyle: textTheme.bodyLarge?.copyWith(color: scheme.onSurface),
+    ),
+  );
+}
+
+InputDecorationTheme _posInputDecorationTheme(
+  ColorScheme scheme,
+  TextTheme textTheme,
+) {
+  const radius = 14.0;
+  return InputDecorationTheme(
+    filled: true,
+    fillColor: scheme.surfaceContainerLow,
+    labelStyle: textTheme.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
+    hintStyle: textTheme.bodyLarge?.copyWith(color: scheme.onSurfaceVariant),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(radius),
+      borderSide: BorderSide(color: scheme.outlineVariant),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(radius),
+      borderSide: BorderSide(color: scheme.outlineVariant),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(radius),
+      borderSide: BorderSide(color: scheme.primary, width: 2),
+    ),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
   );
 }
 
@@ -178,5 +250,9 @@ ThemeData _buildPosLightTheme(ThemeData base, Color accentColor) {
       style: TextButton.styleFrom(foregroundColor: scheme.onSurface),
     ),
     dividerColor: scheme.outlineVariant,
+    inputDecorationTheme: _posInputDecorationTheme(scheme, textTheme),
+    dropdownMenuTheme: DropdownMenuThemeData(
+      textStyle: textTheme.bodyLarge?.copyWith(color: scheme.onSurface),
+    ),
   );
 }

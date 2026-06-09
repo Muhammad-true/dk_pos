@@ -8,11 +8,12 @@ List<PosTableBillLine> mergePosTableBillLines(
   final map = <String, PosTableBillLine>{};
 
   void add(PosTableBillLine l) {
-    final prev = map[l.name];
+    final mergeKey = _lineMergeKey(l);
+    final prev = map[mergeKey];
     if (prev == null) {
-      map[l.name] = l;
+      map[mergeKey] = l;
     } else {
-      map[l.name] = PosTableBillLine(
+      map[mergeKey] = PosTableBillLine(
         name: l.name,
         quantity: prev.quantity + l.quantity,
         lineTotal: prev.lineTotal + l.lineTotal,
@@ -36,6 +37,14 @@ List<PosTableBillLine> mergePosTableBillLines(
   return out;
 }
 
+String _lineMergeKey(PosTableBillLine l) {
+  final lineKey = (l.lineKey ?? '').trim();
+  if (lineKey.isNotEmpty) return 'k:$lineKey';
+  final menuItemId = (l.menuItemId ?? '').trim();
+  if (menuItemId.isNotEmpty) return 'm:$menuItemId';
+  return 'n:${l.name}';
+}
+
 /// Дополняет открытый счёт стола новым заказом (тот же id и дата создания).
 PosTableBill mergePosTableBills(PosTableBill open, PosTableBill incoming) {
   final mergedLines = mergePosTableBillLines(open.lines, incoming.lines);
@@ -45,6 +54,7 @@ PosTableBill mergePosTableBills(PosTableBill open, PosTableBill incoming) {
     lines: mergedLines,
     total: total,
     orderTypeLabel: open.orderTypeLabel,
+    orderNumber: open.orderNumber,
     tableNumber: open.tableNumber,
     tableZone: open.tableZone,
     createdAt: open.createdAt,

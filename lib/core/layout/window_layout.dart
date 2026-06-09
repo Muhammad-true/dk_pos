@@ -7,12 +7,14 @@ import 'package:dk_pos/app/pos_catalog_grid/pos_catalog_grid_settings.dart'
 ///
 /// Не хранит состояние — только ширина окна; дёшево вызывать из [LayoutBuilder].
 class WindowLayout {
-  const WindowLayout({required this.width});
+  const WindowLayout({required this.width, this.shortestSide});
 
   final double width;
+  final double? shortestSide;
 
   factory WindowLayout.of(BuildContext context) {
-    return WindowLayout(width: MediaQuery.sizeOf(context).width);
+    final size = MediaQuery.sizeOf(context);
+    return WindowLayout(width: size.width, shortestSide: size.shortestSide);
   }
 
   /// Ниже — «телефон» в основном портрете.
@@ -47,7 +49,15 @@ class WindowLayout {
   bool get showAdminRail => width >= railBreakpoint;
   bool get extendedAdminRail => width >= railExtendedBreakpoint;
 
-  bool get dockPosCart => width >= posCartDockBreakpoint;
+  /// Компактная верхняя панель POS: drawer, сокращённый AppBar.
+  bool get posNarrowToolbar => width < compactMax;
+
+  /// Корзина закреплена справа: десктоп @960+ или landscape-планшет @840+.
+  bool get dockPosCart {
+    if (width >= posCartDockBreakpoint) return true;
+    final ss = shortestSide ?? width;
+    return width >= mediumMax && ss >= compactMax;
+  }
 
   bool get loginSplitHero => width >= 900;
 
@@ -108,4 +118,17 @@ class WindowLayout {
 
   double adminBodyMaxWidth(double viewportWidth) =>
       (viewportWidth * 0.92).clamp(320.0, 960.0);
+
+  /// Колонки карточек в диалогах (заказы, счета, hub-плитки).
+  int cardGridColumns({double minCellWidth = 280}) {
+    if (width < 560) return 1;
+    if (width < 900) return 2;
+    return (width / minCellWidth).floor().clamp(2, 3);
+  }
+
+  /// Колонки hub-плиток (админ-каталог, обзор).
+  int hubGridColumns({double minCellWidth = 260}) {
+    if (width < compactMax) return 1;
+    return (width / minCellWidth).floor().clamp(2, 4);
+  }
 }

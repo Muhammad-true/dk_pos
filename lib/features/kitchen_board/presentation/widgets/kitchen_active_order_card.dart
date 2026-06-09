@@ -112,18 +112,19 @@ class _KitchenActiveOrderCardState extends State<KitchenActiveOrderCard> {
 
     final stationItems = order.items;
     final rawFollowUp = _kitchenOrderIsFollowUp(stationItems);
-    final isFollowUp = widget.followUpSettings.enabled && rawFollowUp;
-    final showCardHighlight = isFollowUp && widget.followUpSettings.highlightCard;
-    final showLineHighlight = isFollowUp && widget.followUpSettings.highlightNewLines;
-    final activeItems = isFollowUp
+    // Дозаказ: всегда показываем только pending/accepted, даже если подсветка выключена в настройках.
+    final isFollowUpHighlight = widget.followUpSettings.enabled && rawFollowUp;
+    final showCardHighlight = isFollowUpHighlight && widget.followUpSettings.highlightCard;
+    final showLineHighlight = isFollowUpHighlight && widget.followUpSettings.highlightNewLines;
+    final activeItems = rawFollowUp
         ? _kitchenOrderActiveItems(stationItems)
         : stationItems;
-    final readyItems = isFollowUp && !widget.followUpSettings.hideReadyItems
+    final readyItems = rawFollowUp && !widget.followUpSettings.hideReadyItems
         ? _kitchenOrderReadyItems(stationItems)
         : const <LocalKitchenQueueItem>[];
     final isLargeOrder = stationItems.length >= kKitchenLargeOrderItemThreshold;
     final showReadyCollapsed = readyItems.isNotEmpty &&
-        ((isFollowUp && widget.followUpSettings.collapseReadyItems) ||
+        ((rawFollowUp && widget.followUpSettings.collapseReadyItems) ||
             isLargeOrder);
     final activeQty = activeItems.fold<int>(0, (sum, e) => sum + e.quantity);
     final hasPending = _kitchenOrderHasPendingItems(stationItems);

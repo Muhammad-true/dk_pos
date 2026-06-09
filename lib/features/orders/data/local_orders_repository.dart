@@ -3,6 +3,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/network/http_client.dart';
+import 'package:dk_pos/core/network/http_retry.dart';
 
 class LocalOrderLineInput {
   const LocalOrderLineInput({
@@ -58,6 +59,7 @@ class LocalKitchenQueueItem {
     required this.menuItemId,
     required this.name,
     required this.quantity,
+    this.lineKey,
     this.kitchenLineStatus = 'pending',
     this.kitchenAcceptedByUserId,
     this.kitchenAcceptedByUsername,
@@ -72,6 +74,7 @@ class LocalKitchenQueueItem {
   final String menuItemId;
   final String name;
   final int quantity;
+  final String? lineKey;
   final String kitchenLineStatus;
   final int? kitchenAcceptedByUserId;
   final String? kitchenAcceptedByUsername;
@@ -103,10 +106,14 @@ class LocalKitchenQueueItem {
       ks = int.tryParse(ksRaw.toString());
     }
 
+    final lkRaw = json['lineKey'] ?? json['line_key'];
+    final lk = lkRaw?.toString().trim();
+
     return LocalKitchenQueueItem(
       menuItemId: json['menuItemId']?.toString() ?? '',
       name: json['name']?.toString() ?? '',
       quantity: asInt(json['quantity']),
+      lineKey: lk != null && lk.isNotEmpty ? lk : null,
       kitchenLineStatus:
           json['kitchenLineStatus']?.toString() ?? json['kitchen_line_status']?.toString() ?? 'pending',
       kitchenAcceptedByUserId: asNullableInt(
@@ -238,6 +245,7 @@ class LocalCashierBoardOrder {
     this.orderSource,
     this.needsCashierAck = false,
     this.receiptPrinted,
+    this.globalSitePushStatus,
   });
 
   final LocalKitchenQueueOrder order;
@@ -253,6 +261,9 @@ class LocalCashierBoardOrder {
 
   /// Фискальный чек последней оплаты: `null` если не оплачен или нет данных в БД.
   final bool? receiptPrinted;
+
+  /// Последний статус, отправленный на global API (`with_courier`, `delivered`, …).
+  final String? globalSitePushStatus;
 
   factory LocalCashierBoardOrder.fromJson(Map<String, dynamic> json) {
     bool? receiptPrinted;
@@ -272,6 +283,8 @@ class LocalCashierBoardOrder {
       needsCashierAck:
           json['needsCashierAck'] == true || json['needs_cashier_ack'] == true,
       receiptPrinted: receiptPrinted,
+      globalSitePushStatus: json['globalSitePushStatus']?.toString() ??
+          json['global_site_push_status']?.toString(),
     );
   }
 }
@@ -350,6 +363,12 @@ class LocalOrdersRepository {
         'tableLabel': tableLabel,
         'terminalId': terminalId ?? _defaultTerminalId,
       },
+      receiveTimeout: lines.length >= 20
+          ? const Duration(seconds: 45)
+          : const Duration(seconds: 20),
+      sendTimeout: lines.length >= 20
+          ? const Duration(seconds: 45)
+          : const Duration(seconds: 20),
     );
     if (res.statusCode != 200 && res.statusCode != 201) {
       throw ApiException.fromHttp(
@@ -372,6 +391,14 @@ class LocalOrdersRepository {
     if (id.isEmpty || number.isEmpty) {
       throw ApiException(res.statusCode, 'Сервер вернул неполные данные заказа');
     }
+    final note = body['note']?.toString().toLowerCase() ?? '';
+    if (bodyLines.isNotEmpty &&
+        note.contains('позиции не переданы')) {
+      throw ApiException(
+        res.statusCode,
+        'Заказ на сервере без позиций — повторите оформление',
+      );
+    }
     return LocalOrderResult(
       orderId: id,
       number: number,
@@ -381,7 +408,12 @@ class LocalOrdersRepository {
   }
 
   Future<LocalKitchenQueueSnapshot> fetchKitchenQueueMy() async {
-    final res = await _http.get('api/local/orders/queue/my');
+    const localTimeout = Duration(seconds: 8);
+    final res = await _http.get(
+      'api/local/orders/queue/my',
+      receiveTimeout: localTimeout,
+      sendTimeout: localTimeout,
+    );
     if (res.statusCode != 200) {
       throw ApiException.fromHttp(
         res.statusCode,
@@ -470,25 +502,34 @@ class LocalOrdersRepository {
     int? actorUserId,
     String? menuItemId,
   }) async {
-    final body = <String, dynamic>{'action': action};
-    if (actorUserId != null && actorUserId > 0) {
-      body['actorUserId'] = actorUserId;
-    }
-    final menuItem = (menuItemId ?? '').trim();
-    if (menuItem.isNotEmpty) {
-      body['menuItemId'] = menuItem;
-    }
-    final res = await _http.patch(
-      'api/local/orders/$orderId/kitchen-progress',
-      body: body,
+    const kitchenActionTimeout = Duration(seconds: 12);
+    return withNetworkRetry(
+      () async {
+        final body = <String, dynamic>{'action': action};
+        if (actorUserId != null && actorUserId > 0) {
+          body['actorUserId'] = actorUserId;
+        }
+        final menuItem = (menuItemId ?? '').trim();
+        if (menuItem.isNotEmpty) {
+          body['menuItemId'] = menuItem;
+        }
+        final res = await _http.patch(
+          'api/local/orders/$orderId/kitchen-progress',
+          body: body,
+          receiveTimeout: kitchenActionTimeout,
+          sendTimeout: kitchenActionTimeout,
+        );
+        if (res.statusCode != 200) {
+          throw ApiException.fromHttp(
+            res.statusCode,
+            res.body,
+            fallbackMessage: 'Не удалось обновить этап кухни',
+          );
+        }
+      },
+      attempts: 2,
+      initialDelay: const Duration(milliseconds: 250),
     );
-    if (res.statusCode != 200) {
-      throw ApiException.fromHttp(
-        res.statusCode,
-        res.body,
-        fallbackMessage: 'Не удалось обновить этап кухни',
-      );
-    }
   }
 
   Future<List<LocalKitchenActorProfile>> fetchKitchenTeamMyStation() async {

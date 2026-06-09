@@ -1,6 +1,10 @@
+import 'package:dk_digitial_menu/core/app_file_logger.dart';
 import 'package:equatable/equatable.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import 'package:dk_pos/features/cart/bloc/cart_state.dart';
+import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
+import 'package:dk_pos/features/pos/data/open_table_bill_from_server.dart';
 import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
 import 'package:dk_pos/features/pos/domain/pos_table_bill_merge.dart';
 import 'package:dk_pos/features/pos/presentation/utils/website_order_delivery_meta.dart';
@@ -179,16 +183,145 @@ class PosHallOrdersCubit extends Cubit<PosHallOrdersState> {
     );
   }
 
+  /// Сразу после дозаказа — без ожидания GET; WS-патч потом уточнит детали кухни.
+  void replaceOpenBillFromCart({
+    required PosTableBill template,
+    required CartState cart,
+  }) {
+    final lines = cart.sortedLines
+        .map(
+          (l) => PosTableBillLine(
+            name: l.item.name,
+            quantity: l.quantity,
+            lineTotal: l.lineTotal,
+            menuItemId: l.item.id,
+            lineKey: l.lineKey,
+            unitPrice: l.item.price,
+          ),
+        )
+        .toList(growable: false);
+    final idx = state.bills.indexWhere((b) => b.id == template.id);
+    if (idx < 0) {
+      emit(
+        _stateWithBills([
+          ...state.bills,
+          PosTableBill(
+            id: template.id,
+            lines: lines,
+            total: cart.total,
+            orderTypeLabel: template.orderTypeLabel,
+            orderNumber: template.orderNumber,
+            tableNumber: template.tableNumber,
+            tableZone: template.tableZone,
+            createdAt: template.createdAt,
+            orderStatus: template.orderStatus,
+            tableLabel: template.tableLabel,
+            customerPhone: template.customerPhone,
+            isDelivery: template.isDelivery,
+            createdByUsername: template.createdByUsername,
+            createdByRole: template.createdByRole,
+            terminalId: template.terminalId,
+            isWaiterOrder: template.isWaiterOrder,
+            isTakeaway: template.isTakeaway,
+            isCashierOrder: template.isCashierOrder,
+          ),
+        ]),
+      );
+      return;
+    }
+    final prev = state.bills[idx];
+    final next = List<PosTableBill>.from(state.bills);
+    next[idx] = PosTableBill(
+      id: prev.id,
+      lines: lines,
+      total: cart.total,
+      orderTypeLabel: prev.orderTypeLabel,
+      orderNumber: prev.orderNumber,
+      tableNumber: prev.tableNumber,
+      tableZone: prev.tableZone,
+      createdAt: prev.createdAt,
+      isPaid: prev.isPaid,
+      paymentMethod: prev.paymentMethod,
+      orderStatus: prev.orderStatus,
+      tableLabel: prev.tableLabel,
+      customerPhone: prev.customerPhone,
+      isDelivery: prev.isDelivery,
+      createdByUsername: prev.createdByUsername,
+      createdByRole: prev.createdByRole,
+      terminalId: prev.terminalId,
+      isWaiterOrder: prev.isWaiterOrder,
+      isTakeaway: prev.isTakeaway,
+      isCashierOrder: prev.isCashierOrder,
+    );
+    emit(_stateWithBills(next));
+  }
+
+  /// Точечное обновление счетов из WS `cashier.board_changed` (без GET open-table-bills).
+  void applyOpenBillWsPatches({
+    required List<LocalOpenTableBillDto> upserts,
+    required Set<String> removeIds,
+  }) {
+    if (upserts.isEmpty && removeIds.isEmpty) return;
+
+    var bills = List<PosTableBill>.from(state.bills);
+    for (final id in removeIds) {
+      if (id.isEmpty) continue;
+      bills = bills.where((b) => b.isPaid || b.id != id).toList(growable: false);
+    }
+    for (final dto in upserts) {
+      if (dto.id.isEmpty) continue;
+      if (dto.status.trim().toLowerCase() == 'cancelled') {
+        bills = bills.where((b) => b.isPaid || b.id != dto.id).toList(growable: false);
+        continue;
+      }
+      final bill = posTableBillFromServerDto(dto);
+      final idx = bills.indexWhere((b) => b.id == bill.id);
+      if (idx >= 0) {
+        bills[idx] = bill;
+      } else {
+        bills.add(bill);
+      }
+    }
+    emit(_stateWithBills(bills));
+  }
+
   /// Подтянуть открытые счета с сервера: они перезаписывают одноимённые id;
-  /// локальные неоплаченные, которых ещё нет на сервере (например сбой sync), сохраняются.
+  /// локальные неоплаченные сохраняются только если sync ещё в процессе (см. ниже).
   void mergeHydrateFromServer(List<PosTableBill> serverOpenBills) {
     final serverIds = serverOpenBills.map((e) => e.id).toSet();
+    final serverTableKeys = serverOpenBills
+        .where((b) => b.tableNumber != null && b.tableZone != null)
+        .map((b) => b.tableZone!.occupiedKey(b.tableNumber!))
+        .toSet();
     final paid = state.bills.where((b) => b.isPaid).toList();
-    final localUnpaidOnly = state.bills
-        .where((b) => !b.isPaid && !serverIds.contains(b.id))
-        .toList();
-    emit(
-      _stateWithBills([...paid, ...serverOpenBills, ...localUnpaidOnly]),
-    );
+    final droppedStale = <String>[];
+    final localUnpaidOnly = state.bills.where((b) {
+      if (b.isPaid || serverIds.contains(b.id)) return false;
+      final age = DateTime.now().difference(b.createdAt);
+      if (b.tableNumber != null && b.tableZone != null) {
+        final tableKey = b.tableZone!.occupiedKey(b.tableNumber!);
+        if (!serverTableKeys.contains(tableKey)) {
+          // Сервер считает стол свободным — локальный счёт устарел (оплата на другой кассе).
+          if (age > const Duration(seconds: 30)) {
+            droppedStale.add('${b.id} table=$tableKey');
+            return false;
+          }
+          return true;
+        }
+        // На столе другой счёт с сервера — локальный дубликат убираем.
+        droppedStale.add('${b.id} dup-table=$tableKey');
+        return false;
+      }
+      return age < const Duration(seconds: 30);
+    }).toList();
+    if (droppedStale.isNotEmpty) {
+      AppFileLogger.instance.info(
+        'hall_orders',
+        'dropped stale local bills: ${droppedStale.join('; ')}',
+      );
+    }
+    final next = _stateWithBills([...paid, ...serverOpenBills, ...localUnpaidOnly]);
+    if (next == state) return;
+    emit(next);
   }
 }

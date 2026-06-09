@@ -303,6 +303,51 @@ class AppLocalizationsEn extends AppLocalizations {
   String get adminScreenTypeTv4 => 'TV4 — welcome & payment (config)';
 
   @override
+  String get adminScreenTypeCarouselShort => 'TV1 — carousel';
+
+  @override
+  String get adminScreenTypeTv2Short => 'TV2 — menu';
+
+  @override
+  String get adminScreenTypeTv3Short => 'TV3 — promos';
+
+  @override
+  String get adminScreenTypeTv4Short => 'TV4 — queue';
+
+  @override
+  String get adminScreenTypeCustomerDisplayShort => 'Customer display';
+
+  @override
+  String get adminScreenTypeCarouselDesc =>
+      'Classic category and item carousel (tv1_page).';
+
+  @override
+  String get adminScreenTypeTv2Desc =>
+      'Flexible pages: split, grid, list, video background.';
+
+  @override
+  String get adminScreenTypeTv3Desc =>
+      'Promo slides: product, combo, full-screen photo or video.';
+
+  @override
+  String get adminScreenTypeTv4Desc =>
+      'Welcome screen, payment QR, and order queue board.';
+
+  @override
+  String get adminScreenTypeCustomerDisplayDesc =>
+      'Second monitor at checkout: menu, cart, payment.';
+
+  @override
+  String get adminTvPageTypePickerHint => 'Pick a layout, then tap Add page.';
+
+  @override
+  String get adminTv2EditorPreviewOnTv => 'Preview on TV';
+
+  @override
+  String get adminTv2UserGuidePhotoHint =>
+      'Product photos are shown in full (no cropping). Use PNG on transparent or light background.';
+
+  @override
   String get adminScreenActive => 'Active';
 
   @override
@@ -473,6 +518,22 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get adminTv3PageTypePromoCombo => 'Combo (slide)';
+
+  @override
+  String get adminTv3PageTypePromoProductDesc =>
+      'Large product photo, slogan, and price.';
+
+  @override
+  String get adminTv3PageTypePromoComboDesc =>
+      'Combo set with contents and price.';
+
+  @override
+  String get adminTv3PageTypePromoVideoBgDesc =>
+      'Full-screen video with overlay text.';
+
+  @override
+  String get adminTv3PageTypePromoPhotoBgDesc =>
+      'Full-screen photo with overlay text.';
 
   @override
   String get adminTv3PromoSelectCombo => 'Combo';
@@ -843,6 +904,42 @@ class AppLocalizationsEn extends AppLocalizations {
   String get adminTv2ProductGridCardSizeLarge => 'Large';
 
   @override
+  String get adminTv2ProductGridTypographyTitle => 'Grid name and price';
+
+  @override
+  String get adminTv2ProductGridTypographyHint =>
+      'Default Auto adapts to TV size and card size. Manual sets a fixed pixel size.';
+
+  @override
+  String get adminTv2ProductGridNameSizeLabel => 'Product name';
+
+  @override
+  String get adminTv2ProductGridPriceSizeLabel => 'Price';
+
+  @override
+  String get adminTv2ProductGridSizeAuto => 'Auto';
+
+  @override
+  String get adminTv2ProductGridSizeManual => 'Manual';
+
+  @override
+  String get adminTv2ProductGridTextScaleLabel => 'Text scale (auto)';
+
+  @override
+  String get adminTv2ProductGridTextScaleHint =>
+      'Fine-tune auto sizing for your venue.';
+
+  @override
+  String get adminTv2PageLayoutSaveButton => 'Save page settings';
+
+  @override
+  String get adminTv2PageLayoutSaved => 'Page settings saved';
+
+  @override
+  String get adminTv2PageLayoutUnsavedHint =>
+      'Unsaved changes — tap Save page settings.';
+
+  @override
   String get adminTv2PageTransitionPerPage => 'Page transition animation';
 
   @override
@@ -974,6 +1071,30 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get adminTv2PageTypeVideoBg => 'Video background';
+
+  @override
+  String get adminTv2PageTypeSplitDesc =>
+      'Large photo on the left, two category columns on the right.';
+
+  @override
+  String get adminTv2PageTypeDrinksDesc =>
+      'Drinks grid with photos and volume prices.';
+
+  @override
+  String get adminTv2PageTypeCarouselDesc =>
+      'Large product photo with a title bar at the bottom.';
+
+  @override
+  String get adminTv2PageTypeListDesc =>
+      'Hero on top and a grid of category items.';
+
+  @override
+  String get adminTv2PageTypeProductGridDesc =>
+      'Product tiles with photo, name, and price.';
+
+  @override
+  String get adminTv2PageTypeVideoBgDesc =>
+      'Full-screen video or photo plus offer card.';
 
   @override
   String get adminTv2OptionalVideoTitle => 'Video under layout (optional)';

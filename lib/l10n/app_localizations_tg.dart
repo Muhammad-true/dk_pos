@@ -303,6 +303,52 @@ class AppLocalizationsTg extends AppLocalizations {
   String get adminScreenTypeTv4 => 'ТВ4 — хуш омедед';
 
   @override
+  String get adminScreenTypeCarouselShort => 'ТВ1 — карусел';
+
+  @override
+  String get adminScreenTypeTv2Short => 'ТВ2 — меню';
+
+  @override
+  String get adminScreenTypeTv3Short => 'ТВ3 — аксияҳо';
+
+  @override
+  String get adminScreenTypeTv4Short => 'ТВ4 — навбат';
+
+  @override
+  String get adminScreenTypeCustomerDisplayShort => 'Экрани мизоҷ';
+
+  @override
+  String get adminScreenTypeCarouselDesc =>
+      'Карусели классикии категория ва маҳсулот.';
+
+  @override
+  String get adminScreenTypeTv2Desc =>
+      'Саҳифаҳои гибк: split, grid, list, видеофон.';
+
+  @override
+  String get adminScreenTypeTv3Desc =>
+      'Слайдҳои промо: маҳсулот, комбо, фото ё видео.';
+
+  @override
+  String get adminScreenTypeTv4Desc =>
+      'Хуш омед, QR пардохт ва навбати фармоиш.';
+
+  @override
+  String get adminScreenTypeCustomerDisplayDesc =>
+      'Монитори дуюми касса: меню, сабад, пардохт.';
+
+  @override
+  String get adminTvPageTypePickerHint =>
+      'Макетро интихоб кунед, баъд «Иловаи саҳифа».';
+
+  @override
+  String get adminTv2EditorPreviewOnTv => 'Пешнамоиш дар ТВ';
+
+  @override
+  String get adminTv2UserGuidePhotoHint =>
+      'Аксҳои маҳсулот пурра намоиш дода мешаванд (бе буридан). PNG бо фони шаффоф ё равшан.';
+
+  @override
   String get adminScreenActive => 'Фаъол';
 
   @override
@@ -472,6 +518,21 @@ class AppLocalizationsTg extends AppLocalizations {
 
   @override
   String get adminTv3PageTypePromoCombo => 'Комбо (слайд)';
+
+  @override
+  String get adminTv3PageTypePromoProductDesc =>
+      'Акси калони маҳсулот, слоган ва нарх.';
+
+  @override
+  String get adminTv3PageTypePromoComboDesc => 'Комбо бо таркиб ва нарх.';
+
+  @override
+  String get adminTv3PageTypePromoVideoBgDesc =>
+      'Видео дар тамоми экран бо матн.';
+
+  @override
+  String get adminTv3PageTypePromoPhotoBgDesc =>
+      'Фото дар тамоми экран бо матн.';
 
   @override
   String get adminTv3PromoSelectCombo => 'Комбо';
@@ -843,6 +904,41 @@ class AppLocalizationsTg extends AppLocalizations {
   String get adminTv2ProductGridCardSizeLarge => 'Калон';
 
   @override
+  String get adminTv2ProductGridTypographyTitle => 'Ном ва нарх дар торик';
+
+  @override
+  String get adminTv2ProductGridTypographyHint =>
+      'Пешфарз «Авто» — андоза мувофиқи экран ва корт. Дастӣ — андозаи фиксӣ.';
+
+  @override
+  String get adminTv2ProductGridNameSizeLabel => 'Номи мол';
+
+  @override
+  String get adminTv2ProductGridPriceSizeLabel => 'Нарх';
+
+  @override
+  String get adminTv2ProductGridSizeAuto => 'Авто';
+
+  @override
+  String get adminTv2ProductGridSizeManual => 'Дастӣ';
+
+  @override
+  String get adminTv2ProductGridTextScaleLabel => 'Миқёси матн (авто)';
+
+  @override
+  String get adminTv2ProductGridTextScaleHint => 'Танзими хурд барои зал.';
+
+  @override
+  String get adminTv2PageLayoutSaveButton => 'Нигоҳ доштани танзимот';
+
+  @override
+  String get adminTv2PageLayoutSaved => 'Танзимот нигоҳ дошта шуд';
+
+  @override
+  String get adminTv2PageLayoutUnsavedHint =>
+      'Тағйирот нигоҳ нашудааст — «Нигоҳ доштани танзимот».';
+
+  @override
   String get adminTv2PageTransitionPerPage => 'Аниматсияи гузариш (ин саҳифа)';
 
   @override
@@ -973,6 +1069,28 @@ class AppLocalizationsTg extends AppLocalizations {
 
   @override
   String get adminTv2PageTypeVideoBg => 'Заминаи видео';
+
+  @override
+  String get adminTv2PageTypeSplitDesc => 'Чап акси калон, рост две категория.';
+
+  @override
+  String get adminTv2PageTypeDrinksDesc => 'Шабакаи нӯшокиҳо бо акс ва нарх.';
+
+  @override
+  String get adminTv2PageTypeCarouselDesc =>
+      'Акси калони маҳсулот ва ном дар поён.';
+
+  @override
+  String get adminTv2PageTypeListDesc =>
+      'Герой дар боло ва шабакаи позитсияҳо.';
+
+  @override
+  String get adminTv2PageTypeProductGridDesc =>
+      'Плиткаи маҳсулот бо акс, ном ва нарх.';
+
+  @override
+  String get adminTv2PageTypeVideoBgDesc =>
+      'Видео ё фото дар тамоми экран + карточка.';
 
   @override
   String get adminTv2OptionalVideoTitle => 'Видео зери макет (ихтиёрӣ)';

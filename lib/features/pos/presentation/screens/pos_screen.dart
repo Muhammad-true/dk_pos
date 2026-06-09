@@ -251,6 +251,9 @@ String _posHardwarePrinterTooltip(HardwareStatusSnapshot s) {
 bool _canUseCashierBoard(String? role) =>
     role == 'cashier' || role == 'admin' || role == 'waiter';
 
+bool _canManageOnlineOrders(String? role) =>
+    role == 'cashier' || role == 'admin';
+
 @RoutePage()
 class PosScreen extends StatelessWidget {
   const PosScreen({super.key});
@@ -772,10 +775,16 @@ class _PosViewState extends State<_PosView> {
       ..._incomingNonWebsiteOrders,
       ..._activeBoard.where((o) => (o.orderSource ?? 'pos').toLowerCase() != 'website'),
     ];
+    final canManageOnline = _canManageOnlineOrders(
+      context.read<AuthBloc>().state.user?.role,
+    );
+    final canHandoff = context.read<AuthBloc>().state.user?.role != 'waiter';
     return showDialog<void>(
       context: context,
       builder: (dialogContext) => _PosOrdersDialog(
         showHandoffTab: showHandoffTab,
+        canManageOnlineOrders: canManageOnline,
+        canHandoffOrders: canHandoff,
         orders: List<LocalCashierBoardOrder>.unmodifiable(mergedOrders),
         onCashierAck: (order) async {
           Navigator.of(dialogContext).pop();
@@ -802,6 +811,9 @@ class _PosViewState extends State<_PosView> {
   }
 
   Future<void> _showOnlineOrdersDialog() async {
+    if (!_canManageOnlineOrders(context.read<AuthBloc>().state.user?.role)) {
+      return;
+    }
     await _refreshCashierBoard();
     if (!mounted) return;
     return showDialog<void>(
@@ -1865,27 +1877,29 @@ class _PosViewState extends State<_PosView> {
                                               ),
                                             ),
                                             const SizedBox(width: 10),
-                                            Expanded(
-                                              child: _WorkspaceActionCard(
-                                                icon:
-                                                    Icons.phone_in_talk_rounded,
-                                                label: 'Онлайн заказы',
-                                                value: incomingWebsiteCount > 0
-                                                    ? '$incomingWebsiteCount новых'
-                                                    : 'нет новых',
-                                                tone: incomingWebsiteCount > 0
-                                                    ? const Color(0xFFE4002B)
-                                                    : (theme.brightness ==
-                                                            Brightness.dark
-                                                        ? scheme.secondary
-                                                        : const Color(
-                                                            0xFFB26A00,
-                                                          )),
-                                                badgeCount: incomingWebsiteCount,
-                                                onTap: _showOnlineOrdersDialog,
+                                            if (_canManageOnlineOrders(user?.role))
+                                              Expanded(
+                                                child: _WorkspaceActionCard(
+                                                  icon:
+                                                      Icons.phone_in_talk_rounded,
+                                                  label: 'Онлайн заказы',
+                                                  value: incomingWebsiteCount > 0
+                                                      ? '$incomingWebsiteCount новых'
+                                                      : 'нет новых',
+                                                  tone: incomingWebsiteCount > 0
+                                                      ? const Color(0xFFE4002B)
+                                                      : (theme.brightness ==
+                                                              Brightness.dark
+                                                          ? scheme.secondary
+                                                          : const Color(
+                                                              0xFFB26A00,
+                                                            )),
+                                                  badgeCount: incomingWebsiteCount,
+                                                  onTap: _showOnlineOrdersDialog,
+                                                ),
                                               ),
-                                            ),
-                                            const SizedBox(width: 10),
+                                            if (_canManageOnlineOrders(user?.role))
+                                              const SizedBox(width: 10),
                                             Expanded(
                                               child: _WorkspaceActionCard(
                                                 icon: Icons
@@ -2401,6 +2415,9 @@ class _PosMobileDrawer extends StatelessWidget {
             ListTile(
               leading: const Icon(Icons.table_restaurant_rounded),
               title: const Text('Счета на оплату'),
+              subtitle: isCashierOrAdmin
+                  ? null
+                  : const Text('Оплата только на кассе'),
               onTap: () {
                 Navigator.pop(context);
                 onOpenTableBills();
@@ -2862,6 +2879,8 @@ class _PosOrdersDialog extends StatelessWidget {
   const _PosOrdersDialog({
     required this.orders,
     required this.showHandoffTab,
+    required this.canManageOnlineOrders,
+    required this.canHandoffOrders,
     required this.onCashierAck,
     required this.onCloseOrder,
     required this.onCancelOrder,
@@ -2870,6 +2889,8 @@ class _PosOrdersDialog extends StatelessWidget {
 
   final List<LocalCashierBoardOrder> orders;
   final bool showHandoffTab;
+  final bool canManageOnlineOrders;
+  final bool canHandoffOrders;
   final Future<void> Function(LocalCashierBoardOrder) onCashierAck;
   final Future<void> Function(LocalCashierBoardOrder) onCloseOrder;
   final Future<void> Function(LocalCashierBoardOrder) onCancelOrder;
@@ -2886,12 +2907,16 @@ class _PosOrdersDialog extends StatelessWidget {
 
     if (!showHandoffTab) {
       return AlertDialog(
+        insetPadding: _dialogInsetPadding(context),
         backgroundColor: scheme.surfaceContainerLow,
         title: Text(l10n.posOrdersDialogTitle, style: titleStyle),
         content: SizedBox(
-          width: _dialogWidth(context, 720),
+          width: _dialogWidth(context, 920),
+          height: _dialogHeight(context, 680),
           child: _HallOrdersList(
             orders: orders,
+            canManageOnlineOrders: canManageOnlineOrders,
+            canHandoffOrders: canHandoffOrders,
             onCashierAck: onCashierAck,
             onCloseOrder: onCloseOrder,
             onCancelOrder: onCancelOrder,
@@ -2908,11 +2933,12 @@ class _PosOrdersDialog extends StatelessWidget {
     }
 
     return Dialog(
+      insetPadding: _dialogInsetPadding(context),
       child: DefaultTabController(
         length: 2,
         child: SizedBox(
-          width: _dialogWidth(context, 760),
-          height: math.min(560, MediaQuery.sizeOf(context).height * 0.86),
+          width: _dialogWidth(context, 1040),
+          height: _dialogHeight(context, 680),
           child: Material(
             color: scheme.surfaceContainerLow,
             clipBehavior: Clip.antiAlias,
@@ -2935,6 +2961,8 @@ class _PosOrdersDialog extends StatelessWidget {
                     children: [
                       _HallOrdersList(
                         orders: orders,
+                        canManageOnlineOrders: canManageOnlineOrders,
+                        canHandoffOrders: canHandoffOrders,
                         onCashierAck: onCashierAck,
                         onCloseOrder: onCloseOrder,
                         onCancelOrder: onCancelOrder,
@@ -2980,6 +3008,8 @@ enum _OrdersPaymentFilter { all, needPayment, noPaymentNeeded }
 class _HallOrdersList extends StatefulWidget {
   const _HallOrdersList({
     required this.orders,
+    required this.canManageOnlineOrders,
+    required this.canHandoffOrders,
     required this.onCashierAck,
     required this.onCloseOrder,
     required this.onCancelOrder,
@@ -2987,6 +3017,8 @@ class _HallOrdersList extends StatefulWidget {
   });
 
   final List<LocalCashierBoardOrder> orders;
+  final bool canManageOnlineOrders;
+  final bool canHandoffOrders;
   final Future<void> Function(LocalCashierBoardOrder) onCashierAck;
   final Future<void> Function(LocalCashierBoardOrder) onCloseOrder;
   final Future<void> Function(LocalCashierBoardOrder) onCancelOrder;
@@ -3180,6 +3212,8 @@ class _HallOrdersListState extends State<_HallOrdersList> {
         for (var i = 0; i < filtered.length; i++) ...[
           _OrderListTile(
             order: filtered[i],
+            canManageOnlineOrders: widget.canManageOnlineOrders,
+            canHandoffOrders: widget.canHandoffOrders,
             onCashierAck: () => widget.onCashierAck(filtered[i]),
             onCloseOrder: () => widget.onCloseOrder(filtered[i]),
             onCancelOrder: () => widget.onCancelOrder(filtered[i]),
@@ -3215,6 +3249,7 @@ class _OnlineOrdersDialog extends StatelessWidget {
     final scheme = theme.colorScheme;
 
     return AlertDialog(
+      insetPadding: _dialogInsetPadding(context),
       backgroundColor: scheme.surfaceContainerLow,
       title: Text(
         'Онлайн заказы',
@@ -3223,8 +3258,8 @@ class _OnlineOrdersDialog extends StatelessWidget {
         ),
       ),
       content: SizedBox(
-        width: _dialogWidth(context, 760),
-        height: math.min(520, MediaQuery.sizeOf(context).height * 0.75),
+        width: _dialogWidth(context, 1120),
+        height: _dialogHeight(context, 660),
         child: orders.isEmpty
             ? const Padding(
                 padding: EdgeInsets.all(24),
@@ -3238,6 +3273,8 @@ class _OnlineOrdersDialog extends StatelessWidget {
                   final o = orders[i];
                   return _OrderListTile(
                     order: o,
+                    canManageOnlineOrders: true,
+                    canHandoffOrders: true,
                     onCashierAck: () => onCashierAck(o),
                     onCloseOrder: () => onCloseOrder(o),
                     onCancelOrder: () => onCancelOrder(o),
@@ -3715,7 +3752,22 @@ class _PaymentMethodTotalsRow {
 }
 
 double _dialogWidth(BuildContext context, double preferred) {
-  return math.min(preferred, MediaQuery.sizeOf(context).width * 0.94);
+  final w = MediaQuery.sizeOf(context).width;
+  if (WindowLayout.of(context).isCompact) return w - 8;
+  return math.min(preferred, w * 0.96);
+}
+
+double _dialogHeight(BuildContext context, double preferred) {
+  final h = MediaQuery.sizeOf(context).height;
+  if (WindowLayout.of(context).isCompact) return h * 0.92;
+  return math.min(preferred, h * 0.92);
+}
+
+EdgeInsets _dialogInsetPadding(BuildContext context) {
+  if (WindowLayout.of(context).isCompact) {
+    return const EdgeInsets.symmetric(horizontal: 4, vertical: 6);
+  }
+  return const EdgeInsets.symmetric(horizontal: 24, vertical: 24);
 }
 
 List<_PaymentMethodTotalsRow> _buildMethodTotals(
@@ -4082,6 +4134,8 @@ Future<void> _copyDeliveryCoords(BuildContext context, String coordsRaw) async {
 class _OrderListTile extends StatelessWidget {
   const _OrderListTile({
     required this.order,
+    required this.canManageOnlineOrders,
+    required this.canHandoffOrders,
     required this.onCashierAck,
     required this.onCloseOrder,
     required this.onCancelOrder,
@@ -4090,6 +4144,8 @@ class _OrderListTile extends StatelessWidget {
   });
 
   final LocalCashierBoardOrder order;
+  final bool canManageOnlineOrders;
+  final bool canHandoffOrders;
   final Future<void> Function() onCashierAck;
   final Future<void> Function() onCloseOrder;
   final Future<void> Function() onCancelOrder;
@@ -4112,21 +4168,79 @@ class _OrderListTile extends StatelessWidget {
     final actorHint = _cashierKitchenActorHint(o);
     final isWebsite =
         (order.orderSource ?? 'pos').toLowerCase() == 'website';
+    final allowActions = !completed &&
+        (isWebsite ? canManageOnlineOrders : canHandoffOrders);
+    final stacked = WindowLayout.of(context).isCompact;
     final visibleItems = o.items.take(5).toList(growable: false);
     final hiddenItems = o.items.length - visibleItems.length;
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainer,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: scheme.outlineVariant),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
+    final actions = Column(
+      crossAxisAlignment:
+          stacked ? CrossAxisAlignment.stretch : CrossAxisAlignment.end,
+      children: [
+        if (!allowActions && !completed)
+          Text(
+            isWebsite ? 'Только касса' : 'Только просмотр',
+            textAlign: stacked ? TextAlign.center : TextAlign.end,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          )
+        else if (allowActions) ...[
+          if (onCallCustomer != null && websiteMeta.phone != null) ...[
+            OutlinedButton.icon(
+              onPressed: onCallCustomer,
+              icon: const Icon(Icons.phone_rounded, size: 18),
+              label: const Text('Позвонить'),
+            ),
+            const SizedBox(height: 6),
+          ],
+          if (isWebsite && onEditOrder != null && canManageOnlineOrders) ...[
+            OutlinedButton.icon(
+              onPressed: () => onEditOrder!(),
+              icon: const Icon(Icons.edit_note_rounded, size: 18),
+              label: const Text('Изменить'),
+            ),
+            const SizedBox(height: 6),
+          ],
+          if (order.needsCashierAck)
+            FilledButton(
+              onPressed: onCashierAck,
+              child: const Text('Принять'),
+            )
+          else ...[
+            FilledButton.tonal(
+              onPressed: onCloseOrder,
+              child: Text(status == 'ready' ? 'Выдать' : 'Закрыть'),
+            ),
+            const SizedBox(height: 6),
+            TextButton(onPressed: onCancelOrder, child: const Text('Отменить')),
+          ],
+        ] else
+          Text(
+            'Только просмотр',
+            textAlign: stacked ? TextAlign.center : TextAlign.end,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        if (order.requiresPayment) ...[
+          const SizedBox(height: 6),
+          Text(
+            'Нужна оплата',
+            textAlign: stacked ? TextAlign.center : TextAlign.end,
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: scheme.error,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ],
+    );
+
+    final info = Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
@@ -4172,7 +4286,7 @@ class _OrderListTile extends StatelessWidget {
                   const SizedBox(height: 6),
                   Text(
                     'Адрес: ${websiteMeta.address}',
-                    maxLines: 2,
+                    maxLines: stacked ? 4 : 2,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: scheme.onSurfaceVariant,
@@ -4263,7 +4377,7 @@ class _OrderListTile extends StatelessWidget {
                     for (final it in visibleItems)
                       Text(
                         '• ${it.quantity > 1 ? '${it.quantity}x ' : ''}${it.name} (${it.assemblyStatusShortRu})',
-                        maxLines: 1,
+                        maxLines: stacked ? 2 : 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: _cashierItemStatusColor(context, it.kitchenLineStatus),
@@ -4282,75 +4396,61 @@ class _OrderListTile extends StatelessWidget {
                   ],
                 ),
               ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            formatSomoni(o.totalPrice),
-            style: theme.textTheme.titleMedium?.copyWith(
-              color: scheme.primary,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Column(
-            children: [
-              if (!completed) ...[
-                if (onCallCustomer != null && websiteMeta.phone != null) ...[
-                  OutlinedButton.icon(
-                    onPressed: onCallCustomer,
-                    icon: const Icon(Icons.phone_rounded, size: 18),
-                    label: const Text('Позвонить'),
-                  ),
-                  const SizedBox(height: 6),
-                ],
-                if (isWebsite && onEditOrder != null) ...[
-                  OutlinedButton.icon(
-                    onPressed: () => onEditOrder!(),
-                    icon: const Icon(Icons.edit_note_rounded, size: 18),
-                    label: const Text('Изменить'),
-                  ),
-                  const SizedBox(height: 6),
-                ],
-                if (order.needsCashierAck) ...[
-                  FilledButton(
-                    onPressed: () => onCashierAck(),
-                    child: const Text('Принять'),
-                  ),
-                ] else ...[
-                  FilledButton.tonal(
-                    onPressed: () => onCloseOrder(),
-                    child: Text(status == 'ready' ? 'Выдать' : 'Закрыть'),
-                  ),
-                  const SizedBox(height: 6),
-                  TextButton(
-                    onPressed: () => onCancelOrder(),
-                    child: const Text('Отменить'),
-                  ),
-                ],
-              ] else ...[
-                Text(
-                  'Только просмотр',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-              if (order.requiresPayment) ...[
-                const SizedBox(height: 6),
-                Text(
-                  'Нужна оплата',
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: scheme.error,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ],
+    );
+
+    final priceText = Text(
+      formatSomoni(o.totalPrice),
+      style: theme.textTheme.titleMedium?.copyWith(
+        color: scheme.primary,
+        fontWeight: FontWeight.w800,
       ),
+    );
+
+    return Container(
+      padding: EdgeInsets.all(stacked ? 16 : 14),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainer,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: stacked
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                info,
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Итого',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text(
+                      formatSomoni(o.totalPrice),
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        color: scheme.primary,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                actions,
+              ],
+            )
+          : Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: info),
+                const SizedBox(width: 12),
+                priceText,
+                const SizedBox(width: 10),
+                actions,
+              ],
+            ),
     );
   }
 }

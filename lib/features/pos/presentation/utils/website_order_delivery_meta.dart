@@ -8,6 +8,8 @@ class WebsiteOrderDeliveryMeta {
     this.phone,
     this.contact,
     this.comment,
+    this.deliveryWhen,
+    this.deliveryDate,
   });
 
   final String label;
@@ -17,6 +19,8 @@ class WebsiteOrderDeliveryMeta {
   final String? phone;
   final String? contact;
   final String? comment;
+  final String? deliveryWhen;
+  final String? deliveryDate;
 }
 
 WebsiteOrderDeliveryMeta parseWebsiteOrderDeliveryMeta(String rawLabel) {
@@ -31,6 +35,8 @@ WebsiteOrderDeliveryMeta parseWebsiteOrderDeliveryMeta(String rawLabel) {
   String? phone;
   String? contact;
   String? comment;
+  String? deliveryWhen;
+  String? deliveryDate;
   final clean = <String>[];
   for (final p in parts) {
     final low = p.toLowerCase();
@@ -47,6 +53,21 @@ WebsiteOrderDeliveryMeta parseWebsiteOrderDeliveryMeta(String rawLabel) {
     if (low.startsWith('комментарий:')) {
       final v = p.substring('комментарий:'.length).trim();
       if (v.isNotEmpty) comment = v;
+      continue;
+    }
+    if (low.startsWith('время:')) {
+      final v = p.substring('время:'.length).trim();
+      if (v.isNotEmpty) deliveryWhen = v;
+      continue;
+    }
+    if (low.startsWith('дата:')) {
+      final v = p.substring('дата:'.length).trim();
+      if (v.isNotEmpty) deliveryDate = v;
+      continue;
+    }
+    if (low.startsWith('окно:')) {
+      final v = p.substring('окно:'.length).trim();
+      if (v.isNotEmpty) deliveryWhen = v;
       continue;
     }
     if (low.startsWith('коорд:')) {
@@ -75,6 +96,8 @@ WebsiteOrderDeliveryMeta parseWebsiteOrderDeliveryMeta(String rawLabel) {
     phone: phone,
     contact: contact,
     comment: comment,
+    deliveryWhen: deliveryWhen,
+    deliveryDate: deliveryDate,
   );
 }
 

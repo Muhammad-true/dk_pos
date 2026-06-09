@@ -6,6 +6,7 @@ import 'package:dk_pos/features/admin/data/admin_combo_row.dart';
 import 'package:dk_pos/features/admin/data/combos_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/menu_items_admin_repository.dart';
 import 'package:dk_pos/features/admin/presentation/screens/combo_editor_screen.dart';
+import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_list_row_card.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
 
@@ -178,15 +179,14 @@ class _CombosAdminPanelState extends State<CombosAdminPanel> {
             if (_combos.isEmpty)
               Center(child: Text(l10n.adminCombosEmpty))
             else
-              ListView.builder(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
-                physics: kAdminListScrollPhysics,
-                itemCount: _combos.length,
-                itemBuilder: (_, i) {
-                  final c = _combos[i];
-                  final title = c.nameRu.isEmpty ? '#${c.id}' : c.nameRu;
-                  return AdminListRowCard(
-                    child: ListTile(
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final cols = WindowLayout(width: constraints.maxWidth)
+                      .hubGridColumns(minCellWidth: 300);
+                  Widget comboTile(AdminComboRow c) {
+                    final title = c.nameRu.isEmpty ? '#${c.id}' : c.nameRu;
+                    return AdminListRowCard(
+                      child: ListTile(
                         dense: true,
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 12,
@@ -237,6 +237,28 @@ class _CombosAdminPanelState extends State<CombosAdminPanel> {
                           if (mounted) await _load();
                         },
                       ),
+                    );
+                  }
+
+                  if (cols <= 1) {
+                    return ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
+                      physics: kAdminListScrollPhysics,
+                      itemCount: _combos.length,
+                      itemBuilder: (_, i) => comboTile(_combos[i]),
+                    );
+                  }
+                  return GridView.builder(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 88),
+                    physics: kAdminListScrollPhysics,
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: cols,
+                      mainAxisSpacing: 10,
+                      crossAxisSpacing: 10,
+                      childAspectRatio: cols >= 3 ? 2.0 : 2.3,
+                    ),
+                    itemCount: _combos.length,
+                    itemBuilder: (_, i) => comboTile(_combos[i]),
                   );
                 },
               ),
