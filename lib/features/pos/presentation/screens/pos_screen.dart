@@ -752,7 +752,10 @@ class _PosViewState extends State<_PosView> {
     await performPosSessionLogout(context);
   }
 
-  Future<void> _handleCatalogItemAdd(PosMenuItem item) async {
+  Future<void> _handleCatalogItemAdd(
+    PosMenuItem item,
+    Rect sourceGlobalRect,
+  ) async {
     if (item.allowCustomPrice) {
       final customPrice = await _showCustomPriceDialog(context, item);
       if (!mounted || customPrice == null) return;
@@ -1223,10 +1226,13 @@ class _PosViewState extends State<_PosView> {
     }
     try {
       final cartState = context.read<CartBloc>().state;
+      final menuState = context.read<MenuBloc>().state;
       final config = await _loadCustomerDisplayConfig();
       final result =
           await CustomerDisplayWindowService.instance.openCustomerDisplay(
-        cartState,
+        cart: cartState,
+        menu: menuState,
+        config: config,
       );
       if (result != CustomerDisplayOpenResult.failed) {
         await CustomerDisplayWindowService.instance.setDisplayContentConfig(
