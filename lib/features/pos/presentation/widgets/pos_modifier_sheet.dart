@@ -1,27 +1,37 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import 'package:dk_pos/core/utils/variable_sale_qty.dart';
 import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
 import 'package:dk_pos/features/cart/bloc/cart_event.dart';
+import 'package:dk_pos/features/pos/presentation/widgets/pos_variable_qty_sheet.dart';
 import 'package:dk_pos/shared/shared.dart';
 
 /// Настройка блюда перед добавлением в корзину (модификаторы из global sync).
 Future<void> showPosModifierSheet(
   BuildContext context, {
   required PosMenuItem item,
+  bool withVariableQty = false,
 }) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (ctx) => _PosModifierSheetBody(item: item),
+    builder: (ctx) => _PosModifierSheetBody(
+      item: item,
+      withVariableQty: withVariableQty,
+    ),
   );
 }
 
 class _PosModifierSheetBody extends StatefulWidget {
-  const _PosModifierSheetBody({required this.item});
+  const _PosModifierSheetBody({
+    required this.item,
+    this.withVariableQty = false,
+  });
 
   final PosMenuItem item;
+  final bool withVariableQty;
 
   @override
   State<_PosModifierSheetBody> createState() => _PosModifierSheetBodyState();
@@ -29,6 +39,19 @@ class _PosModifierSheetBody extends StatefulWidget {
 
 class _PosModifierSheetBodyState extends State<_PosModifierSheetBody> {
   final Set<int> _selected = {};
+  late final VariableSaleQty _saleBase;
+  late double _actualQty;
+
+  @override
+  void initState() {
+    super.initState();
+    _saleBase = VariableSaleQty.fromMenuItem(
+      enabled: widget.withVariableQty && widget.item.variableSaleQtyEnabled,
+      measure: widget.item.saleMeasure,
+      defaultQty: widget.item.defaultSaleQty,
+    );
+    _actualQty = _saleBase.defaultQty;
+  }
 
   List<PosCartModifier> get _selectedModifiers {
     final out = <PosCartModifier>[];
@@ -48,7 +71,15 @@ class _PosModifierSheetBodyState extends State<_PosModifierSheetBody> {
 
   double get _unitPrice {
     final extra = _selectedModifiers.fold<double>(0, (s, m) => s + m.priceDelta);
-    return widget.item.baseCatalogPrice + extra;
+    final base = widget.withVariableQty && _saleBase.enabled
+        ? VariableSaleQty(
+            enabled: true,
+            measure: _saleBase.measure,
+            defaultQty: _saleBase.defaultQty,
+            actualQty: _actualQty,
+          ).scaledPrice(widget.item.baseCatalogPrice)
+        : widget.item.baseCatalogPrice;
+    return base + extra;
   }
 
   void _toggle(PosModifierGroup group, PosModifierOption option) {
@@ -58,13 +89,8 @@ class _PosModifierSheetBodyState extends State<_PosModifierSheetBody> {
       if (group.kind == 'remove') {
         if (_selected.contains(oid)) {
           _selected.remove(oid);
-        } else {
-          for (final id in sameGroup) {
-            _selected.remove(id);
-          }
-          if (sameGroup.where(_selected.contains).length < group.maxSelect) {
-            _selected.add(oid);
-          }
+        } else if (sameGroup.where(_selected.contains).length < group.maxSelect) {
+          _selected.add(oid);
         }
       } else {
         if (_selected.contains(oid)) {
@@ -79,7 +105,16 @@ class _PosModifierSheetBodyState extends State<_PosModifierSheetBody> {
   void _addToCart() {
     final mods = _selectedModifiers;
     context.read<CartBloc>().add(
-          CartItemAdded(widget.item, unitPrice: _unitPrice, modifiers: mods),
+          CartItemAdded(
+            widget.item,
+            unitPrice: _unitPrice,
+            modifiers: mods,
+            actualQty: widget.withVariableQty && _saleBase.enabled ? _actualQty : null,
+            defaultSaleQty:
+                widget.withVariableQty && _saleBase.enabled ? _saleBase.defaultQty : null,
+            saleMeasure:
+                widget.withVariableQty && _saleBase.enabled ? _saleBase.measure : null,
+          ),
         );
     Navigator.of(context).pop();
   }
@@ -148,6 +183,14 @@ class _PosModifierSheetBodyState extends State<_PosModifierSheetBody> {
                             onSelected: (_) => _toggle(g, o),
                           ),
                       ],
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+                  if (widget.withVariableQty && _saleBase.enabled) ...[
+                    PosVariableQtyPickerPanel(
+                      item: widget.item,
+                      initialQty: _actualQty,
+                      onQtyChanged: (v) => setState(() => _actualQty = v),
                     ),
                     const SizedBox(height: 14),
                   ],

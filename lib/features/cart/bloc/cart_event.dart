@@ -16,14 +16,27 @@ final class CartItemAdded extends CartEvent {
     this.item, {
     this.unitPrice,
     this.modifiers = const [],
+    this.actualQty,
+    this.defaultSaleQty,
+    this.saleMeasure,
   });
 
   final PosMenuItem item;
   final double? unitPrice;
   final List<PosCartModifier> modifiers;
+  final double? actualQty;
+  final double? defaultSaleQty;
+  final String? saleMeasure;
 
   @override
-  List<Object?> get props => [item.id, unitPrice, modifiers];
+  List<Object?> get props => [
+        item.id,
+        unitPrice,
+        modifiers,
+        actualQty,
+        defaultSaleQty,
+        saleMeasure,
+      ];
 }
 
 final class CartItemDecremented extends CartEvent {

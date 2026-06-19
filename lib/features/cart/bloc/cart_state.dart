@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 
 import 'package:dk_pos/core/utils/cart_line_key.dart';
+import 'package:dk_pos/core/utils/variable_sale_qty.dart';
 import 'package:dk_pos/features/cart/domain/cart_payment_adjustment.dart';
 import 'package:dk_pos/shared/shared.dart';
 
@@ -9,23 +10,52 @@ class CartLine extends Equatable {
     required this.item,
     required this.quantity,
     this.modifiers = const [],
+    this.saleMeasure,
+    this.defaultSaleQty,
+    this.actualQty,
   });
 
   final PosMenuItem item;
   final int quantity;
   final List<PosCartModifier> modifiers;
+  final String? saleMeasure;
+  final double? defaultSaleQty;
+  final double? actualQty;
 
   String get lineKey => computeCartLineKey(
         menuItemId: item.id,
         modifiers: modifiers,
         unitPrice: item.price,
         catalogBasePrice: item.baseCatalogPrice,
+        actualQty: actualQty,
+        defaultSaleQty: defaultSaleQty,
       );
 
   double get lineTotal => item.price * quantity;
 
+  String get displayName {
+    if (actualQty != null && defaultSaleQty != null && saleMeasure != null) {
+      return VariableSaleQty(
+        enabled: true,
+        measure: saleMeasure!,
+        defaultQty: defaultSaleQty!,
+        actualQty: actualQty!,
+      ).displayName(item.name, quantity: quantity);
+    }
+    return quantity > 1 ? '$quantity× ${item.name}' : item.name;
+  }
+
   @override
-  List<Object?> get props => [lineKey, quantity, item.price, item.name, modifiers];
+  List<Object?> get props => [
+        lineKey,
+        quantity,
+        item.price,
+        item.name,
+        modifiers,
+        saleMeasure,
+        defaultSaleQty,
+        actualQty,
+      ];
 }
 
 /// Метаданные открытого чека (вкладка на кассе).

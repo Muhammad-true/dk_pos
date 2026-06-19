@@ -64,6 +64,7 @@ OpenBillHydrateResult hydrateOpenTableBillIntoCartLines({
     final item = template.copyWith(
       price: up,
       priceText: _priceTextForLine(up),
+      name: bl.name.trim().isNotEmpty ? bl.name : template.name,
     );
     final keyFromServer = bl.lineKey?.trim();
     final rawKey = keyFromServer != null && keyFromServer.isNotEmpty

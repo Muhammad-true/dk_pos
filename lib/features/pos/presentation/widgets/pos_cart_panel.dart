@@ -361,7 +361,7 @@ class _CartLinesListState extends State<_CartLinesList> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        line.item.name,
+                        line.displayName,
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.titleSmall?.copyWith(

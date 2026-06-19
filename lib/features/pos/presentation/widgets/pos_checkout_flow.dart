@@ -27,6 +27,7 @@ import 'package:dk_digitial_menu/core/app_file_logger.dart';
 import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
 import 'package:dk_pos/features/cash/presentation/pos_cash_flow.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_window_service.dart';
+import 'package:dk_pos/features/pos/presentation/widgets/pos_customer_display_panel.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/open_table_bill_cart_hydrate.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_online_order_edit_flow.dart';
 import 'package:flutter/services.dart';
@@ -228,6 +229,55 @@ Future<void> runPosCheckoutFlow(
 
 void _closeCartSheetIfNeeded(VoidCallback? closeCartSheet) {
   closeCartSheet?.call();
+}
+
+/// Вернуть экран клиента в меню (каталог + корзина).
+void restoreCustomerDisplayMenuFromContext(BuildContext context) {
+  final customerDisplay = CustomerDisplayWindowService.instance;
+  if (!customerDisplay.isOpen || !context.mounted) return;
+  unawaited(
+    customerDisplay.returnToMenuMode(
+      menu: context.read<MenuBloc>().state,
+      cart: context.read<CartBloc>().state,
+    ),
+  );
+}
+
+/// Показать на экране клиента чек открытого счёта + QR банка.
+Future<void> syncOpenBillToCustomerDisplay(
+  BuildContext context,
+  PosTableBill bill,
+) async {
+  final customerDisplay = CustomerDisplayWindowService.instance;
+  if (!customerDisplay.isOpen || !context.mounted) return;
+  await customerDisplay.showPaymentModeForBillData(
+    customerDisplayCartFromOpenBill(bill),
+  );
+}
+
+CustomerDisplayCartData customerDisplayCartFromOpenBill(PosTableBill bill) {
+  final adj = _orderPaymentAdjustmentsById[bill.id];
+  final lines = bill.lines
+      .map(
+        (line) => CustomerDisplayLineData(
+          lineKey: line.lineKey?.trim().isNotEmpty == true
+              ? line.lineKey!.trim()
+              : '${line.name}|${line.quantity}|${line.lineTotal}',
+          name: line.name,
+          quantity: line.quantity,
+          lineTotal: line.lineTotal,
+        ),
+      )
+      .toList(growable: false);
+  final discount = adj?.totalDiscount ?? 0;
+  return CustomerDisplayCartData(
+    lines: lines,
+    itemCount: lines.fold<int>(0, (sum, line) => sum + line.quantity),
+    total: bill.total,
+    payableTotal: adj?.payableAmount ?? bill.total,
+    discountTotal: discount,
+    hasDiscount: discount > 0.009,
+  );
 }
 
 /// Вернуть экран клиента в меню, если оформление прервано (стол, оплата и т.д.).
@@ -504,7 +554,7 @@ Future<void> _runPosCheckoutFlowBody(
     final lines = cartLive.sortedLines
         .map(
           (l) => PosTableBillLine(
-            name: l.item.name,
+            name: l.displayName,
             quantity: l.quantity,
             lineTotal: l.lineTotal,
             menuItemId: l.item.id,
@@ -1389,6 +1439,11 @@ Future<void> configureOrderPaymentDiscount(
       ),
     ),
   );
+  final hall = context.read<PosHallOrdersCubit>();
+  final bill = hall.findOpenBillByOrderId(orderId);
+  if (bill != null) {
+    unawaited(syncOpenBillToCustomerDisplay(context, bill));
+  }
 }
 
 /// Скидка для активного чека (кнопка % в корзине).
@@ -3036,11 +3091,16 @@ Future<void> payOpenBill(
     orderTotal: bill.total,
     paidSummarySubject: bill.tableSummary,
   );
-  if (!outcome.paid || !context.mounted) return;
-  context.read<PosHallOrdersCubit>().markPaid(
-    bill.id,
-    paymentMethod: outcome.paymentMethodTitle,
-  );
+  if (!context.mounted) return;
+  if (outcome.paid) {
+    context.read<PosHallOrdersCubit>().markPaid(
+      bill.id,
+      paymentMethod: outcome.paymentMethodTitle,
+    );
+    restoreCustomerDisplayMenuFromContext(context);
+    return;
+  }
+  restoreCustomerDisplayMenuFromContext(context);
 }
 
 Future<_PaymentAttemptResult> _runMixedLocalPayment(
@@ -3410,6 +3470,9 @@ Future<_OrderSyncResult> _syncLocalOrder(
             unitPrice: line.item.price,
             lineKey: line.lineKey,
             modifiers: line.modifiers.map((m) => m.toJson()).toList(),
+            actualQty: line.actualQty,
+            defaultSaleQty: line.defaultSaleQty,
+            saleMeasure: line.saleMeasure,
           ),
         );
       } else if (delta < 0) {
@@ -3436,6 +3499,9 @@ Future<_OrderSyncResult> _syncLocalOrder(
             unitPrice: l.item.price,
             lineKey: l.lineKey,
             modifiers: l.modifiers.map((m) => m.toJson()).toList(),
+            actualQty: l.actualQty,
+            defaultSaleQty: l.defaultSaleQty,
+            saleMeasure: l.saleMeasure,
           ),
         )
         .toList(growable: false);

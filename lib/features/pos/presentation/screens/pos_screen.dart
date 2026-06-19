@@ -19,6 +19,7 @@ import 'package:dk_pos/data/network/dio_http_client.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/core/formatting/money_format.dart';
 import 'package:dk_pos/core/layout/window_layout.dart';
+import 'package:dk_pos/core/utils/order_assembly_items.dart';
 import 'package:dk_pos/core/locale/api_locale.dart';
 import 'package:dk_pos/features/auth/presentation/cashier_password_gate_dialog.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
@@ -39,6 +40,7 @@ import 'package:dk_pos/features/kitchen_board/audio/kitchen_order_alert.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_catalog_grid_settings_editor.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_server_endpoint_editor.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_modifier_sheet.dart';
+import 'package:dk_pos/features/pos/presentation/widgets/pos_variable_qty_sheet.dart';
 import 'package:dk_pos/features/expeditor/presentation/widgets/expeditor_queue_panel.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
 import 'package:dk_pos/features/orders/data/local_orders_realtime.dart';
@@ -120,7 +122,11 @@ class _CashierHandOutSourceRow extends StatelessWidget {
     late final IconData icon;
     late final String label;
     late final String tip;
-    if (norm == 'auto') {
+    if (norm == 'kitchen') {
+      icon = Icons.restaurant_rounded;
+      label = 'Кухня · Готово';
+      tip = 'Выдано автоматически при нажатии «Готово» на кухне.';
+    } else if (norm == 'auto') {
       icon = Icons.schedule_rounded;
       label = 'Автовыдача';
       tip = 'Переведено в «Выдан» автоматически через заданный интервал.';
@@ -760,6 +766,14 @@ class _PosViewState extends State<_PosView> {
       final customPrice = await _showCustomPriceDialog(context, item);
       if (!mounted || customPrice == null) return;
       context.read<CartBloc>().add(CartItemAdded(item, unitPrice: customPrice));
+      return;
+    }
+    if (item.variableSaleQtyEnabled) {
+      if (item.hasModifiers) {
+        await showPosModifierSheet(context, item: item, withVariableQty: true);
+      } else {
+        await showPosVariableQtySheet(context, item: item);
+      }
       return;
     }
     if (item.hasModifiers) {
@@ -4177,8 +4191,18 @@ class _OrderListTile extends StatelessWidget {
     final allowActions = !completed &&
         (isWebsite ? canManageOnlineOrders : canHandoffOrders);
     final stacked = WindowLayout.of(context).isCompact;
-    final visibleItems = o.items.take(5).toList(growable: false);
-    final hiddenItems = o.items.length - visibleItems.length;
+    final displayItems = ['ready', 'awaiting_expeditor'].contains(status)
+        ? filterAssemblyRoundItems(
+            o.items,
+            handedOutAtIso: o.handedOutAtIso,
+          )
+        : o.items;
+    final visibleItems = displayItems.take(stacked ? 3 : 5).toList(growable: false);
+    final hiddenItems = displayItems.length - visibleItems.length;
+    final isFollowUpDisplay = shouldShowFollowUpAssemblyLabel(
+      items: o.items,
+      handedOutAtIso: o.handedOutAtIso,
+    );
 
     final actions = Column(
       crossAxisAlignment:
@@ -4246,22 +4270,22 @@ class _OrderListTile extends StatelessWidget {
       ],
     );
 
-    final info = Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '№ ${_cashierOrderDisplayNumber(number: o.number, orderTypeRaw: order.orderType)}',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  typeLine,
-                  style: theme.textTheme.bodyMedium,
-                ),
-                const SizedBox(height: 4),
-                Container(
+    final orderHeader = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '№ ${_cashierOrderDisplayNumber(number: o.number, orderTypeRaw: order.orderType)}',
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          typeLine,
+          style: theme.textTheme.bodyMedium,
+        ),
+        const SizedBox(height: 4),
+        Container(
                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
                     color: scheme.surfaceContainerHighest,
@@ -4336,21 +4360,37 @@ class _OrderListTile extends StatelessWidget {
                     ],
                   ),
                 ],
-                if (waiterOrder) ...[
-                  const SizedBox(height: 6),
-                  _WaiterSourceChip(compact: true),
-                ],
-                const SizedBox(height: 4),
-                Text(
-                  _cashierOrderStatusRu(o.status),
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+        if (waiterOrder) ...[
+          const SizedBox(height: 6),
+          _WaiterSourceChip(compact: true),
+        ],
+        const SizedBox(height: 4),
+        Text(
+          _cashierOrderStatusRu(o.status),
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+
+    final orderDetails = Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
                 if (status == 'done') ...[
                   const SizedBox(height: 6),
                   _CashierHandOutSourceRow(source: o.handOutSource),
+                ],
+                if (isFollowUpDisplay) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Дозаказ — только новые позиции',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: scheme.tertiary,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ],
                 if (actorHint != null) ...[
                   const SizedBox(height: 2),
@@ -4423,38 +4463,43 @@ class _OrderListTile extends StatelessWidget {
           ? Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                info,
-                const SizedBox(height: 12),
+                orderHeader,
+                const SizedBox(height: 10),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Итого',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    Text(
-                      formatSomoni(o.totalPrice),
-                      style: theme.textTheme.titleLarge?.copyWith(
-                        color: scheme.primary,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
+                    Expanded(child: priceText),
+                    const SizedBox(width: 8),
+                    Flexible(child: actions),
                   ],
                 ),
                 const SizedBox(height: 10),
-                actions,
+                orderDetails,
               ],
             )
           : Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(child: info),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      orderHeader,
+                      const SizedBox(height: 8),
+                      orderDetails,
+                    ],
+                  ),
+                ),
                 const SizedBox(width: 12),
-                priceText,
-                const SizedBox(width: 10),
-                actions,
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    priceText,
+                    const SizedBox(height: 10),
+                    actions,
+                  ],
+                ),
               ],
             ),
     );

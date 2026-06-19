@@ -12,6 +12,9 @@ class LocalOrderLineInput {
     required this.unitPrice,
     this.lineKey,
     this.modifiers = const [],
+    this.actualQty,
+    this.defaultSaleQty,
+    this.saleMeasure,
   });
 
   final String menuItemId;
@@ -19,6 +22,20 @@ class LocalOrderLineInput {
   final double unitPrice;
   final String? lineKey;
   final List<Map<String, dynamic>> modifiers;
+  final double? actualQty;
+  final double? defaultSaleQty;
+  final String? saleMeasure;
+
+  Map<String, dynamic> toJson() => {
+        'menuItemId': menuItemId,
+        'quantity': quantity,
+        'unitPrice': unitPrice,
+        if (lineKey != null) 'lineKey': lineKey,
+        if (modifiers.isNotEmpty) 'modifiers': modifiers,
+        if (actualQty != null) 'actualQty': actualQty,
+        if (defaultSaleQty != null) 'defaultSaleQty': defaultSaleQty,
+        if (saleMeasure != null) 'saleMeasure': saleMeasure,
+      };
 }
 
 class LocalOrderResult {
@@ -199,6 +216,7 @@ class LocalKitchenQueueOrder {
     required this.totalPrice,
     required this.items,
     this.handOutSource,
+    this.handedOutAtIso,
   });
 
   final String id;
@@ -212,6 +230,9 @@ class LocalKitchenQueueOrder {
   /// После `done`: `manual` | `auto` с бэкенда; `null` — старые заказы без поля.
   final String? handOutSource;
 
+  /// Заказ хотя бы раз выдавали гостю — дозаказ после этой метки режется на выдаче.
+  final String? handedOutAtIso;
+
   factory LocalKitchenQueueOrder.fromJson(Map<String, dynamic> json) {
     final rawItems = json['items'];
     final items = rawItems is List
@@ -222,6 +243,8 @@ class LocalKitchenQueueOrder {
         : const <LocalKitchenQueueItem>[];
     final hoRaw = json['handOutSource'] ?? json['hand_out_source'];
     final hoStr = hoRaw?.toString().trim() ?? '';
+    final handedRaw = json['handedOutAt'] ?? json['handed_out_at'];
+    final handedStr = handedRaw?.toString().trim() ?? '';
     return LocalKitchenQueueOrder(
       id: json['id']?.toString() ?? '',
       number: json['number']?.toString() ?? '',
@@ -231,6 +254,7 @@ class LocalKitchenQueueOrder {
       totalPrice: num.tryParse(json['totalPrice']?.toString() ?? '')?.toDouble() ?? 0,
       items: items,
       handOutSource: hoStr.isEmpty ? null : hoStr.toLowerCase(),
+      handedOutAtIso: handedStr.isEmpty ? null : handedStr,
     );
   }
 }

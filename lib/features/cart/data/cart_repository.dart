@@ -1,4 +1,5 @@
 import 'package:dk_pos/core/utils/cart_line_key.dart';
+import 'package:dk_pos/core/utils/variable_sale_qty.dart';
 import 'package:dk_pos/shared/shared.dart';
 
 import '../bloc/cart_state.dart';
@@ -104,16 +105,31 @@ class CartRepository {
     PosMenuItem item, {
     double? unitPrice,
     List<PosCartModifier> modifiers = const [],
+    double? actualQty,
+    double? defaultSaleQty,
+    String? saleMeasure,
   }) {
     final d = _checks[_activeId];
     if (d == null) return;
 
     final modExtra =
         modifiers.fold<double>(0, (s, m) => s + m.priceDelta);
-    final up = unitPrice ?? (item.baseCatalogPrice + modExtra);
+    final sale = item.variableSaleQtyEnabled
+        ? VariableSaleQty.fromMenuItem(
+            enabled: true,
+            measure: saleMeasure ?? item.saleMeasure,
+            defaultQty: defaultSaleQty ?? item.defaultSaleQty,
+            actualQty: actualQty,
+          )
+        : null;
+    final up = unitPrice ??
+        ((sale != null ? sale.scaledPrice(item.baseCatalogPrice) : item.baseCatalogPrice) +
+            modExtra);
     final modLabel = modifiers.map((m) => m.name).where((n) => n.isNotEmpty).join(', ');
-    final displayName =
-        modLabel.isNotEmpty ? '${item.name} ($modLabel)' : item.name;
+    var displayName = modLabel.isNotEmpty ? '${item.name} ($modLabel)' : item.name;
+    if (sale != null && (sale.actualQty - sale.defaultQty).abs() > 0.001) {
+      displayName = sale.displayName(displayName);
+    }
 
     final effectiveItem = item.copyWith(
       price: up,
@@ -128,6 +144,8 @@ class CartRepository {
       modifiers: modifiers,
       unitPrice: up,
       catalogBasePrice: item.baseCatalogPrice,
+      actualQty: sale?.actualQty,
+      defaultSaleQty: sale?.defaultQty,
     );
 
     final existing = d.lines[key];
@@ -136,12 +154,18 @@ class CartRepository {
         item: effectiveItem,
         quantity: existing.quantity + 1,
         modifiers: modifiers,
+        saleMeasure: sale?.measure,
+        defaultSaleQty: sale?.defaultQty,
+        actualQty: sale?.actualQty,
       );
     } else {
       d.lines[key] = CartLine(
         item: effectiveItem,
         quantity: 1,
         modifiers: modifiers,
+        saleMeasure: sale?.measure,
+        defaultSaleQty: sale?.defaultQty,
+        actualQty: sale?.actualQty,
       );
     }
   }
@@ -158,6 +182,9 @@ class CartRepository {
         item: line.item,
         quantity: line.quantity - 1,
         modifiers: line.modifiers,
+        saleMeasure: line.saleMeasure,
+        defaultSaleQty: line.defaultSaleQty,
+        actualQty: line.actualQty,
       );
     }
   }

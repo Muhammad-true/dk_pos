@@ -1,3 +1,5 @@
+import 'package:dk_pos/core/utils/variable_sale_qty.dart';
+
 int _parseInt(dynamic v) {
   if (v is int) return v;
   return int.tryParse(v?.toString() ?? '') ?? 0;
@@ -98,6 +100,9 @@ class PosMenuItem {
     this.saleUnit = 'шт',
     this.composition,
     this.allowCustomPrice = false,
+    this.variableSaleQtyEnabled = false,
+    this.saleMeasure,
+    this.defaultSaleQty,
     this.modifierGroups = const [],
     this.catalogBasePrice,
   });
@@ -115,6 +120,9 @@ class PosMenuItem {
   final String? composition;
   /// Разрешен ручной ввод цены на кассе.
   final bool allowCustomPrice;
+  final bool variableSaleQtyEnabled;
+  final String? saleMeasure;
+  final double? defaultSaleQty;
   final List<PosModifierGroup> modifierGroups;
 
   /// Базовая цена из каталога (для ключа строки при ручной цене).
@@ -124,6 +132,13 @@ class PosMenuItem {
 
   bool get hasModifiers =>
       modifierGroups.any((g) => g.options.isNotEmpty);
+
+  VariableSaleQty get variableSale =>
+      VariableSaleQty.fromMenuItem(
+        enabled: variableSaleQtyEnabled,
+        measure: saleMeasure,
+        defaultQty: defaultSaleQty,
+      );
 
   PosMenuItem copyWith({
     String? id,
@@ -136,6 +151,9 @@ class PosMenuItem {
     String? saleUnit,
     String? composition,
     bool? allowCustomPrice,
+    bool? variableSaleQtyEnabled,
+    String? saleMeasure,
+    double? defaultSaleQty,
     List<PosModifierGroup>? modifierGroups,
     double? catalogBasePrice,
   }) {
@@ -150,6 +168,10 @@ class PosMenuItem {
       saleUnit: saleUnit ?? this.saleUnit,
       composition: composition ?? this.composition,
       allowCustomPrice: allowCustomPrice ?? this.allowCustomPrice,
+      variableSaleQtyEnabled:
+          variableSaleQtyEnabled ?? this.variableSaleQtyEnabled,
+      saleMeasure: saleMeasure ?? this.saleMeasure,
+      defaultSaleQty: defaultSaleQty ?? this.defaultSaleQty,
       modifierGroups: modifierGroups ?? this.modifierGroups,
       catalogBasePrice: catalogBasePrice ?? this.catalogBasePrice,
     );
@@ -178,7 +200,18 @@ class PosMenuItem {
       imagePath: json['image_path']?.toString(),
       saleUnit: (unit == null || unit.isEmpty) ? 'шт' : unit,
       composition: json['composition']?.toString(),
-      allowCustomPrice: json['allow_custom_price'] == 1 || json['allowCustomPrice'] == true,
+      allowCustomPrice:
+          json['allow_custom_price'] == 1 || json['allowCustomPrice'] == true,
+      variableSaleQtyEnabled:
+          json['variable_sale_qty_enabled'] == 1 ||
+          json['variableSaleQtyEnabled'] == true,
+      saleMeasure: json['sale_measure']?.toString(),
+      defaultSaleQty: () {
+        final raw = json['default_sale_qty'];
+        if (raw == null) return null;
+        final n = VariableSaleQty.parseQty(raw, -1);
+        return n > 0 ? n : null;
+      }(),
       modifierGroups: groups,
       catalogBasePrice: price,
     );

@@ -41,6 +41,9 @@ class CartBloc extends Bloc<CartEvent, CartState> {
       event.item,
       unitPrice: event.unitPrice,
       modifiers: event.modifiers,
+      actualQty: event.actualQty,
+      defaultSaleQty: event.defaultSaleQty,
+      saleMeasure: event.saleMeasure,
     );
     _emit(emit);
   }

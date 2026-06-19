@@ -6,6 +6,8 @@ String computeCartLineKey({
   required List<PosCartModifier> modifiers,
   required double unitPrice,
   required double catalogBasePrice,
+  double? actualQty,
+  double? defaultSaleQty,
 }) {
   final mid = menuItemId.trim();
   final ids = modifiers
@@ -13,11 +15,14 @@ String computeCartLineKey({
       .where((id) => id > 0)
       .toList()
     ..sort();
-  if (ids.isNotEmpty) {
-    return '$mid:${ids.join(',')}';
+  var key = ids.isNotEmpty ? '$mid:${ids.join(',')}' : mid;
+  if ((unitPrice - catalogBasePrice).abs() > 0.001 && ids.isEmpty) {
+    key = '$mid::${unitPrice.toStringAsFixed(2)}';
   }
-  if ((unitPrice - catalogBasePrice).abs() > 0.001) {
-    return '$mid::${unitPrice.toStringAsFixed(2)}';
+  final a = actualQty;
+  final d = defaultSaleQty;
+  if (a != null && d != null && d > 0 && (a - d).abs() > 0.001) {
+    key = '$key@q${a.toStringAsFixed(a == a.roundToDouble() ? 0 : 2)}';
   }
-  return mid;
+  return key;
 }
