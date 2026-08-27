@@ -86,8 +86,8 @@ class LanBackendScanner {
       ordered.add(host);
     }
 
-    // Частые адреса сервера / роутера — в начало (без жёстко зашитого IP).
-    for (final last in [100, 101, 102, 110, 125, 50, 10, 1]) {
+    // Частые адреса сервера / роутера — в начало (касса точки: 192.168.0.101).
+    for (final last in [101, 100, 102, 110, 125, 50, 10, 1]) {
       add('$prefix.$last');
     }
     for (var last = 1; last <= 254; last++) {
@@ -117,7 +117,7 @@ class LanBackendScanner {
       final prefix = host != null ? _prefixFromHost(host) : null;
       if (prefix != null) return prefix;
     }
-    return _prefixFromHost('192.168.1.1');
+    return _prefixFromHost('192.168.0.1');
   }
 
   static String? _prefixFromHost(String host) {

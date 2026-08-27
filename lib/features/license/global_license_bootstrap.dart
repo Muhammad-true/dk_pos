@@ -147,9 +147,6 @@ class GlobalLicenseBootstrap {
     var discovery = serverManualInput != null && serverManualInput.trim().isNotEmpty
         ? await LocalServerDiscovery.resolveAndApply(manualInput: serverManualInput)
         : await LocalServerDiscovery.resolveQuick();
-    if (!discovery.ok && serverManualInput == null) {
-      discovery = await LocalServerDiscovery.resolveAuto();
-    }
     if (!discovery.ok) {
       return GlobalLicenseStartupBlocked(
         discovery.message ??

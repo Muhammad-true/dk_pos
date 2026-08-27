@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 
 import 'app_colors.dart';
@@ -8,29 +9,27 @@ const _radiusM = 14.0;
 
 /// Тема: M3, мягкие поверхности, предсказуемые переходы (без тяжёлых эффектов).
 ThemeData buildAppTheme() {
-  final scheme = ColorScheme.fromSeed(
-    seedColor: AppColors.primary,
-    brightness: Brightness.light,
-  ).copyWith(
-    primary: AppColors.primary,
-    onPrimary: AppColors.onPrimary,
-    surface: AppColors.surface,
-    surfaceContainerLowest: Colors.white,
-    surfaceContainerLow: AppColors.surfaceLow,
-    surfaceContainer: const Color(0xFFECECEC),
-    surfaceContainerHigh: AppColors.surfaceHigh,
-    onSurface: AppColors.secondaryWarm,
-    onSurfaceVariant: const Color(0xFF5C5C5C),
-    outline: AppColors.outline,
-    outlineVariant: const Color(0xFFD0D0D0),
-  );
+  final scheme =
+      ColorScheme.fromSeed(
+        seedColor: AppColors.primary,
+        brightness: Brightness.light,
+      ).copyWith(
+        primary: AppColors.primary,
+        onPrimary: AppColors.onPrimary,
+        surface: AppColors.surface,
+        surfaceContainerLowest: Colors.white,
+        surfaceContainerLow: AppColors.surfaceLow,
+        surfaceContainer: const Color(0xFFECECEC),
+        surfaceContainerHigh: AppColors.surfaceHigh,
+        onSurface: AppColors.secondaryWarm,
+        onSurfaceVariant: const Color(0xFF5C5C5C),
+        outline: AppColors.outline,
+        outlineVariant: const Color(0xFFD0D0D0),
+      );
 
   final textTheme = Typography.material2021(platform: TargetPlatform.android)
       .black
-      .apply(
-        bodyColor: scheme.onSurface,
-        displayColor: scheme.onSurface,
-      )
+      .apply(bodyColor: scheme.onSurface, displayColor: scheme.onSurface)
       .copyWith(
         headlineSmall: const TextStyle(
           fontWeight: FontWeight.w700,
@@ -41,10 +40,7 @@ ThemeData buildAppTheme() {
           letterSpacing: -0.2,
         ),
         titleMedium: const TextStyle(fontWeight: FontWeight.w600),
-        bodyLarge: const TextStyle(
-          height: 1.35,
-          fontWeight: FontWeight.w400,
-        ),
+        bodyLarge: const TextStyle(height: 1.35, fontWeight: FontWeight.w400),
         bodyMedium: const TextStyle(height: 1.35),
       );
 
@@ -69,9 +65,7 @@ ThemeData buildAppTheme() {
       backgroundColor: scheme.surfaceContainerLow,
       foregroundColor: scheme.onSurface,
       surfaceTintColor: Colors.transparent,
-      titleTextStyle: textTheme.titleLarge?.copyWith(
-        color: scheme.onSurface,
-      ),
+      titleTextStyle: textTheme.titleLarge?.copyWith(color: scheme.onSurface),
     ),
     scaffoldBackgroundColor: scheme.surfaceContainerLow,
     navigationRailTheme: NavigationRailThemeData(
@@ -163,14 +157,20 @@ ThemeData buildAppTheme() {
     ),
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_radiusM)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(_radiusM),
+      ),
       elevation: 2,
     ),
     dialogTheme: DialogThemeData(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_radiusL)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(_radiusL),
+      ),
     ),
     chipTheme: ChipThemeData(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_radiusM)),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(_radiusM),
+      ),
       side: BorderSide(color: scheme.outlineVariant),
       backgroundColor: scheme.surfaceContainerLow,
     ),
@@ -179,10 +179,7 @@ ThemeData buildAppTheme() {
 
 /// Для локальных hero-анимаций вкладок (короткий fade + лёгкий сдвиг).
 Widget adminTabTransition(Widget child, Animation<double> animation) {
-  final curved = CurvedAnimation(
-    parent: animation,
-    curve: AppMotion.tabSwitch,
-  );
+  final curved = CurvedAnimation(parent: animation, curve: AppMotion.tabSwitch);
   return FadeTransition(
     opacity: curved,
     child: SlideTransition(

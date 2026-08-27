@@ -285,11 +285,14 @@ class AdminSyncWorkerInfo {
     required this.enabled,
     required this.intervalMs,
     required this.endpointConfigured,
+    this.mode,
   });
 
   final bool enabled;
   final int intervalMs;
   final bool endpointConfigured;
+  /// shift_close | interval
+  final String? mode;
 }
 
 class AdminSyncOutboxInfo {
@@ -631,6 +634,7 @@ class AdminReportsRepository {
         enabled: asBool(m['enabled']),
         intervalMs: asInt(m['intervalMs']),
         endpointConfigured: asBool(m['endpointConfigured']),
+        mode: m['mode']?.toString(),
       );
     }
 
@@ -798,7 +802,8 @@ class AdminReportsRepository {
 
   Future<AdminSyncActionResult> triggerPushNow({
     String? branchId,
-    int limit = 50,
+    int limit = 100,
+    bool flushAll = true,
   }) async {
     final resolvedBranchId = (branchId == null || branchId.trim().isEmpty)
         ? _defaultBranchId
@@ -808,20 +813,31 @@ class AdminReportsRepository {
       body: {
         'branchId': resolvedBranchId,
         'limit': limit,
+        'flushAll': flushAll,
       },
     );
     if (res.statusCode != 200) {
       throw ApiException.fromHttp(
         res.statusCode,
         res.body,
-        fallbackMessage: 'Push в global не выполнен',
+        fallbackMessage: 'Отправка очереди в global не выполнена',
       );
     }
     final body = res.body;
     final map = body is Map ? Map<String, dynamic>.from(body) : <String, dynamic>{};
     final sentRaw = map['sent'];
     final sent = sentRaw is num ? sentRaw.toInt() : int.tryParse(sentRaw?.toString() ?? '') ?? 0;
-    return AdminSyncActionResult(ok: true, message: 'Push выполнен: отправлено $sent событий');
+    final pendingRaw = map['pendingAfter'];
+    final pendingAfter =
+        pendingRaw is num ? pendingRaw.toInt() : int.tryParse(pendingRaw?.toString() ?? '') ?? 0;
+    if (pendingAfter > 0) {
+      return AdminSyncActionResult(
+        ok: true,
+        message:
+            'Отправлено $sent событий. В очереди осталось $pendingAfter (нет сети или повтор позже).',
+      );
+    }
+    return AdminSyncActionResult(ok: true, message: 'Очередь отправлена: $sent событий');
   }
 
   Future<AdminSyncActionResult> triggerPullNow({

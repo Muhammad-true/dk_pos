@@ -4,6 +4,8 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/network/http_client.dart';
 import 'package:dk_pos/core/network/http_retry.dart';
+import 'package:dk_pos/core/utils/variable_sale_qty.dart';
+import 'package:dk_pos/shared/models/pos_menu_models.dart';
 
 class LocalOrderLineInput {
   const LocalOrderLineInput({
@@ -27,15 +29,15 @@ class LocalOrderLineInput {
   final String? saleMeasure;
 
   Map<String, dynamic> toJson() => {
-        'menuItemId': menuItemId,
-        'quantity': quantity,
-        'unitPrice': unitPrice,
-        if (lineKey != null) 'lineKey': lineKey,
-        if (modifiers.isNotEmpty) 'modifiers': modifiers,
-        if (actualQty != null) 'actualQty': actualQty,
-        if (defaultSaleQty != null) 'defaultSaleQty': defaultSaleQty,
-        if (saleMeasure != null) 'saleMeasure': saleMeasure,
-      };
+    'menuItemId': menuItemId,
+    'quantity': quantity,
+    'unitPrice': unitPrice,
+    if (lineKey != null) 'lineKey': lineKey,
+    if (modifiers.isNotEmpty) 'modifiers': modifiers,
+    if (actualQty != null) 'actualQty': actualQty,
+    if (defaultSaleQty != null) 'defaultSaleQty': defaultSaleQty,
+    if (saleMeasure != null) 'saleMeasure': saleMeasure,
+  };
 }
 
 class LocalOrderResult {
@@ -77,6 +79,9 @@ class LocalKitchenQueueItem {
     required this.name,
     required this.quantity,
     this.lineKey,
+    this.saleMeasure,
+    this.actualQty,
+    this.defaultSaleQty,
     this.kitchenLineStatus = 'pending',
     this.kitchenAcceptedByUserId,
     this.kitchenAcceptedByUsername,
@@ -92,6 +97,9 @@ class LocalKitchenQueueItem {
   final String name;
   final int quantity;
   final String? lineKey;
+  final String? saleMeasure;
+  final double? actualQty;
+  final double? defaultSaleQty;
   final String kitchenLineStatus;
   final int? kitchenAcceptedByUserId;
   final String? kitchenAcceptedByUsername;
@@ -108,6 +116,7 @@ class LocalKitchenQueueItem {
       if (v is num) return v.toInt();
       return int.tryParse(v?.toString() ?? '') ?? 0;
     }
+
     int? asNullableInt(dynamic v) {
       if (v == null) return null;
       if (v is int) return v;
@@ -131,23 +140,44 @@ class LocalKitchenQueueItem {
       name: json['name']?.toString() ?? '',
       quantity: asInt(json['quantity']),
       lineKey: lk != null && lk.isNotEmpty ? lk : null,
+      saleMeasure:
+          json['saleMeasure']?.toString() ?? json['sale_measure']?.toString(),
+      actualQty: () {
+        final v = json['actualQty'] ?? json['actual_qty'];
+        if (v is num) return v.toDouble();
+        return double.tryParse(v?.toString() ?? '');
+      }(),
+      defaultSaleQty: () {
+        final v = json['defaultSaleQty'] ?? json['default_sale_qty'];
+        if (v is num) return v.toDouble();
+        return double.tryParse(v?.toString() ?? '');
+      }(),
       kitchenLineStatus:
-          json['kitchenLineStatus']?.toString() ?? json['kitchen_line_status']?.toString() ?? 'pending',
+          json['kitchenLineStatus']?.toString() ??
+          json['kitchen_line_status']?.toString() ??
+          'pending',
       kitchenAcceptedByUserId: asNullableInt(
         json['kitchenAcceptedByUserId'] ?? json['kitchen_accepted_by_user_id'],
       ),
       kitchenAcceptedByUsername:
-          json['kitchenAcceptedByUsername']?.toString() ?? json['kitchen_accepted_by_username']?.toString(),
+          json['kitchenAcceptedByUsername']?.toString() ??
+          json['kitchen_accepted_by_username']?.toString(),
       kitchenAcceptedAtIso:
-          json['kitchenAcceptedAt']?.toString() ?? json['kitchen_accepted_at']?.toString(),
+          json['kitchenAcceptedAt']?.toString() ??
+          json['kitchen_accepted_at']?.toString(),
       kitchenReadyByUserId: asNullableInt(
         json['kitchenReadyByUserId'] ?? json['kitchen_ready_by_user_id'],
       ),
       kitchenReadyByUsername:
-          json['kitchenReadyByUsername']?.toString() ?? json['kitchen_ready_by_username']?.toString(),
-      kitchenReadyAtIso: json['kitchenReadyAt']?.toString() ?? json['kitchen_ready_at']?.toString(),
+          json['kitchenReadyByUsername']?.toString() ??
+          json['kitchen_ready_by_username']?.toString(),
+      kitchenReadyAtIso:
+          json['kitchenReadyAt']?.toString() ??
+          json['kitchen_ready_at']?.toString(),
       kitchenStationId: ks,
-      kitchenStationName: json['kitchenStationName']?.toString() ?? json['kitchen_station_name']?.toString(),
+      kitchenStationName:
+          json['kitchenStationName']?.toString() ??
+          json['kitchen_station_name']?.toString(),
     );
   }
 }
@@ -201,9 +231,52 @@ extension LocalKitchenQueueItemAssemblyX on LocalKitchenQueueItem {
   }
 
   String assemblyTitleWithStation() {
-    final q = quantity > 1 ? '$quantity × $name' : name;
-    return '$q ($assemblyKitchenTag)';
+    final title = _kitchenPrepareTitle();
+    return '$title ($assemblyKitchenTag)';
   }
+
+  String _kitchenPrepareTitle() {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) return name;
+
+    // Бэкенд (forKitchen) уже отдаёт «7× Донер» / «Стрипсы 300 г» — не дублируем.
+    if (_kitchenNameAlreadyShowsQuantity(trimmedName)) {
+      return trimmedName;
+    }
+
+    final m = (saleMeasure ?? '').trim().toLowerCase();
+    final per = actualQty;
+    final isVariablePortion =
+        per != null && per > 0 && (m == 'pcs' || m == 'gram' || m == 'g');
+    if (isVariablePortion) {
+      final total = (per * (quantity > 0 ? quantity : 1)).round();
+      final unit = m == 'gram' || m == 'g' ? 'г' : 'шт';
+      final base = _stripTrailingQtyFromName(trimmedName);
+      if (base.isNotEmpty) {
+        return '$base $total $unit';
+      }
+    }
+    return trimmedName;
+  }
+}
+
+bool _kitchenNameAlreadyShowsQuantity(String raw) {
+  final t = raw.trim();
+  if (t.isEmpty) return false;
+  if (RegExp(r'^\d+\s*[×xх]\s', caseSensitive: false).hasMatch(t)) {
+    return true;
+  }
+  if (RegExp(
+    r'\d+\s*(шт|штук|pcs|г|g)\s*$',
+    caseSensitive: false,
+  ).hasMatch(t)) {
+    return true;
+  }
+  return false;
+}
+
+String _stripTrailingQtyFromName(String raw) {
+  return VariableSaleQty.stripEmbeddedQtyFromName(raw);
 }
 
 class LocalKitchenQueueOrder {
@@ -233,13 +306,31 @@ class LocalKitchenQueueOrder {
   /// Заказ хотя бы раз выдавали гостю — дозаказ после этой метки режется на выдаче.
   final String? handedOutAtIso;
 
+  LocalKitchenQueueOrder copyWith({
+    String? orderType,
+    String? tableLabel,
+    bool clearTableLabel = false,
+  }) {
+    return LocalKitchenQueueOrder(
+      id: id,
+      number: number,
+      orderType: orderType ?? this.orderType,
+      tableLabel: clearTableLabel ? null : (tableLabel ?? this.tableLabel),
+      status: status,
+      totalPrice: totalPrice,
+      items: items,
+      handOutSource: handOutSource,
+      handedOutAtIso: handedOutAtIso,
+    );
+  }
+
   factory LocalKitchenQueueOrder.fromJson(Map<String, dynamic> json) {
     final rawItems = json['items'];
     final items = rawItems is List
         ? rawItems
-            .whereType<Map<String, dynamic>>()
-            .map(LocalKitchenQueueItem.fromJson)
-            .toList()
+              .whereType<Map<String, dynamic>>()
+              .map(LocalKitchenQueueItem.fromJson)
+              .toList()
         : const <LocalKitchenQueueItem>[];
     final hoRaw = json['handOutSource'] ?? json['hand_out_source'];
     final hoStr = hoRaw?.toString().trim() ?? '';
@@ -248,10 +339,13 @@ class LocalKitchenQueueOrder {
     return LocalKitchenQueueOrder(
       id: json['id']?.toString() ?? '',
       number: json['number']?.toString() ?? '',
-      orderType: json['orderType']?.toString() ?? json['order_type']?.toString(),
-      tableLabel: json['tableLabel']?.toString() ?? json['table_label']?.toString(),
+      orderType:
+          json['orderType']?.toString() ?? json['order_type']?.toString(),
+      tableLabel:
+          json['tableLabel']?.toString() ?? json['table_label']?.toString(),
       status: json['status']?.toString() ?? 'new',
-      totalPrice: num.tryParse(json['totalPrice']?.toString() ?? '')?.toDouble() ?? 0,
+      totalPrice:
+          num.tryParse(json['totalPrice']?.toString() ?? '')?.toDouble() ?? 0,
       items: items,
       handOutSource: hoStr.isEmpty ? null : hoStr.toLowerCase(),
       handedOutAtIso: handedStr.isEmpty ? null : handedStr,
@@ -289,6 +383,30 @@ class LocalCashierBoardOrder {
   /// Последний статус, отправленный на global API (`with_courier`, `delivered`, …).
   final String? globalSitePushStatus;
 
+  LocalCashierBoardOrder copyWith({
+    String? tableLabel,
+    String? orderType,
+    bool? requiresPayment,
+    bool clearTableLabel = false,
+  }) {
+    final nextTable = clearTableLabel ? '' : (tableLabel ?? this.tableLabel);
+    final nextType = orderType ?? this.orderType;
+    return LocalCashierBoardOrder(
+      order: order.copyWith(
+        orderType: nextType,
+        tableLabel: nextTable,
+        clearTableLabel: clearTableLabel,
+      ),
+      requiresPayment: requiresPayment ?? this.requiresPayment,
+      orderType: nextType,
+      tableLabel: nextTable,
+      orderSource: orderSource,
+      needsCashierAck: needsCashierAck,
+      receiptPrinted: receiptPrinted,
+      globalSitePushStatus: globalSitePushStatus,
+    );
+  }
+
   factory LocalCashierBoardOrder.fromJson(Map<String, dynamic> json) {
     bool? receiptPrinted;
     final rp = json['receiptPrinted'] ?? json['receipt_printed'];
@@ -301,13 +419,17 @@ class LocalCashierBoardOrder {
       order: LocalKitchenQueueOrder.fromJson(json),
       requiresPayment:
           json['requiresPayment'] == true || json['requires_payment'] == true,
-      orderType: json['orderType']?.toString() ?? json['order_type']?.toString(),
-      tableLabel: json['tableLabel']?.toString() ?? json['table_label']?.toString(),
-      orderSource: json['orderSource']?.toString() ?? json['order_source']?.toString(),
+      orderType:
+          json['orderType']?.toString() ?? json['order_type']?.toString(),
+      tableLabel:
+          json['tableLabel']?.toString() ?? json['table_label']?.toString(),
+      orderSource:
+          json['orderSource']?.toString() ?? json['order_source']?.toString(),
       needsCashierAck:
           json['needsCashierAck'] == true || json['needs_cashier_ack'] == true,
       receiptPrinted: receiptPrinted,
-      globalSitePushStatus: json['globalSitePushStatus']?.toString() ??
+      globalSitePushStatus:
+          json['globalSitePushStatus']?.toString() ??
           json['global_site_push_status']?.toString(),
     );
   }
@@ -318,11 +440,13 @@ class LocalKitchenQueueSnapshot {
     required this.preparing,
     required this.waitingOthers,
     required this.readyForPickup,
+    this.queueRevision,
   });
 
   final List<LocalKitchenQueueOrder> preparing;
   final List<LocalKitchenQueueOrder> waitingOthers;
   final List<LocalKitchenQueueOrder> readyForPickup;
+  final int? queueRevision;
 }
 
 class LocalKitchenTodayStats {
@@ -339,10 +463,12 @@ class LocalExpeditorQueueSnapshot {
   const LocalExpeditorQueueSnapshot({
     required this.bundling,
     required this.pickup,
+    this.queueRevision,
   });
 
   final List<LocalKitchenQueueOrder> bundling;
   final List<LocalKitchenQueueOrder> pickup;
+  final int? queueRevision;
 }
 
 class LocalOrdersRepository {
@@ -362,19 +488,11 @@ class LocalOrdersRepository {
     required double totalAmount,
     required String orderType,
     String? tableLabel,
+    Map<String, dynamic>? deliveryMeta,
+    double? deliveryFee,
     String? terminalId,
   }) async {
-    final bodyLines = lines
-        .map(
-          (l) => {
-            'menuItemId': l.menuItemId,
-            'quantity': l.quantity,
-            'unitPrice': l.unitPrice,
-            if (l.lineKey != null && l.lineKey!.isNotEmpty) 'lineKey': l.lineKey,
-            if (l.modifiers.isNotEmpty) 'modifiers': l.modifiers,
-          },
-        )
-        .toList(growable: false);
+    final bodyLines = lines.map((l) => l.toJson()).toList(growable: false);
 
     final res = await _http.post(
       'api/local/orders',
@@ -385,6 +503,8 @@ class LocalOrdersRepository {
         'totalAmount': totalAmount,
         'orderType': orderType,
         'tableLabel': tableLabel,
+        if (deliveryMeta != null) 'deliveryMeta': deliveryMeta,
+        if (deliveryFee != null) 'deliveryFee': deliveryFee,
         'terminalId': terminalId ?? _defaultTerminalId,
       },
       receiveTimeout: lines.length >= 20
@@ -411,13 +531,17 @@ class LocalOrdersRepository {
     }
     final id = order['id']?.toString() ?? '';
     final number = order['number']?.toString() ?? '';
-    final total = num.tryParse(order['totalPrice']?.toString() ?? '')?.toDouble() ?? totalAmount;
+    final total =
+        num.tryParse(order['totalPrice']?.toString() ?? '')?.toDouble() ??
+        totalAmount;
     if (id.isEmpty || number.isEmpty) {
-      throw ApiException(res.statusCode, 'Сервер вернул неполные данные заказа');
+      throw ApiException(
+        res.statusCode,
+        'Сервер вернул неполные данные заказа',
+      );
     }
     final note = body['note']?.toString().toLowerCase() ?? '';
-    if (bodyLines.isNotEmpty &&
-        note.contains('позиции не переданы')) {
+    if (bodyLines.isNotEmpty && note.contains('позиции не переданы')) {
       throw ApiException(
         res.statusCode,
         'Заказ на сервере без позиций — повторите оформление',
@@ -429,6 +553,123 @@ class LocalOrdersRepository {
       totalPrice: total,
       created: body['created'] == true,
     );
+  }
+
+  /// Фиксирует согласие клиента до изменения интернет-заказа.
+  /// Сервер создаёт ревизию, которая затем попадёт в сайт и приложение.
+  Future<void> recordSiteOrderChangeConsent({
+    required String orderId,
+    String reason = 'Изменено по согласованию с клиентом',
+  }) async {
+    final id = orderId.trim();
+    if (id.isEmpty) return;
+    final res = await _http.post(
+      'api/local/orders/$id/site-order-change-consent',
+      body: {
+        'reason': reason,
+        'terminalId': _defaultTerminalId,
+      },
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Не удалось зафиксировать согласие клиента',
+      );
+    }
+  }
+
+  /// Сменить / назначить стол у неоплаченного заказа (гость пересел или сел позже).
+  Future<({String? tableLabel, String? orderType, bool noop})>
+  updateOrderTable({
+    required String orderId,
+    String? tableLabel,
+    bool clearTable = false,
+  }) async {
+    final res = await _http.patch(
+      'api/local/orders/$orderId/table',
+      body: {
+        if (clearTable) 'clearTable': true,
+        if (!clearTable) 'tableLabel': tableLabel,
+      },
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Не удалось изменить стол',
+      );
+    }
+    final body = res.body;
+    if (body is! Map) {
+      throw ApiException(res.statusCode, 'Некорректный ответ смены стола');
+    }
+    final order = body['order'];
+    final label = order is Map
+        ? (order['tableLabel'] ?? order['table_label'])?.toString()
+        : null;
+    final orderType = order is Map
+        ? (order['orderType'] ?? order['order_type'])?.toString()
+        : null;
+    return (
+      tableLabel: label,
+      orderType: orderType,
+      noop: body['noop'] == true,
+    );
+  }
+
+  /// Журнал событий заказа (смена стола и др.) для диалога «История».
+  Future<List<LocalOrderEvent>> fetchOrderEvents(String orderId) async {
+    final id = orderId.trim();
+    if (id.isEmpty) return const [];
+    final res = await _http.get('api/local/orders/$id/events');
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Не удалось загрузить историю заказа',
+      );
+    }
+    final body = res.body;
+    if (body is! Map) {
+      throw ApiException(res.statusCode, 'Некорректный ответ истории заказа');
+    }
+    final raw = body['events'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => LocalOrderEvent.fromJson(Map<String, dynamic>.from(e)))
+        .toList(growable: false);
+  }
+
+  /// Сменить способ заказа (с собой / на месте / доставка) после оформления.
+  Future<({String? tableLabel, String? orderType, bool noop})> updateOrderType({
+    required String orderId,
+    required String orderType,
+  }) async {
+    final res = await _http.patch(
+      'api/local/orders/$orderId/order-type',
+      body: {'orderType': orderType},
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Не удалось изменить тип заказа',
+      );
+    }
+    final body = res.body;
+    if (body is! Map) {
+      throw ApiException(res.statusCode, 'Некорректный ответ смены типа');
+    }
+    final order = body['order'];
+    final label = order is Map
+        ? (order['tableLabel'] ?? order['table_label'])?.toString()
+        : null;
+    final nextType = order is Map
+        ? (order['orderType'] ?? order['order_type'])?.toString()
+        : null;
+    return (tableLabel: label, orderType: nextType, noop: body['noop'] == true);
   }
 
   Future<LocalKitchenQueueSnapshot> fetchKitchenQueueMy() async {
@@ -461,6 +702,7 @@ class LocalOrdersRepository {
       preparing: parseList(body['preparing']),
       waitingOthers: parseList(body['waitingOthers'] ?? body['waiting_others']),
       readyForPickup: parseList(body['ready']),
+      queueRevision: body['queueRevision'] ?? body['queue_revision'],
     );
   }
 
@@ -490,6 +732,7 @@ class LocalOrdersRepository {
       preparing: parseList(body['preparing']),
       waitingOthers: parseList(body['waitingOthers'] ?? body['waiting_others']),
       readyForPickup: parseList(body['ready']),
+      queueRevision: body['queueRevision'] ?? body['queue_revision'],
     );
   }
 
@@ -504,7 +747,10 @@ class LocalOrdersRepository {
     }
     final body = res.body;
     if (body is! Map) {
-      throw ApiException(res.statusCode, 'Некорректный ответ сервера очереди сборки');
+      throw ApiException(
+        res.statusCode,
+        'Некорректный ответ сервера очереди сборки',
+      );
     }
     List<LocalKitchenQueueOrder> parseList(dynamic raw) {
       if (raw is! List) return const [];
@@ -517,6 +763,7 @@ class LocalOrdersRepository {
     return LocalExpeditorQueueSnapshot(
       bundling: parseList(body['bundling']),
       pickup: parseList(body['pickup']),
+      queueRevision: body['queueRevision'] ?? body['queue_revision'],
     );
   }
 
@@ -551,8 +798,9 @@ class LocalOrdersRepository {
           );
         }
       },
+      // 1 повтор достаточно: сервер теперь noop на повторный accept.
       attempts: 2,
-      initialDelay: const Duration(milliseconds: 250),
+      initialDelay: const Duration(milliseconds: 400),
     );
   }
 
@@ -571,24 +819,33 @@ class LocalOrdersRepository {
     }
     final raw = body['users'];
     if (raw is! List) return const [];
-    return raw.whereType<Map>().map((e) {
-      final m = Map<String, dynamic>.from(e);
-      int? asNullableInt(dynamic v) {
-        if (v == null) return null;
-        if (v is int) return v;
-        if (v is num) return v.toInt();
-        return int.tryParse(v.toString());
-      }
+    return raw
+        .whereType<Map>()
+        .map((e) {
+          final m = Map<String, dynamic>.from(e);
+          int? asNullableInt(dynamic v) {
+            if (v == null) return null;
+            if (v is int) return v;
+            if (v is num) return v.toInt();
+            return int.tryParse(v.toString());
+          }
 
-      return LocalKitchenActorProfile(
-        id: asNullableInt(m['id']) ?? 0,
-        username: m['username']?.toString() ?? '',
-        kitchenButtonId: asNullableInt(m['kitchenButtonId'] ?? m['kitchen_button_id']),
-        kitchenButtonName: m['kitchenButtonName']?.toString() ?? m['kitchen_button_name']?.toString(),
-        kitchenButtonColorHex:
-            m['kitchenButtonColorHex']?.toString() ?? m['kitchen_button_color_hex']?.toString(),
-      );
-    }).where((e) => e.id > 0 && e.username.trim().isNotEmpty).toList(growable: false);
+          return LocalKitchenActorProfile(
+            id: asNullableInt(m['id']) ?? 0,
+            username: m['username']?.toString() ?? '',
+            kitchenButtonId: asNullableInt(
+              m['kitchenButtonId'] ?? m['kitchen_button_id'],
+            ),
+            kitchenButtonName:
+                m['kitchenButtonName']?.toString() ??
+                m['kitchen_button_name']?.toString(),
+            kitchenButtonColorHex:
+                m['kitchenButtonColorHex']?.toString() ??
+                m['kitchen_button_color_hex']?.toString(),
+          );
+        })
+        .where((e) => e.id > 0 && e.username.trim().isNotEmpty)
+        .toList(growable: false);
   }
 
   Future<void> handoffOrder({
@@ -598,7 +855,8 @@ class LocalOrdersRepository {
   }) async {
     final body = <String, dynamic>{'action': action};
     if (action == 'hand_out') {
-      body['handOutSource'] = (handOutSource ?? 'manual').trim().toLowerCase() == 'auto'
+      body['handOutSource'] =
+          (handOutSource ?? 'manual').trim().toLowerCase() == 'auto'
           ? 'auto'
           : 'manual';
     }
@@ -620,9 +878,7 @@ class LocalOrdersRepository {
     String? reason,
     String? branchId,
   }) async {
-    final body = <String, dynamic>{
-      'branchId': branchId ?? _defaultBranchId,
-    };
+    final body = <String, dynamic>{'branchId': branchId ?? _defaultBranchId};
     final cleanReason = reason?.trim();
     if (cleanReason != null && cleanReason.isNotEmpty) {
       body['reason'] = cleanReason;
@@ -680,7 +936,9 @@ class LocalOrdersRepository {
     if (raw is! List) return const [];
     return raw
         .whereType<Map>()
-        .map((e) => LocalCashierBoardOrder.fromJson(Map<String, dynamic>.from(e)))
+        .map(
+          (e) => LocalCashierBoardOrder.fromJson(Map<String, dynamic>.from(e)),
+        )
         .where((o) => o.order.id.isNotEmpty)
         .toList(growable: false);
   }
@@ -707,7 +965,9 @@ class LocalOrdersRepository {
     if (raw is! List) return const [];
     return raw
         .whereType<Map>()
-        .map((e) => LocalCashierBoardOrder.fromJson(Map<String, dynamic>.from(e)))
+        .map(
+          (e) => LocalCashierBoardOrder.fromJson(Map<String, dynamic>.from(e)),
+        )
         .where((o) => o.order.id.isNotEmpty)
         .toList(growable: false);
   }
@@ -751,8 +1011,12 @@ class LocalOrdersRepository {
     final itemsRaw = map['itemsReady'];
     final spentRaw = map['spentSeconds'];
     return LocalKitchenTodayStats(
-      itemsReady: itemsRaw is num ? itemsRaw.toInt() : int.tryParse(itemsRaw?.toString() ?? '') ?? 0,
-      spentSeconds: spentRaw is num ? spentRaw.toInt() : int.tryParse(spentRaw?.toString() ?? '') ?? 0,
+      itemsReady: itemsRaw is num
+          ? itemsRaw.toInt()
+          : int.tryParse(itemsRaw?.toString() ?? '') ?? 0,
+      spentSeconds: spentRaw is num
+          ? spentRaw.toInt()
+          : int.tryParse(spentRaw?.toString() ?? '') ?? 0,
     );
   }
 
@@ -769,9 +1033,11 @@ class LocalOrdersRepository {
       'api/local/orders/$orderId/line',
       body: {
         'menuItemId': menuItemId,
-        if (lineKey != null && lineKey.trim().isNotEmpty) 'lineKey': lineKey.trim(),
+        if (lineKey != null && lineKey.trim().isNotEmpty)
+          'lineKey': lineKey.trim(),
         'quantity': quantity,
-        if (cleanReason != null && cleanReason.isNotEmpty) 'reason': cleanReason,
+        if (cleanReason != null && cleanReason.isNotEmpty)
+          'reason': cleanReason,
         'branchId': branchId ?? _defaultBranchId,
       },
     );
@@ -793,10 +1059,15 @@ class LocalOrdersRepository {
     }
     final map = Map<String, dynamic>.from(body);
     final orderRaw = map['order'];
-    final order = orderRaw is Map ? Map<String, dynamic>.from(orderRaw) : const {};
+    final order = orderRaw is Map
+        ? Map<String, dynamic>.from(orderRaw)
+        : const {};
     final tp = order['totalPrice'] ?? order['total_price'];
-    final total = tp is num ? tp.toDouble() : double.tryParse(tp?.toString() ?? '') ?? 0;
-    final cancelledFlag = map['orderCancelledEmpty'] == true ||
+    final total = tp is num
+        ? tp.toDouble()
+        : double.tryParse(tp?.toString() ?? '') ?? 0;
+    final cancelledFlag =
+        map['orderCancelledEmpty'] == true ||
         map['order_cancelled_empty'] == true;
     final status = order['status']?.toString() ?? '';
     final number = order['number']?.toString() ?? '';
@@ -841,7 +1112,9 @@ class LocalOrdersRepository {
       final q = m['quantity'];
       final qty = q is int ? q : int.tryParse(q?.toString() ?? '') ?? 0;
       final lt = m['lineTotal'] ?? m['line_total'];
-      final total = lt is num ? lt.toDouble() : double.tryParse(lt?.toString() ?? '') ?? 0.0;
+      final total = lt is num
+          ? lt.toDouble()
+          : double.tryParse(lt?.toString() ?? '') ?? 0.0;
       final upRaw = m['unitPrice'] ?? m['unit_price'];
       final up = upRaw is num
           ? upRaw.toDouble()
@@ -850,6 +1123,17 @@ class LocalOrdersRepository {
       final mid = midRaw?.toString().trim();
       final lkRaw = m['lineKey'] ?? m['line_key'];
       final lk = lkRaw?.toString().trim();
+      final modsRaw = m['modifiers'];
+      final modifiers = <PosCartModifier>[];
+      if (modsRaw is List) {
+        for (final mr in modsRaw) {
+          if (mr is Map) {
+            modifiers.add(
+              PosCartModifier.fromJson(Map<String, dynamic>.from(mr)),
+            );
+          }
+        }
+      }
       return LocalOpenTableBillLineDto(
         name: m['name']?.toString() ?? '',
         quantity: qty,
@@ -858,8 +1142,12 @@ class LocalOrdersRepository {
         lineKey: lk != null && lk.isNotEmpty ? lk : null,
         unitPrice: up,
         kitchenLineStatus:
-            m['kitchenLineStatus']?.toString() ?? m['kitchen_line_status']?.toString(),
-        kitchenStationId: parseNullableInt(m['kitchenStationId'] ?? m['kitchen_station_id']),
+            m['kitchenLineStatus']?.toString() ??
+            m['kitchen_line_status']?.toString(),
+        kitchenStationId: parseNullableInt(
+          m['kitchenStationId'] ?? m['kitchen_station_id'],
+        ),
+        modifiers: modifiers,
       );
     }
 
@@ -880,32 +1168,125 @@ class LocalOrdersRepository {
       final total = totalRaw is num
           ? totalRaw.toDouble()
           : double.tryParse(totalRaw?.toString() ?? '') ?? 0.0;
+      final promoRaw = m['promoDiscountAmount'] ?? m['promo_discount_amount'];
+      final promoDiscount = promoRaw is num
+          ? promoRaw.toDouble()
+          : double.tryParse(promoRaw?.toString() ?? '');
+      final subtotalRaw = m['subtotal'] ?? m['order_subtotal'];
+      final subtotal = subtotalRaw is num
+          ? subtotalRaw.toDouble()
+          : double.tryParse(subtotalRaw?.toString() ?? '');
+      final graceRaw =
+          m['tableSessionGraceMinutes'] ?? m['table_session_grace_minutes'];
+      final graceMin = graceRaw is int
+          ? graceRaw
+          : int.tryParse(graceRaw?.toString() ?? '');
       out.add(
         LocalOpenTableBillDto(
           id: m['id']?.toString() ?? '',
           number: m['number']?.toString() ?? '',
           status: m['status']?.toString() ?? '',
           total: total,
-          orderType: m['orderType']?.toString() ?? m['order_type']?.toString() ?? 'На месте',
-          tableLabel: m['tableLabel']?.toString() ?? m['table_label']?.toString() ?? '',
+          orderType:
+              m['orderType']?.toString() ??
+              m['order_type']?.toString() ??
+              'На месте',
+          tableLabel:
+              m['tableLabel']?.toString() ?? m['table_label']?.toString() ?? '',
           isDelivery: m['isDelivery'] == true || m['is_delivery'] == true,
-          customerPhone: m['customerPhone']?.toString() ?? m['customer_phone']?.toString(),
-          orderSource: m['orderSource']?.toString() ?? m['order_source']?.toString(),
-          createdAtIso: m['createdAt']?.toString() ?? m['created_at']?.toString(),
-          createdByUsername: m['createdByUsername']?.toString() ??
+          customerPhone:
+              m['customerPhone']?.toString() ?? m['customer_phone']?.toString(),
+          orderSource:
+              m['orderSource']?.toString() ?? m['order_source']?.toString(),
+          createdAtIso:
+              m['createdAt']?.toString() ?? m['created_at']?.toString(),
+          createdByUsername:
+              m['createdByUsername']?.toString() ??
               m['created_by_username']?.toString(),
-          createdByRole: m['createdByRole']?.toString() ??
+          createdByRole:
+              m['createdByRole']?.toString() ??
               m['created_by_role']?.toString(),
-          terminalId: m['terminalId']?.toString() ?? m['terminal_id']?.toString(),
-          isWaiterOrder: m['isWaiterOrder'] == true || m['is_waiter_order'] == true,
+          terminalId:
+              m['terminalId']?.toString() ?? m['terminal_id']?.toString(),
+          isWaiterOrder:
+              m['isWaiterOrder'] == true || m['is_waiter_order'] == true,
           isTakeaway: m['isTakeaway'] == true || m['is_takeaway'] == true,
-          isCashierOrder: m['isCashierOrder'] == true || m['is_cashier_order'] == true,
+          isCashierOrder:
+              m['isCashierOrder'] == true || m['is_cashier_order'] == true,
+          subtotal: subtotal,
+          promoCode: m['promoCode']?.toString() ?? m['promo_code']?.toString(),
+          promoDiscountAmount: promoDiscount,
+          isPaid: m['isPaid'] == true || m['is_paid'] == true,
+          requiresPayment:
+              m['requiresPayment'] == true ||
+              m['requires_payment'] == true ||
+              (m['requiresPayment'] == null &&
+                  m['requires_payment'] == null &&
+                  !(m['isPaid'] == true || m['is_paid'] == true) &&
+                  total > 0),
+          handedOutAtIso:
+              m['handedOutAt']?.toString() ?? m['handed_out_at']?.toString(),
+          tableSessionPhase:
+              m['tableSessionPhase']?.toString() ??
+              m['table_session_phase']?.toString(),
+          tableSessionEndsAtIso:
+              m['tableSessionEndsAt']?.toString() ??
+              m['table_session_ends_at']?.toString(),
+          tableSessionGraceMinutes: graceMin,
           lines: lines,
         ),
       );
     }
     return out;
   }
+
+  Future<LocalPromoValidateResult> validatePromoCode({
+    required String code,
+    required double subtotal,
+  }) async {
+    final res = await _http.post(
+      'api/local/promo-codes/validate',
+      body: {'code': code.trim(), 'subtotal': subtotal},
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Промокод недоступен',
+      );
+    }
+    final body = res.body;
+    if (body is! Map) {
+      throw ApiException(res.statusCode, 'Некорректный ответ validate promo');
+    }
+    final m = Map<String, dynamic>.from(body);
+    final discountRaw = m['discount_amount'] ?? m['discountAmount'];
+    final discount = discountRaw is num
+        ? discountRaw.toDouble()
+        : double.tryParse(discountRaw?.toString() ?? '') ?? 0;
+    final promo = m['promo'];
+    String? title;
+    if (promo is Map) {
+      title = promo['title']?.toString();
+    }
+    return LocalPromoValidateResult(
+      code: code.trim().toUpperCase(),
+      discountAmount: discount,
+      title: title,
+    );
+  }
+}
+
+class LocalPromoValidateResult {
+  const LocalPromoValidateResult({
+    required this.code,
+    required this.discountAmount,
+    this.title,
+  });
+
+  final String code;
+  final double discountAmount;
+  final String? title;
 }
 
 class LocalOpenTableBillLineDto {
@@ -918,6 +1299,7 @@ class LocalOpenTableBillLineDto {
     this.unitPrice,
     this.kitchenLineStatus,
     this.kitchenStationId,
+    this.modifiers = const [],
   });
 
   final String name;
@@ -928,6 +1310,7 @@ class LocalOpenTableBillLineDto {
   final double? unitPrice;
   final String? kitchenLineStatus;
   final int? kitchenStationId;
+  final List<PosCartModifier> modifiers;
 }
 
 class LocalOpenTableBillDto {
@@ -949,6 +1332,15 @@ class LocalOpenTableBillDto {
     this.isWaiterOrder = false,
     this.isTakeaway = false,
     this.isCashierOrder = false,
+    this.subtotal,
+    this.promoCode,
+    this.promoDiscountAmount,
+    this.isPaid = false,
+    this.requiresPayment,
+    this.handedOutAtIso,
+    this.tableSessionPhase,
+    this.tableSessionEndsAtIso,
+    this.tableSessionGraceMinutes,
   });
 
   final String id;
@@ -957,6 +1349,7 @@ class LocalOpenTableBillDto {
   final double total;
   final String orderType;
   final String tableLabel;
+
   /// `pos` | `website` — с бэкенда open-table-bills.
   final String? orderSource;
   final String? createdAtIso;
@@ -968,5 +1361,64 @@ class LocalOpenTableBillDto {
   final bool isWaiterOrder;
   final bool isTakeaway;
   final bool isCashierOrder;
+  final double? subtotal;
+  final String? promoCode;
+  final double? promoDiscountAmount;
+  final bool isPaid;
+  final bool? requiresPayment;
+  final String? handedOutAtIso;
+
+  /// `active` | `handed_out` | null
+  final String? tableSessionPhase;
+  final String? tableSessionEndsAtIso;
+  final int? tableSessionGraceMinutes;
   final List<LocalOpenTableBillLineDto> lines;
+}
+
+/// Событие журнала заказа (смена стола и др.).
+class LocalOrderEvent {
+  const LocalOrderEvent({
+    required this.id,
+    required this.orderId,
+    required this.eventType,
+    this.payload = const {},
+    this.actorUsername = '',
+    this.createdAtIso,
+  });
+
+  factory LocalOrderEvent.fromJson(Map<String, dynamic> m) {
+    final payloadRaw = m['payload'] ?? m['payload_json'];
+    final payload = <String, dynamic>{};
+    if (payloadRaw is Map) {
+      payload.addAll(Map<String, dynamic>.from(payloadRaw));
+    }
+    return LocalOrderEvent(
+      id: m['id'] is num
+          ? (m['id'] as num).toInt()
+          : int.tryParse('${m['id']}') ?? 0,
+      orderId: (m['orderId'] ?? m['order_id'] ?? '').toString(),
+      eventType: (m['eventType'] ?? m['event_type'] ?? '').toString(),
+      payload: payload,
+      actorUsername: (m['actorUsername'] ?? m['actor_username'] ?? '')
+          .toString()
+          .trim(),
+      createdAtIso: (m['createdAt'] ?? m['created_at'])?.toString(),
+    );
+  }
+
+  final int id;
+  final String orderId;
+  final String eventType;
+  final Map<String, dynamic> payload;
+  final String actorUsername;
+  final String? createdAtIso;
+
+  String get fromLabel =>
+      (payload['from'] ?? payload['fromLabel'] ?? '').toString().trim();
+
+  String get toLabel =>
+      (payload['to'] ?? payload['toLabel'] ?? '').toString().trim();
+
+  bool get cleared =>
+      payload['cleared'] == true || (toLabel.isEmpty && fromLabel.isNotEmpty);
 }

@@ -49,7 +49,10 @@ class ServerEndpointApplier {
     return t;
   }
 
-  static Future<bool> probeHealth(String origin) async {
+  static Future<bool> probeHealth(
+    String origin, {
+    Duration timeout = const Duration(seconds: 12),
+  }) async {
     AppConfig.setApiOriginOverride(origin);
     dm_app_config.AppConfig.setApiOriginOverride(origin);
     try {
@@ -58,14 +61,81 @@ class ServerEndpointApplier {
         'api/health',
         options: Options(
           validateStatus: (_) => true,
-          sendTimeout: const Duration(seconds: 8),
-          receiveTimeout: const Duration(seconds: 8),
+          sendTimeout: timeout,
+          receiveTimeout: timeout,
         ),
       );
       return (res.statusCode ?? 0) == 200;
     } catch (_) {
       return false;
     }
+  }
+
+  /// Кандидаты для проверки: введённый адрес, затем localhost (если сервер на этом же ПК).
+  static List<String> connectionCandidatesForInput(String rawInput) {
+    final normalized = AppConfig.normalizeServerConnectionInput(rawInput);
+    final out = <String>[];
+    final seen = <String>{};
+
+    void add(String raw) {
+      final n = AppConfig.normalizeServerConnectionInput(raw);
+      if (n.isEmpty || !seen.add(n)) return;
+      out.add(n);
+    }
+
+    if (normalized.isNotEmpty) {
+      add(normalized);
+      final host = Uri.tryParse(normalized)?.host.toLowerCase();
+      final isLoopback = host == '127.0.0.1' || host == 'localhost';
+      if (!isLoopback) {
+        add('http://127.0.0.1:3000');
+        add('http://localhost:3000');
+      }
+    } else {
+      add('http://127.0.0.1:3000');
+      add('http://localhost:3000');
+      add(AppConfig.defaultLocalServerOrigin);
+    }
+    return out;
+  }
+
+  static List<String> startupProbeOrigins({
+    String? savedOrigin,
+    String? envOrigin,
+  }) {
+    final out = <String>[];
+    final seen = <String>{};
+
+    void add(String? raw) {
+      if (raw == null || raw.trim().isEmpty) return;
+      final n = AppConfig.normalizeServerConnectionInput(raw);
+      if (n.isEmpty || !seen.add(n)) return;
+      out.add(n);
+    }
+
+    add(savedOrigin);
+    // На кассовом ПК с Windows backend часто доступен только через loopback.
+    add('http://127.0.0.1:3000');
+    add('http://localhost:3000');
+    add(AppConfig.defaultLocalServerOrigin);
+    if (envOrigin != null &&
+        envOrigin.trim().isNotEmpty &&
+        envOrigin != savedOrigin) {
+      add(envOrigin);
+    }
+    return out;
+  }
+
+  static Future<String?> firstReachableOrigin(
+    Iterable<String> origins, {
+    Duration timeout = const Duration(seconds: 12),
+  }) async {
+    for (final origin in origins) {
+      if (await probeHealth(origin, timeout: timeout)) {
+        return origin;
+      }
+    }
+    return null;
   }
 
   static Future<void> _syncKitchenPrefs(String origin) async {
@@ -95,48 +165,81 @@ class ServerEndpointApplier {
       );
     }
 
-    AppConfig.setApiOriginOverride(normalized);
-    dm_app_config.AppConfig.setApiOriginOverride(normalized);
+    var effectiveOrigin = normalized;
+    AppConfig.setApiOriginOverride(effectiveOrigin);
+    dm_app_config.AppConfig.setApiOriginOverride(effectiveOrigin);
 
     if (probeHealth) {
-      final ok = await ServerEndpointApplier.probeHealth(normalized);
-      if (!ok) {
+      final candidates = connectionCandidatesForInput(rawInput);
+      final reachable = await firstReachableOrigin(candidates);
+      if (reachable == null) {
         return ServerEndpointApplyResult(
           ok: false,
-          normalizedOrigin: normalized,
+          normalizedOrigin: effectiveOrigin,
           message:
-              'Сервер не отвечает по адресу $normalized. Проверьте IP, порт 3000 и что backend запущен.',
+              'Сервер не отвечает по адресу $effectiveOrigin '
+              '(и через 127.0.0.1:3000 на этом ПК). '
+              'Проверьте, что служба backend запущена, порт 3000 открыт. '
+              'Если касса на том же компьютере — попробуйте http://127.0.0.1:3000',
         );
       }
+      effectiveOrigin = reachable;
+      AppConfig.setApiOriginOverride(effectiveOrigin);
+      dm_app_config.AppConfig.setApiOriginOverride(effectiveOrigin);
     }
 
-    await ServerEndpointStore.save(normalized);
-    await _syncKitchenPrefs(normalized);
+    await ServerEndpointStore.save(effectiveOrigin);
+    await _syncKitchenPrefs(effectiveOrigin);
 
     var serverSaved = false;
+    final installLocalOrigin = _installLocalOriginForPeers(
+      userInput: normalized,
+      connectedOrigin: effectiveOrigin,
+    );
     if (saveOnServer) {
       try {
         final dio = dioForServerSave ?? createDio();
-        await LocalSetupApi(dio).saveInstallLocal(normalized);
+        await LocalSetupApi(dio).saveInstallLocal(installLocalOrigin);
         serverSaved = true;
       } catch (e) {
         return ServerEndpointApplyResult(
           ok: true,
-          normalizedOrigin: normalized,
+          normalizedOrigin: effectiveOrigin,
           serverInstallLocalSaved: false,
           message:
-              'На этой кассе адрес сохранён ($normalized), но на сервер записать не удалось: $e',
+              'На этой кассе адрес сохранён ($effectiveOrigin), но на сервер записать не удалось: $e',
         );
       }
     }
 
+    final usedLoopbackFallback = effectiveOrigin != normalized;
     return ServerEndpointApplyResult(
       ok: true,
-      normalizedOrigin: normalized,
+      normalizedOrigin: effectiveOrigin,
       serverInstallLocalSaved: serverSaved,
       message: serverSaved
-          ? 'Адрес $normalized сохранён на кассе и на сервере (для ТВ и планшетов).'
-          : 'Адрес $normalized сохранён на этой кассе.',
+          ? 'Подключено: $effectiveOrigin. Для ТВ/планшетов на сервере: $installLocalOrigin'
+          : usedLoopbackFallback
+              ? 'Подключено через $effectiveOrigin (backend на этом ПК). '
+                  'Для кухни/планшетов введите $normalized'
+              : 'Адрес $effectiveOrigin сохранён на этой кассе.',
     );
+  }
+
+  static String _installLocalOriginForPeers({
+    required String userInput,
+    required String connectedOrigin,
+  }) {
+    final userHost = Uri.tryParse(userInput)?.host.toLowerCase();
+    final connectedHost = Uri.tryParse(connectedOrigin)?.host.toLowerCase();
+    final connectedIsLoopback =
+        connectedHost == '127.0.0.1' || connectedHost == 'localhost';
+    final userIsLan = userHost != null &&
+        userHost != '127.0.0.1' &&
+        userHost != 'localhost';
+    if (connectedIsLoopback && userIsLan) {
+      return userInput;
+    }
+    return connectedOrigin;
   }
 }

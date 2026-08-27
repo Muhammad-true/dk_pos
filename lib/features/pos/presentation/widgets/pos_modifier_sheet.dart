@@ -62,6 +62,7 @@ class _PosModifierSheetBodyState extends State<_PosModifierSheetBody> {
             optionId: o.id,
             name: o.name,
             priceDelta: o.priceDelta,
+            kind: g.kind,
           ));
         }
       }

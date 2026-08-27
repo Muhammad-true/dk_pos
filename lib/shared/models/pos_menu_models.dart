@@ -17,17 +17,39 @@ class PosCartModifier {
     required this.optionId,
     required this.name,
     required this.priceDelta,
+    this.kind,
   });
 
   final int optionId;
   final String name;
   final double priceDelta;
+  /// `remove` | `add` — для подписи на кухне и в чеке.
+  final String? kind;
 
   Map<String, dynamic> toJson() => {
         'option_id': optionId,
         'name': name,
         'price_delta': priceDelta,
+        if (kind == 'remove' || kind == 'add') 'kind': kind,
       };
+
+  factory PosCartModifier.fromJson(Map<String, dynamic> json) {
+    final kindRaw = json['kind']?.toString().toLowerCase();
+    return PosCartModifier(
+      optionId: _parseInt(json['option_id'] ?? json['optionId']),
+      name: json['name']?.toString() ?? '',
+      priceDelta: _parseDouble(json['price_delta'] ?? json['priceDelta']),
+      kind: kindRaw == 'remove' || kindRaw == 'add' ? kindRaw : null,
+    );
+  }
+
+  static String formatLabel(PosCartModifier m) {
+    final name = m.name.trim();
+    if (name.isEmpty) return '';
+    if (m.kind == 'remove') return 'без $name';
+    if (m.kind == 'add' && m.priceDelta > 0) return '+ $name';
+    return name;
+  }
 }
 
 class PosModifierOption {
@@ -105,6 +127,7 @@ class PosMenuItem {
     this.defaultSaleQty,
     this.modifierGroups = const [],
     this.catalogBasePrice,
+    this.soldOutToday = false,
   });
 
   final String id;
@@ -127,6 +150,9 @@ class PosMenuItem {
 
   /// Базовая цена из каталога (для ключа строки при ручной цене).
   final double? catalogBasePrice;
+
+  /// Закончилось сегодня (касса отметила — на сайте тоже недоступно).
+  final bool soldOutToday;
 
   double get baseCatalogPrice => catalogBasePrice ?? price;
 
@@ -156,6 +182,7 @@ class PosMenuItem {
     double? defaultSaleQty,
     List<PosModifierGroup>? modifierGroups,
     double? catalogBasePrice,
+    bool? soldOutToday,
   }) {
     return PosMenuItem(
       id: id ?? this.id,
@@ -174,6 +201,7 @@ class PosMenuItem {
       defaultSaleQty: defaultSaleQty ?? this.defaultSaleQty,
       modifierGroups: modifierGroups ?? this.modifierGroups,
       catalogBasePrice: catalogBasePrice ?? this.catalogBasePrice,
+      soldOutToday: soldOutToday ?? this.soldOutToday,
     );
   }
 
@@ -214,6 +242,10 @@ class PosMenuItem {
       }(),
       modifierGroups: groups,
       catalogBasePrice: price,
+      soldOutToday:
+          json['sold_out_today'] == 1 ||
+          json['sold_out_today'] == true ||
+          json['soldOutToday'] == true,
     );
   }
 }

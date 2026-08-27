@@ -27,8 +27,8 @@ class LocalKitchenStationPatch {
         : int.tryParse(stationRaw?.toString() ?? '') ?? 0;
 
     LocalKitchenQueueOrder? parseOrder(dynamic raw) {
-      if (raw is! Map<String, dynamic>) return null;
-      return LocalKitchenQueueOrder.fromJson(raw);
+      if (raw is! Map) return null;
+      return LocalKitchenQueueOrder.fromJson(Map<String, dynamic>.from(raw));
     }
 
     return LocalKitchenStationPatch(
@@ -47,8 +47,8 @@ class LocalKitchenStationPatch {
 List<LocalKitchenStationPatch> parseKitchenStationPatches(dynamic raw) {
   if (raw is! List) return const [];
   return raw
-      .whereType<Map<String, dynamic>>()
-      .map(LocalKitchenStationPatch.tryParse)
+      .whereType<Map>()
+      .map((e) => LocalKitchenStationPatch.tryParse(Map<String, dynamic>.from(e)))
       .whereType<LocalKitchenStationPatch>()
       .toList(growable: false);
 }
@@ -100,6 +100,75 @@ LocalKitchenQueueSnapshot applyKitchenStationPatches(
     preparing: preparing,
     waitingOthers: waitingOthers,
     readyForPickup: snapshot.readyForPickup,
+    queueRevision: snapshot.queueRevision,
+  );
+}
+
+bool _kitchenItemHasSaleQtyFields(LocalKitchenQueueItem item) {
+  final m = (item.saleMeasure ?? '').trim().toLowerCase();
+  return item.actualQty != null &&
+      item.actualQty! > 0 &&
+      (m == 'pcs' || m == 'gram' || m == 'g');
+}
+
+LocalKitchenQueueItem _mergeKitchenQueueItem(
+  LocalKitchenQueueItem? prev,
+  LocalKitchenQueueItem incoming,
+) {
+  if (prev == null) return incoming;
+  if (_kitchenItemHasSaleQtyFields(incoming)) return incoming;
+  if (!_kitchenItemHasSaleQtyFields(prev)) return incoming;
+  // Порция из прошлого снимка; имя берём с сервера, если оно уже с количеством.
+  final keepName = _kitchenItemDisplayNameIsBetter(incoming.name, prev.name)
+      ? incoming.name
+      : prev.name;
+  return LocalKitchenQueueItem(
+    menuItemId: incoming.menuItemId,
+    name: keepName,
+    quantity: incoming.quantity,
+    lineKey: incoming.lineKey ?? prev.lineKey,
+    saleMeasure: prev.saleMeasure ?? incoming.saleMeasure,
+    actualQty: prev.actualQty ?? incoming.actualQty,
+    defaultSaleQty: prev.defaultSaleQty ?? incoming.defaultSaleQty,
+    kitchenLineStatus: incoming.kitchenLineStatus,
+    kitchenAcceptedByUserId: incoming.kitchenAcceptedByUserId,
+    kitchenAcceptedByUsername: incoming.kitchenAcceptedByUsername,
+    kitchenAcceptedAtIso: incoming.kitchenAcceptedAtIso,
+    kitchenReadyByUserId: incoming.kitchenReadyByUserId,
+    kitchenReadyByUsername: incoming.kitchenReadyByUsername,
+    kitchenReadyAtIso: incoming.kitchenReadyAtIso,
+    kitchenStationId: incoming.kitchenStationId ?? prev.kitchenStationId,
+    kitchenStationName: incoming.kitchenStationName ?? prev.kitchenStationName,
+  );
+}
+
+LocalKitchenQueueOrder _mergeKitchenQueueOrder(
+  LocalKitchenQueueOrder prev,
+  LocalKitchenQueueOrder incoming,
+) {
+  final prevByKey = <String, LocalKitchenQueueItem>{
+    for (final item in prev.items)
+      (item.lineKey ?? item.menuItemId): item,
+  };
+  final mergedItems = incoming.items
+      .map(
+        (item) => _mergeKitchenQueueItem(
+          prevByKey[item.lineKey ?? item.menuItemId],
+          item,
+        ),
+      )
+      .toList(growable: false);
+  return LocalKitchenQueueOrder(
+    id: incoming.id,
+    number: incoming.number.isNotEmpty ? incoming.number : prev.number,
+    // Смена/сброс стола с кассы: всегда берём значение из патча (null = стол снят).
+    orderType: incoming.orderType ?? prev.orderType,
+    tableLabel: incoming.tableLabel,
+    status: incoming.status,
+    totalPrice: incoming.totalPrice,
+    items: mergedItems,
+    handOutSource: incoming.handOutSource ?? prev.handOutSource,
+    handedOutAtIso: incoming.handedOutAtIso ?? prev.handedOutAtIso,
   );
 }
 
@@ -110,7 +179,7 @@ List<LocalKitchenQueueOrder> _upsertKitchenQueueOrder(
   final idx = list.indexWhere((o) => o.id == order.id);
   if (idx >= 0) {
     final next = List<LocalKitchenQueueOrder>.from(list);
-    next[idx] = order;
+    next[idx] = _mergeKitchenQueueOrder(list[idx], order);
     return next;
   }
   return [...list, order];
@@ -120,11 +189,25 @@ String _kitchenItemsSignature(LocalKitchenQueueOrder order) {
   final parts = order.items
       .map(
         (e) =>
-            '${e.lineKey ?? e.menuItemId}:${e.quantity}:${e.kitchenLineStatus.trim().toLowerCase()}',
+            '${e.lineKey ?? e.menuItemId}:${e.quantity}:${e.actualQty ?? ''}:${e.saleMeasure ?? ''}:${e.name}:${e.kitchenLineStatus.trim().toLowerCase()}',
       )
       .toList(growable: false)
     ..sort();
   return parts.join(';');
+}
+
+bool _kitchenItemDisplayNameIsBetter(String incoming, String prev) {
+  final a = incoming.trim();
+  final b = prev.trim();
+  if (a.isEmpty) return false;
+  if (b.isEmpty) return true;
+  if (RegExp(r'^\d+\s*[×xх]\s', caseSensitive: false).hasMatch(a)) {
+    return true;
+  }
+  if (RegExp(r'\d+\s*(шт|штук|pcs|г|g)\s*$', caseSensitive: false).hasMatch(a)) {
+    return true;
+  }
+  return a.length > b.length;
 }
 
 /// Сравнение очереди с учётом статусов строк (для WS-патчей и озвучки).
@@ -142,6 +225,10 @@ bool kitchenSnapshotItemsChanged(
       final other = bById[o.id];
       if (other == null) return true;
       if (o.status != other.status) return true;
+      // Смена стола с кассы — только tableLabel, позиции те же.
+      if ((o.tableLabel ?? '') != (other.tableLabel ?? '')) return true;
+      if ((o.orderType ?? '') != (other.orderType ?? '')) return true;
+      if ((o.number) != (other.number)) return true;
       if (_kitchenItemsSignature(o) != _kitchenItemsSignature(other)) return true;
     }
     return false;

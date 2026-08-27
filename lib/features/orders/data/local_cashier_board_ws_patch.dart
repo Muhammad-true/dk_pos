@@ -1,5 +1,8 @@
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
 
+import 'package:dk_pos/features/pos/data/open_table_bill_from_server.dart';
+import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
+
 /// Патч одного заказа для кассы из WS `cashier.board_changed`.
 class LocalCashierBoardPatch {
   const LocalCashierBoardPatch({
@@ -111,6 +114,33 @@ List<LocalCashierBoardOrder> _upsertCashierBoardOrder(
   return [...list, row];
 }
 
+List<PosTableBill> applyCashierOpenTableBillPatches(
+  List<PosTableBill> current,
+  List<LocalCashierBoardPatch> patches,
+) {
+  if (patches.isEmpty) return current;
+  var list = List<PosTableBill>.from(current);
+  for (final patch in patches) {
+    final orderId = patch.orderId;
+    if (patch.removeOpenTableBill) {
+      list = list.where((o) => o.id != orderId).toList(growable: false);
+    }
+    final rowDto = patch.openTableBill;
+    if (rowDto != null) {
+      final row = posTableBillFromServerDto(rowDto);
+      final idx = list.indexWhere((o) => o.id == row.id);
+      if (idx >= 0) {
+        final next = List<PosTableBill>.from(list);
+        next[idx] = row;
+        list = next;
+      } else {
+        list = [...list, row];
+      }
+    }
+  }
+  return list;
+}
+
 LocalOpenTableBillDto? _parseOpenTableBillDto(dynamic raw) {
   if (raw is! Map<String, dynamic>) return null;
 
@@ -163,9 +193,23 @@ LocalOpenTableBillDto? _parseOpenTableBillDto(dynamic raw) {
   final total = totalRaw is num
       ? totalRaw.toDouble()
       : double.tryParse(totalRaw?.toString() ?? '') ?? 0.0;
+  final promoRaw = raw['promoDiscountAmount'] ?? raw['promo_discount_amount'];
+  final promoDiscount = promoRaw is num
+      ? promoRaw.toDouble()
+      : double.tryParse(promoRaw?.toString() ?? '');
+  final subtotalRaw = raw['subtotal'] ?? raw['order_subtotal'];
+  final subtotal = subtotalRaw is num
+      ? subtotalRaw.toDouble()
+      : double.tryParse(subtotalRaw?.toString() ?? '');
 
   final id = raw['id']?.toString() ?? '';
   if (id.isEmpty) return null;
+
+  final graceRaw =
+      raw['tableSessionGraceMinutes'] ?? raw['table_session_grace_minutes'];
+  final graceMin = graceRaw is int
+      ? graceRaw
+      : int.tryParse(graceRaw?.toString() ?? '');
 
   return LocalOpenTableBillDto(
     id: id,
@@ -185,6 +229,23 @@ LocalOpenTableBillDto? _parseOpenTableBillDto(dynamic raw) {
     isWaiterOrder: raw['isWaiterOrder'] == true || raw['is_waiter_order'] == true,
     isTakeaway: raw['isTakeaway'] == true || raw['is_takeaway'] == true,
     isCashierOrder: raw['isCashierOrder'] == true || raw['is_cashier_order'] == true,
+    subtotal: subtotal,
+    promoCode: raw['promoCode']?.toString() ?? raw['promo_code']?.toString(),
+    promoDiscountAmount: promoDiscount,
+    isPaid: raw['isPaid'] == true || raw['is_paid'] == true,
+    requiresPayment: raw['requiresPayment'] == true ||
+        raw['requires_payment'] == true ||
+        (raw['requiresPayment'] == null &&
+            raw['requires_payment'] == null &&
+            !(raw['isPaid'] == true || raw['is_paid'] == true) &&
+            total > 0),
+    handedOutAtIso:
+        raw['handedOutAt']?.toString() ?? raw['handed_out_at']?.toString(),
+    tableSessionPhase: raw['tableSessionPhase']?.toString() ??
+        raw['table_session_phase']?.toString(),
+    tableSessionEndsAtIso: raw['tableSessionEndsAt']?.toString() ??
+        raw['table_session_ends_at']?.toString(),
+    tableSessionGraceMinutes: graceMin,
     lines: lines,
   );
 }

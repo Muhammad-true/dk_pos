@@ -18,4 +18,21 @@ class MenuDisplayPreviewRepository {
     }
     return data;
   }
+
+  /// Запуск синхронизации ТВ на N минут (без фоновой нагрузки после истечения).
+  Future<void> triggerTvDisplaySync({
+    int durationMinutes = 10,
+    String groupId = 'wall',
+  }) async {
+    final res = await _http.post(
+      'api/local/tv-display-sync/reset',
+      body: {
+        'groupId': groupId,
+        'durationMinutes': durationMinutes.clamp(1, 60),
+      },
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(res.statusCode, res.body);
+    }
+  }
 }

@@ -9,6 +9,7 @@ class CartPaymentAdjustment extends Equatable {
     this.loyaltyDiscountAmount = 0,
     this.loyaltyCardNo = '',
     this.customerId,
+    this.visitCodeId,
   });
 
   final double baseTotal;
@@ -17,6 +18,7 @@ class CartPaymentAdjustment extends Equatable {
   final double loyaltyDiscountAmount;
   final String loyaltyCardNo;
   final int? customerId;
+  final int? visitCodeId;
 
   double get totalDiscount => promoDiscountAmount + loyaltyDiscountAmount;
 
@@ -33,5 +35,6 @@ class CartPaymentAdjustment extends Equatable {
         loyaltyDiscountAmount,
         loyaltyCardNo,
         customerId,
+        visitCodeId,
       ];
 }

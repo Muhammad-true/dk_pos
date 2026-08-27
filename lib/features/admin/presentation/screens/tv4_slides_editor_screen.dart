@@ -12,6 +12,7 @@ import 'package:dk_pos/features/admin/data/screen_page_item_row.dart';
 import 'package:dk_pos/features/admin/data/screens_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/upload_repository.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_tv_master_detail_layout.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/tv_media_guide.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/tv_video_bg_media_editor.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
 
@@ -678,6 +679,10 @@ class _Tv4SlidesEditorScreenState extends State<Tv4SlidesEditorScreen> {
                               l10n.adminTv4SlidesEditorSubtitle,
                               style: Theme.of(context).textTheme.bodyMedium,
                             ),
+                          ),
+                          const Padding(
+                            padding: EdgeInsets.symmetric(horizontal: 16),
+                            child: TvMediaHintCard(compact: true),
                           ),
                           Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 16),

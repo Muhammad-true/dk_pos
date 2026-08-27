@@ -1,33 +1,26 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:ui';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:screen_retriever/screen_retriever.dart';
-
+import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
+import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
 import 'package:dk_pos/features/cart/bloc/cart_state.dart';
 import 'package:dk_pos/features/menu/bloc/menu_bloc.dart';
-
-import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
-import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/features/menu/bloc/menu_state.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_content_config.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_pos_actions.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_sync_state.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_customer_display_panel.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:screen_retriever/screen_retriever.dart';
 
 enum CustomerDisplayOpenResult { opened, alreadyOpen, failed }
 
 /// Мгновенно отправить актуальную корзину на экран клиента.
-void scheduleCustomerDisplayCartSync(
-  BuildContext context, {
-  CartState? cart,
-}) {
+void scheduleCustomerDisplayCartSync(BuildContext context, {CartState? cart}) {
   final svc = CustomerDisplayWindowService.instance;
   if (!svc.isOpen) return;
   final liveCart = cart ?? context.read<CartBloc>().state;
@@ -65,7 +58,8 @@ class CustomerDisplayWindowService {
   bool get isMenuMode => _viewMode == CustomerDisplayViewMode.menu;
   CustomerDisplayThemeSnapshot get themeSnapshot => _themeSnapshot;
   CustomerDisplayContentConfig? _displayContentConfig;
-  CustomerDisplayContentConfig? get displayContentConfig => _displayContentConfig;
+  CustomerDisplayContentConfig? get displayContentConfig =>
+      _displayContentConfig;
   CartState? _lastCartForPulse;
   int _cartAddSeq = 0;
   Timer? _actionPollTimer;
@@ -79,7 +73,11 @@ class CustomerDisplayWindowService {
   CartState _lastSyncedCart = const CartState();
   List<int> _lastMenuPathIds = const [];
   double _catalogScrollOffset = 0;
+  double _catalogScrollProgress = 0;
+  int _catalogScrollIndex = 0;
+  double _categoryScrollProgress = 0;
   Timer? _scrollSaveDebounce;
+  Timer? _categoryScrollSaveDebounce;
   int _syncRevision = 0;
   Future<void> _persistChain = Future<void>.value();
   bool _flushScheduled = false;
@@ -87,6 +85,9 @@ class CustomerDisplayWindowService {
   CartState? _pendingCart;
   CustomerDisplayMenuSnapshot? _pendingMenuSnapshot;
   CustomerDisplayViewMode? _pendingViewMode;
+
+  /// Чек открытого счёта (режим оплаты без активной корзины кассы).
+  CustomerDisplayCartData? _explicitCartSnapshot;
   final File _syncFile = File(
     '${Directory.systemTemp.path}${Platform.pathSeparator}dk_pos_customer_display${Platform.pathSeparator}cart.json',
   );
@@ -130,12 +131,33 @@ class CustomerDisplayWindowService {
   }
 
   void noteCatalogScrollOffset(double offset) {
+    noteCatalogScroll(
+      offset: offset,
+      progress: _catalogScrollProgress,
+      firstVisibleIndex: _catalogScrollIndex,
+    );
+  }
+
+  /// Скролл каталога кассы → экран клиента (прогресс + индекс, не сырые пиксели).
+  void noteCatalogScroll({
+    required double offset,
+    required double progress,
+    required int firstVisibleIndex,
+  }) {
     if (!_sessionActive || _viewMode != CustomerDisplayViewMode.menu) return;
-    if ((offset - _catalogScrollOffset).abs() < 6) return;
+    final nextProgress = progress.clamp(0.0, 1.0);
+    final nextIndex = firstVisibleIndex < 0 ? 0 : firstVisibleIndex;
+    final offsetChanged = (offset - _catalogScrollOffset).abs() >= 4;
+    final progressChanged =
+        (nextProgress - _catalogScrollProgress).abs() >= 0.008;
+    final indexChanged = nextIndex != _catalogScrollIndex;
+    if (!offsetChanged && !progressChanged && !indexChanged) return;
     _catalogScrollOffset = offset;
+    _catalogScrollProgress = nextProgress;
+    _catalogScrollIndex = nextIndex;
     _scrollSaveDebounce?.cancel();
     _scrollSaveDebounce = Timer(
-      const Duration(milliseconds: 100),
+      const Duration(milliseconds: 50),
       () => unawaited(_persistCatalogScroll()),
     );
   }
@@ -144,6 +166,35 @@ class CustomerDisplayWindowService {
     if (!_sessionActive || _menuSnapshot == null) return;
     final menu = _menuSnapshot!.copyWith(
       catalogScrollOffset: _catalogScrollOffset,
+      catalogScrollProgress: _catalogScrollProgress,
+      catalogScrollIndex: _catalogScrollIndex,
+    );
+    _menuSnapshot = menu;
+    await _schedulePersist(
+      cart: _lastSyncedCart,
+      menuSnapshot: menu,
+      viewMode: _viewMode,
+    );
+  }
+
+  /// Категории могут иметь другую высоту на кассе и у клиента, поэтому
+  /// передаём нормализованную позицию, а не количество пикселей.
+  void noteCategoryScroll({required double progress}) {
+    if (!_sessionActive || _viewMode != CustomerDisplayViewMode.menu) return;
+    final nextProgress = progress.clamp(0.0, 1.0);
+    if ((nextProgress - _categoryScrollProgress).abs() < 0.012) return;
+    _categoryScrollProgress = nextProgress;
+    _categoryScrollSaveDebounce?.cancel();
+    _categoryScrollSaveDebounce = Timer(
+      const Duration(milliseconds: 70),
+      () => unawaited(_persistCategoryScroll()),
+    );
+  }
+
+  Future<void> _persistCategoryScroll() async {
+    if (!_sessionActive || _menuSnapshot == null) return;
+    final menu = _menuSnapshot!.copyWith(
+      categoryScrollProgress: _categoryScrollProgress,
     );
     _menuSnapshot = menu;
     await _schedulePersist(
@@ -389,7 +440,9 @@ class CustomerDisplayWindowService {
       await window.show();
       return true;
     } catch (e, stack) {
-      debugPrint('CustomerDisplayWindowService._tryShowExistingWindow: $e\n$stack');
+      debugPrint(
+        'CustomerDisplayWindowService._tryShowExistingWindow: $e\n$stack',
+      );
       _window = null;
       _sessionActive = false;
       openNotifier.value = false;
@@ -414,8 +467,7 @@ class CustomerDisplayWindowService {
     required CartState cart,
     required MenuState menu,
     CustomerDisplayContentConfig? config,
-  }) =>
-      showMenuMode(cart: cart, menu: menu, config: config);
+  }) => showMenuMode(cart: cart, menu: menu, config: config);
 
   /// Обновить корзину на уже открытом экране клиента (не открывает окно само).
   Future<void> syncCart(CartState cart) async {
@@ -438,11 +490,15 @@ class CustomerDisplayWindowService {
     if (menu.loading) return;
 
     final effectivePath = pathIds ?? menu.pathIds;
-    final effectiveMenu =
-        pathIds != null ? menu.copyWith(pathIds: pathIds) : menu;
+    final effectiveMenu = pathIds != null
+        ? menu.copyWith(pathIds: pathIds)
+        : menu;
     final pathChanged = !_listEquals(_lastMenuPathIds, effectivePath);
     if (pathChanged) {
       _catalogScrollOffset = 0;
+      _catalogScrollProgress = 0;
+      _catalogScrollIndex = 0;
+      _categoryScrollProgress = 0;
       _lastMenuPathIds = List<int>.from(effectivePath);
       _scrollSaveDebounce?.cancel();
       _scrollSaveDebounce = null;
@@ -450,6 +506,9 @@ class CustomerDisplayWindowService {
     final snapshot = CustomerDisplayMenuSnapshot.fromMenuState(
       effectiveMenu,
       catalogScrollOffset: _catalogScrollOffset,
+      catalogScrollProgress: _catalogScrollProgress,
+      catalogScrollIndex: _catalogScrollIndex,
+      categoryScrollProgress: _categoryScrollProgress,
     );
     _menuSnapshot = snapshot;
     _lastSyncedCart = cart;
@@ -481,6 +540,9 @@ class CustomerDisplayWindowService {
   }) async {
     _viewMode = CustomerDisplayViewMode.menu;
     _catalogScrollOffset = 0;
+    _catalogScrollProgress = 0;
+    _catalogScrollIndex = 0;
+    _categoryScrollProgress = 0;
     _lastMenuPathIds = List<int>.from(menu.pathIds);
     _menuSnapshot = CustomerDisplayMenuSnapshot.fromMenuState(menu);
     if (config != null) _displayContentConfig = config;
@@ -492,8 +554,21 @@ class CustomerDisplayWindowService {
     if (!_isSupported) return;
     if (AppConfig.isCustomerDisplayWindowDisabled) return;
     if (!_sessionActive) return;
+    _explicitCartSnapshot = null;
     _viewMode = CustomerDisplayViewMode.payment;
     await _saveCartToFile(cart);
+  }
+
+  /// Режим оплаты по открытому счёту из «Счета на оплату».
+  Future<void> showPaymentModeForBillData(
+    CustomerDisplayCartData cartData,
+  ) async {
+    if (!_isSupported) return;
+    if (AppConfig.isCustomerDisplayWindowDisabled) return;
+    if (!_sessionActive) return;
+    _explicitCartSnapshot = cartData;
+    _viewMode = CustomerDisplayViewMode.payment;
+    await _saveCartToFile(_lastSyncedCart);
   }
 
   /// После оформления: снова меню с приветствием (без отдельного idle-режима).
@@ -504,8 +579,12 @@ class CustomerDisplayWindowService {
     if (!_isSupported) return;
     if (AppConfig.isCustomerDisplayWindowDisabled) return;
     if (!_sessionActive) return;
+    _explicitCartSnapshot = null;
     _viewMode = CustomerDisplayViewMode.menu;
     _catalogScrollOffset = 0;
+    _catalogScrollProgress = 0;
+    _catalogScrollIndex = 0;
+    _categoryScrollProgress = 0;
     _lastMenuPathIds = List<int>.from(menu.pathIds);
     _menuSnapshot = CustomerDisplayMenuSnapshot.fromMenuState(menu);
     await _saveCartToFile(cart);
@@ -551,13 +630,19 @@ class CustomerDisplayWindowService {
   Future<void> close() async {
     _markClosed();
     _viewMode = CustomerDisplayViewMode.menu;
+    _explicitCartSnapshot = null;
     _menuSnapshot = null;
     _lastCartForPulse = null;
     _cartAddSeq = 0;
     _catalogScrollOffset = 0;
+    _catalogScrollProgress = 0;
+    _catalogScrollIndex = 0;
+    _categoryScrollProgress = 0;
     _lastMenuPathIds = const [];
     _scrollSaveDebounce?.cancel();
     _scrollSaveDebounce = null;
+    _categoryScrollSaveDebounce?.cancel();
+    _categoryScrollSaveDebounce = null;
     final window = _window;
     _window = null;
     _singleDisplayPreviewMode = false;
@@ -592,7 +677,7 @@ class CustomerDisplayWindowService {
           .map(
             (line) => CustomerDisplayLineData(
               lineKey: line.lineKey,
-              name: line.item.name,
+              name: line.displayName,
               quantity: line.quantity,
               lineTotal: line.lineTotal,
             ),
@@ -611,7 +696,7 @@ class CustomerDisplayWindowService {
       if (prevLine == null || line.quantity > prevLine.quantity) {
         return CustomerDisplayCartAddPulse(
           seq: ++_cartAddSeq,
-          name: line.item.name,
+          name: line.displayName,
           imagePath: line.item.imagePath,
         );
       }
@@ -729,7 +814,7 @@ class CustomerDisplayWindowService {
         'apiOrigin': AppConfig.apiOrigin,
         'viewMode': viewMode.name,
         'theme': _themePayload(),
-        'cart': _snapshotFromCart(cart).toJson(),
+        'cart': (_explicitCartSnapshot ?? _snapshotFromCart(cart)).toJson(),
         'menu': menuSnapshot?.toJson(),
         'displayConfig': _displayContentConfig?.toJson(),
         if (cartAddPulse != null) 'cartAddPulse': cartAddPulse.toJson(),

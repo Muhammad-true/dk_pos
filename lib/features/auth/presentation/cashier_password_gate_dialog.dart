@@ -1,15 +1,17 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/auth/data/auth_repository.dart';
+import 'package:dk_pos/features/pos/presentation/widgets/pos_numeric_keypad.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
 /// Запрос пароля кассира/админа перед чувствительными экранами.
 Future<bool> showCashierPasswordGate(
   BuildContext context, {
   String title = 'Введите пароль',
   String? subtitle,
+  bool withKeypad = false,
 }) async {
   final user = context.read<AuthBloc>().state.user;
   if (user == null) return false;
@@ -24,6 +26,7 @@ Future<bool> showCashierPasswordGate(
       subtitle: subtitle,
       initialUsername: user.username,
       lockUsername: role == 'cashier',
+      withKeypad: withKeypad,
     ),
   );
   return ok == true;
@@ -35,21 +38,23 @@ class _CashierPasswordGateDialog extends StatefulWidget {
     required this.initialUsername,
     required this.lockUsername,
     this.subtitle,
+    this.withKeypad = false,
   });
 
   final String title;
   final String? subtitle;
   final String initialUsername;
   final bool lockUsername;
+  final bool withKeypad;
 
   @override
   State<_CashierPasswordGateDialog> createState() =>
       _CashierPasswordGateDialogState();
 }
 
-class _CashierPasswordGateDialogState extends State<_CashierPasswordGateDialog> {
+class _CashierPasswordGateDialogState
+    extends State<_CashierPasswordGateDialog> {
   final _passwordCtrl = TextEditingController();
-  final _passwordFocus = FocusNode();
   late String _username;
   bool _obscure = true;
   bool _loading = false;
@@ -59,16 +64,40 @@ class _CashierPasswordGateDialogState extends State<_CashierPasswordGateDialog> 
   void initState() {
     super.initState();
     _username = widget.initialUsername;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _passwordFocus.requestFocus();
-    });
   }
 
   @override
   void dispose() {
     _passwordCtrl.dispose();
-    _passwordFocus.dispose();
     super.dispose();
+  }
+
+  void _appendDigit(String d) {
+    if (_loading) return;
+    if (!RegExp(r'^[0-9]$').hasMatch(d)) return;
+    if (_passwordCtrl.text.length >= 12) return;
+    setState(() {
+      _error = null;
+      _passwordCtrl.text = '${_passwordCtrl.text}$d';
+    });
+  }
+
+  void _backspace() {
+    if (_loading) return;
+    final t = _passwordCtrl.text;
+    if (t.isEmpty) return;
+    setState(() {
+      _error = null;
+      _passwordCtrl.text = t.substring(0, t.length - 1);
+    });
+  }
+
+  void _clear() {
+    if (_loading) return;
+    setState(() {
+      _error = null;
+      _passwordCtrl.clear();
+    });
   }
 
   Future<void> _submit() async {
@@ -83,9 +112,9 @@ class _CashierPasswordGateDialogState extends State<_CashierPasswordGateDialog> 
     });
     try {
       await context.read<AuthRepository>().verifyPassword(
-            password: password,
-            username: widget.lockUsername ? widget.initialUsername : _username,
-          );
+        password: password,
+        username: widget.lockUsername ? widget.initialUsername : _username,
+      );
       if (!mounted) return;
       Navigator.of(context).pop(true);
     } on ApiException catch (e) {
@@ -95,7 +124,6 @@ class _CashierPasswordGateDialogState extends State<_CashierPasswordGateDialog> 
         _loading = false;
       });
       _passwordCtrl.clear();
-      _passwordFocus.requestFocus();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -116,92 +144,102 @@ class _CashierPasswordGateDialogState extends State<_CashierPasswordGateDialog> 
       title: Text(widget.title),
       content: SizedBox(
         width: 360,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (widget.subtitle != null) ...[
-              Text(
-                widget.subtitle!,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (widget.subtitle != null) ...[
+                Text(
+                  widget.subtitle!,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-            ],
-            if (!widget.lockUsername)
-              FutureBuilder(
-                future: context.read<AuthRepository>().fetchLoginUsers(),
-                builder: (context, snap) {
-                  final users = (snap.data ?? const [])
-                      .where(
-                        (u) =>
-                            u.role == 'cashier' || u.role == 'admin',
-                      )
-                      .toList(growable: false);
-                  if (users.isEmpty) {
-                    return TextField(
-                      readOnly: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Кассир',
-                      ),
-                      controller: TextEditingController(text: _username),
-                    );
-                  }
-                  return DropdownButtonFormField<String>(
-                    value: users.any((u) => u.username == _username)
-                        ? _username
-                        : users.first.username,
-                    dropdownColor: scheme.surfaceContainerHigh,
-                    style: fieldStyle,
-                    decoration: const InputDecoration(labelText: 'Кассир'),
-                    items: users
-                        .map(
-                          (u) => DropdownMenuItem(
-                            value: u.username,
-                            child: Text(
-                              u.username,
-                              style: fieldStyle,
+                const SizedBox(height: 12),
+              ],
+              if (!widget.lockUsername)
+                FutureBuilder(
+                  future: context.read<AuthRepository>().fetchLoginUsers(),
+                  builder: (context, snap) {
+                    final users = (snap.data ?? const [])
+                        .where((u) => u.role == 'cashier' || u.role == 'admin')
+                        .toList(growable: false);
+                    if (users.isEmpty) {
+                      return TextField(
+                        readOnly: true,
+                        decoration: const InputDecoration(labelText: 'Кассир'),
+                        controller: TextEditingController(text: _username),
+                      );
+                    }
+                    return DropdownButtonFormField<String>(
+                      initialValue: users.any((u) => u.username == _username)
+                          ? _username
+                          : users.first.username,
+                      dropdownColor: scheme.surfaceContainerHigh,
+                      style: fieldStyle,
+                      decoration: const InputDecoration(labelText: 'Кассир'),
+                      items: users
+                          .map(
+                            (u) => DropdownMenuItem(
+                              value: u.username,
+                              child: Text(u.username, style: fieldStyle),
                             ),
-                          ),
-                        )
-                        .toList(growable: false),
-                    onChanged: _loading
-                        ? null
-                        : (v) {
-                            if (v == null) return;
-                            setState(() => _username = v);
-                          },
-                  );
-                },
-              )
-            else
+                          )
+                          .toList(growable: false),
+                      onChanged: _loading
+                          ? null
+                          : (v) {
+                              if (v == null) return;
+                              setState(() => _username = v);
+                            },
+                    );
+                  },
+                )
+              else
+                TextField(
+                  readOnly: true,
+                  decoration: const InputDecoration(labelText: 'Кассир'),
+                  controller: TextEditingController(text: _username),
+                ),
+              const SizedBox(height: 12),
               TextField(
-                readOnly: true,
-                decoration: const InputDecoration(labelText: 'Кассир'),
-                controller: TextEditingController(text: _username),
-              ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _passwordCtrl,
-              focusNode: _passwordFocus,
-              obscureText: _obscure,
-              enabled: !_loading,
-              style: fieldStyle,
-              textInputAction: TextInputAction.done,
-              onSubmitted: (_) => _submit(),
-              decoration: InputDecoration(
-                labelText: 'Пароль',
-                errorText: _error,
-                suffixIcon: IconButton(
-                  onPressed: () => setState(() => _obscure = !_obscure),
-                  icon: Icon(
-                    _obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+                controller: _passwordCtrl,
+                obscureText: _obscure,
+                enabled: !_loading,
+                style: fieldStyle,
+                keyboardType: widget.withKeypad
+                    ? TextInputType.none
+                    : TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _submit(),
+                decoration: InputDecoration(
+                  labelText: 'Пароль / PIN',
+                  errorText: _error,
+                  suffixIcon: IconButton(
+                    onPressed: () => setState(() => _obscure = !_obscure),
+                    icon: Icon(
+                      _obscure
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+              if (widget.withKeypad) ...[
+                const SizedBox(height: 10),
+                PosNumericKeypad(
+                  showDot: false,
+                  presetLabel: 'OK',
+                  onDigit: _appendDigit,
+                  onBackspace: _backspace,
+                  onPreset: _loading ? null : _submit,
+                  onClear: _clear,
+                ),
+              ],
+            ],
+          ),
         ),
       ),
       actions: [

@@ -2,6 +2,7 @@ import 'package:dk_pos/core/utils/cart_line_key.dart';
 import 'package:dk_pos/core/utils/order_line_key.dart';
 import 'package:dk_pos/features/cart/bloc/cart_state.dart';
 import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
+import 'package:dk_pos/shared/models/pos_menu_models.dart';
 import 'package:dk_pos/shared/shared.dart';
 
 /// Результат подстановки открытого счёта в корзину (и база для дельты на сервер).
@@ -67,11 +68,12 @@ OpenBillHydrateResult hydrateOpenTableBillIntoCartLines({
       name: bl.name.trim().isNotEmpty ? bl.name : template.name,
     );
     final keyFromServer = bl.lineKey?.trim();
+    final mods = bl.modifiers;
     final rawKey = keyFromServer != null && keyFromServer.isNotEmpty
         ? keyFromServer
         : computeCartLineKey(
             menuItemId: item.id,
-            modifiers: const [],
+            modifiers: mods,
             unitPrice: up,
             catalogBasePrice: template.baseCatalogPrice,
           );
@@ -90,7 +92,7 @@ OpenBillHydrateResult hydrateOpenTableBillIntoCartLines({
         modifiers: prev.modifiers,
       );
     } else {
-      lines[key] = CartLine(item: item, quantity: bl.quantity);
+      lines[key] = CartLine(item: item, quantity: bl.quantity, modifiers: mods);
     }
   }
 

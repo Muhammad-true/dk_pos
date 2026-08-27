@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:dk_pos/core/utils/order_line_key.dart';
 import 'package:dk_pos/features/kitchen_board/presentation/kitchen_ui_preferences.dart';
 import 'package:dk_pos/features/kitchen_board/presentation/widgets/kitchen_item_chef_status_chip.dart';
+import 'package:dk_pos/features/kitchen_board/presentation/widgets/kitchen_order_header_labels.dart';
 import 'package:dk_pos/features/kitchen_board/presentation/widgets/kitchen_order_number_badge.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
 import 'package:dk_pos/features/orders/presentation/pos_queue_layout.dart';
@@ -68,8 +70,6 @@ class KitchenActiveOrderCard extends StatefulWidget {
     required this.onColorOf,
     required this.uiScale,
     required this.followUpSettings,
-    required this.displayNumber,
-    required this.orderTypeBadge,
     required this.onOrderAction,
   });
 
@@ -83,8 +83,6 @@ class KitchenActiveOrderCard extends StatefulWidget {
   final Color Function(Color background) onColorOf;
   final KitchenUiScale uiScale;
   final KitchenFollowUpSettings followUpSettings;
-  final String displayNumber;
-  final String? orderTypeBadge;
   final Future<void> Function({
     required LocalKitchenActorProfile actor,
     required String action,
@@ -127,7 +125,10 @@ class _KitchenActiveOrderCardState extends State<KitchenActiveOrderCard> {
         ((rawFollowUp && widget.followUpSettings.collapseReadyItems) ||
             isLargeOrder);
     final activeQty = activeItems.fold<int>(0, (sum, e) => sum + e.quantity);
-    final hasPending = _kitchenOrderHasPendingItems(stationItems);
+    final actionScopeItems = kitchenOrderActionScopeItems(stationItems);
+    final hasPending = _kitchenOrderHasPendingItems(actionScopeItems);
+    final displayItemCount =
+        rawFollowUp ? activeItems.length : stationItems.length;
 
     final orderActionControls = _buildOrderActionControls(
       context,
@@ -137,11 +138,11 @@ class _KitchenActiveOrderCardState extends State<KitchenActiveOrderCard> {
       actionMinHeight: actionMinHeight,
       actionButtonVerticalPadding: actionButtonVerticalPadding,
       hasPending: hasPending,
-      stationItems: stationItems,
+      stationItems: actionScopeItems,
     );
 
     final primaryAccepted = _kitchenOrderPrimaryAcceptedActor(
-      items: stationItems,
+      items: activeItems,
       actors: widget.actors,
     );
     final orderChefAccent =
@@ -150,6 +151,7 @@ class _KitchenActiveOrderCardState extends State<KitchenActiveOrderCard> {
     final entries = _buildKitchenCardEntries(
       activeItems: activeItems,
       readyItems: readyItems,
+      showFollowUpBanner: rawFollowUp,
       showCardHighlight: showCardHighlight,
       showLineHighlight: showLineHighlight,
       showStationHeaders: _groupKitchenItemsByStation(activeItems).length > 1,
@@ -220,15 +222,14 @@ class _KitchenActiveOrderCardState extends State<KitchenActiveOrderCard> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _KitchenOrderCardHeader(
-            displayNumber: widget.displayNumber,
-            orderTypeBadge: widget.orderTypeBadge,
+            order: order,
             tone: showCardHighlight ? Colors.deepOrange.shade700 : tone,
             uiScale: uiScale,
             showCardHighlight: showCardHighlight,
             activeQty: activeQty,
-            totalItems: stationItems.length,
+            totalItems: displayItemCount,
             isLargeOrder: isLargeOrder,
-            itemsSummary: widget.l10n.expeditorItemsLine(stationItems.length),
+            itemsSummary: widget.l10n.expeditorItemsLine(displayItemCount),
             primaryAccepted: primaryAccepted,
             hasPending: hasPending,
             acceptColorOf: widget.acceptColorOf,
@@ -305,7 +306,7 @@ class _KitchenActiveOrderCardState extends State<KitchenActiveOrderCard> {
             action: 'ready',
             color: widget.readyColorOf(actor),
             icon: Icons.check_circle_rounded,
-            actionLabel: 'Готово',
+            actionLabel: 'Готова/выдать',
           ),
         );
       }
@@ -316,8 +317,7 @@ class _KitchenActiveOrderCardState extends State<KitchenActiveOrderCard> {
 
 class _KitchenOrderCardHeader extends StatelessWidget {
   const _KitchenOrderCardHeader({
-    required this.displayNumber,
-    required this.orderTypeBadge,
+    required this.order,
     required this.tone,
     required this.uiScale,
     required this.showCardHighlight,
@@ -331,8 +331,7 @@ class _KitchenOrderCardHeader extends StatelessWidget {
     required this.actorLabel,
   });
 
-  final String displayNumber;
-  final String? orderTypeBadge;
+  final LocalKitchenQueueOrder order;
   final Color tone;
   final KitchenUiScale uiScale;
   final bool showCardHighlight;
@@ -349,109 +348,77 @@ class _KitchenOrderCardHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          width: PosQueueLayout.iconBox(context),
-          height: PosQueueLayout.iconBox(context),
-          decoration: BoxDecoration(
-            color: tone.withValues(alpha: 0.14),
-            borderRadius: BorderRadius.circular(PosQueueLayout.iconRadius(context)),
-          ),
-          child: Icon(
-            Icons.restaurant_rounded,
-            color: tone,
-            size: PosQueueLayout.iconInner(context),
-          ),
+        KitchenOrderNumberBadge(
+          displayNumber: kitchenOrderDisplayNumber(order),
+          tone: tone,
+          textScale: uiScale.itemTextScale,
+          orderTypeLabel: kitchenOrderTypeHeadlineRu(order),
+          tableHeadline: kitchenTableHeadlineRu(order),
         ),
-        SizedBox(width: PosQueueLayout.rowGutter(context)),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              KitchenOrderNumberBadge(
-                displayNumber: displayNumber,
-                tone: tone,
-                textScale: uiScale.itemTextScale,
+        if (showCardHighlight) ...[
+          const SizedBox(height: 10),
+          Chip(
+            visualDensity: VisualDensity.compact,
+            backgroundColor: Colors.deepOrange.withValues(alpha: 0.18),
+            side: BorderSide(color: Colors.deepOrange.shade400),
+            label: Text(
+              'Дозаказ',
+              style: theme.textTheme.labelLarge?.copyWith(
+                color: Colors.deepOrange.shade900,
+                fontWeight: FontWeight.w800,
+                fontSize: 15 * uiScale.itemTextScale,
               ),
-              if (showCardHighlight) ...[
-                const SizedBox(height: 8),
-                Chip(
-                  visualDensity: VisualDensity.compact,
-                  backgroundColor: Colors.deepOrange.withValues(alpha: 0.18),
-                  side: BorderSide(color: Colors.deepOrange.shade400),
-                  label: Text(
-                    'Дозаказ',
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      color: Colors.deepOrange.shade900,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  avatar: Icon(
-                    Icons.add_shopping_cart_rounded,
-                    size: 16,
-                    color: Colors.deepOrange.shade700,
-                  ),
-                ),
-              ],
-              SizedBox(height: PosQueueLayout.shortestSide(context) < 600 ? 8 : 10),
-              Row(
-                children: [
-                  Icon(
-                    showCardHighlight
-                        ? Icons.restaurant_menu_rounded
-                        : Icons.check_circle_rounded,
-                    size: PosQueueLayout.metaIcon(context),
-                    color: showCardHighlight
-                        ? Colors.deepOrange.shade700
-                        : Colors.green.shade600,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      showCardHighlight
-                          ? 'Готовить: $activeQty ${_kitchenQtyLabelRu(activeQty)}'
-                          : isLargeOrder
-                              ? 'Большой заказ · $totalItems поз.'
-                              : itemsSummary,
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        color: showCardHighlight
-                            ? Colors.deepOrange.shade900
-                            : theme.colorScheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w700,
-                        fontSize:
-                            PosQueueLayout.shortestSide(context) < 600 ? 13 : null,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              if (orderTypeBadge != null) ...[
-                const SizedBox(height: 6),
-                Chip(
-                  visualDensity: VisualDensity.compact,
-                  label: Text(orderTypeBadge!),
-                  avatar: Icon(
-                    orderTypeBadge == 'Доставка'
-                        ? Icons.delivery_dining_rounded
-                        : Icons.shopping_bag_outlined,
-                    size: 16,
-                    color: tone,
-                  ),
-                ),
-              ],
-              if (primaryAccepted != null && !hasPending && actorLabel != null) ...[
-                const SizedBox(height: 8),
-                KitchenItemChefStatusChip(
-                  chefColor: acceptColorOf(primaryAccepted!),
-                  icon: Icons.pan_tool_alt_rounded,
-                  label: 'Заказ принят · $actorLabel',
-                ),
-              ],
-            ],
+            ),
+            avatar: Icon(
+              Icons.add_shopping_cart_rounded,
+              size: 18,
+              color: Colors.deepOrange.shade700,
+            ),
           ),
+        ],
+        SizedBox(height: PosQueueLayout.shortestSide(context) < 600 ? 10 : 12),
+        Row(
+          children: [
+            Icon(
+              showCardHighlight
+                  ? Icons.restaurant_menu_rounded
+                  : Icons.check_circle_rounded,
+              size: PosQueueLayout.metaIcon(context) * uiScale.itemTextScale,
+              color: showCardHighlight
+                  ? Colors.deepOrange.shade700
+                  : Colors.green.shade600,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                showCardHighlight
+                    ? 'Готовить: $activeQty ${_kitchenQtyLabelRu(activeQty)}'
+                    : isLargeOrder
+                        ? 'Большой заказ · $totalItems поз.'
+                        : itemsSummary,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  color: showCardHighlight
+                      ? Colors.deepOrange.shade900
+                      : theme.colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w700,
+                  fontSize: (PosQueueLayout.shortestSide(context) < 600 ? 14 : 16) *
+                      uiScale.itemTextScale,
+                ),
+              ),
+            ),
+          ],
         ),
+        if (primaryAccepted != null && !hasPending && actorLabel != null) ...[
+          const SizedBox(height: 10),
+          KitchenItemChefStatusChip(
+            chefColor: acceptColorOf(primaryAccepted!),
+            icon: Icons.pan_tool_alt_rounded,
+            label: 'Заказ принят · $actorLabel',
+          ),
+        ],
       ],
     );
   }
@@ -954,13 +921,14 @@ class _KitchenActorActionButton extends StatelessWidget {
 List<_KitchenListEntry> _buildKitchenCardEntries({
   required List<LocalKitchenQueueItem> activeItems,
   required List<LocalKitchenQueueItem> readyItems,
+  required bool showFollowUpBanner,
   required bool showCardHighlight,
   required bool showLineHighlight,
   required bool showStationHeaders,
   required bool showReadyCollapsed,
 }) {
   final entries = <_KitchenListEntry>[];
-  if (showCardHighlight) {
+  if (showFollowUpBanner) {
     entries.add(const _KitchenListEntry.followUpBanner());
   }
 
@@ -1097,6 +1065,9 @@ bool _kitchenItemIsReady(LocalKitchenQueueItem item) {
 }
 
 bool _kitchenOrderIsFollowUp(List<LocalKitchenQueueItem> items) {
+  if (items.any((e) => isFollowUpOrderLineKey(e.lineKey ?? ''))) {
+    return true;
+  }
   if (items.any(_kitchenItemIsReady) && items.any(_kitchenItemNeedsWork)) {
     return true;
   }
@@ -1107,14 +1078,126 @@ bool _kitchenOrderIsFollowUp(List<LocalKitchenQueueItem> items) {
   return hasPending && hasAccepted;
 }
 
+String _kitchenItemBaseKey(LocalKitchenQueueItem item) =>
+    baseOrderLineKey(item.lineKey ?? item.menuItemId);
+
+List<LocalKitchenQueueItem> _consolidateKitchenItemsByProduct(
+  List<LocalKitchenQueueItem> items,
+) {
+  if (items.length <= 1) return items;
+  final merged = <String, LocalKitchenQueueItem>{};
+  final order = <String>[];
+  for (final item in items) {
+    final groupKey =
+        '${_kitchenItemBaseKey(item)}|${item.menuItemId}|${item.kitchenStationId ?? ''}';
+    final prev = merged[groupKey];
+    if (prev == null) {
+      merged[groupKey] = item;
+      order.add(groupKey);
+      continue;
+    }
+    final pending =
+        item.kitchenLineStatus.toLowerCase() == 'pending' ||
+        prev.kitchenLineStatus.toLowerCase() == 'pending';
+    merged[groupKey] = LocalKitchenQueueItem(
+      menuItemId: prev.menuItemId,
+      name: prev.name,
+      quantity: prev.quantity + item.quantity,
+      lineKey: prev.lineKey ?? item.lineKey,
+      saleMeasure: prev.saleMeasure ?? item.saleMeasure,
+      actualQty: prev.actualQty ?? item.actualQty,
+      defaultSaleQty: prev.defaultSaleQty ?? item.defaultSaleQty,
+      kitchenLineStatus: pending ? 'pending' : prev.kitchenLineStatus,
+      kitchenAcceptedByUserId: pending ? null : prev.kitchenAcceptedByUserId,
+      kitchenAcceptedByUsername: pending ? null : prev.kitchenAcceptedByUsername,
+      kitchenAcceptedAtIso: pending ? null : prev.kitchenAcceptedAtIso,
+      kitchenReadyByUserId: prev.kitchenReadyByUserId,
+      kitchenReadyByUsername: prev.kitchenReadyByUsername,
+      kitchenReadyAtIso: prev.kitchenReadyAtIso,
+      kitchenStationId: prev.kitchenStationId,
+      kitchenStationName: prev.kitchenStationName,
+    );
+  }
+  return [for (final key in order) merged[key]!];
+}
+
+List<LocalKitchenQueueItem> _kitchenChainWorkItems(
+  List<LocalKitchenQueueItem> chain,
+) {
+  final chainHasLockedBase = chain.any((e) {
+    final st = e.kitchenLineStatus.toLowerCase();
+    return (st == 'accepted' || st == 'ready') &&
+        !isFollowUpOrderLineKey(e.lineKey ?? '');
+  });
+
+  if (chainHasLockedBase) {
+    final fuWork = chain
+        .where(
+          (e) =>
+              isFollowUpOrderLineKey(e.lineKey ?? '') && _kitchenItemNeedsWork(e),
+        )
+        .toList(growable: false);
+    // Пока есть незакрытый дозаказ — работаем только по нему.
+    if (fuWork.isNotEmpty) {
+      return _consolidateKitchenItemsByProduct(fuWork);
+    }
+    // Дозаказ уже ready, база ещё accepted → иначе action scope пустой
+    // и пропадают «Принять»/«Готово», заказ зависает в preparing.
+    final baseStillOpen = chain
+        .where(
+          (e) =>
+              !isFollowUpOrderLineKey(e.lineKey ?? '') &&
+              _kitchenItemNeedsWork(e),
+        )
+        .toList(growable: false);
+    return _consolidateKitchenItemsByProduct(baseStillOpen);
+  }
+
+  final open = chain.where(_kitchenItemNeedsWork).toList(growable: false);
+  return _consolidateKitchenItemsByProduct(open);
+}
+
+List<LocalKitchenQueueItem> _kitchenOrderFollowUpActiveItems(
+  List<LocalKitchenQueueItem> items,
+) {
+  final hasFollowUpLines =
+      items.any((e) => isFollowUpOrderLineKey(e.lineKey ?? ''));
+  final List<LocalKitchenQueueItem> active;
+  if (hasFollowUpLines) {
+    final groups = <String, List<LocalKitchenQueueItem>>{};
+    for (final item in items) {
+      final key = _kitchenItemBaseKey(item);
+      groups.putIfAbsent(key, () => []).add(item);
+    }
+    active = [
+      for (final chain in groups.values) ..._kitchenChainWorkItems(chain),
+    ];
+  } else {
+    // Дозаказ без ~fu~: скрываем уже готовый первый круг, но оставляем принятое
+    // (иначе после «Принять» список пустеет и кнопка «Готово» не появляется).
+    active = items
+        .where((e) => !_kitchenItemIsReady(e) && _kitchenItemNeedsWork(e))
+        .toList(growable: false);
+  }
+  _sortKitchenActiveItems(active);
+  return active;
+}
+
 List<LocalKitchenQueueItem> _kitchenOrderActiveItems(List<LocalKitchenQueueItem> items) {
+  if (_kitchenOrderIsFollowUp(items)) {
+    return _kitchenOrderFollowUpActiveItems(items);
+  }
   final active = items.where(_kitchenItemNeedsWork).toList(growable: false);
-  active.sort((a, b) {
+  _sortKitchenActiveItems(active);
+  return active;
+}
+
+void _sortKitchenActiveItems(List<LocalKitchenQueueItem> items) {
+  items.sort((a, b) {
     final aPending = a.kitchenLineStatus.toLowerCase() == 'pending' ? 0 : 1;
     final bPending = b.kitchenLineStatus.toLowerCase() == 'pending' ? 0 : 1;
     return aPending.compareTo(bPending);
   });
-  return active;
 }
 
 List<LocalKitchenQueueItem> _kitchenOrderReadyItems(List<LocalKitchenQueueItem> items) {
@@ -1130,6 +1213,13 @@ String _kitchenQtyLabelRu(int qty) {
   return 'позиций';
 }
 
+/// Позиции, по которым повар жмёт «Принять» / «Готово» (текущий круг дозаказа).
+List<LocalKitchenQueueItem> kitchenOrderActionScopeItems(
+  List<LocalKitchenQueueItem> items,
+) {
+  return _kitchenOrderActiveItems(items);
+}
+
 List<LocalKitchenActorProfile> _kitchenOrderReadyActors({
   required List<LocalKitchenQueueItem> items,
   required List<LocalKitchenActorProfile> actors,
@@ -1141,7 +1231,19 @@ List<LocalKitchenActorProfile> _kitchenOrderReadyActors({
       if (id != null && id > 0) ids.add(id);
     }
   }
-  return actors.where((a) => ids.contains(a.id)).toList(growable: false);
+  if (ids.isNotEmpty) {
+    final matched =
+        actors.where((a) => ids.contains(a.id)).toList(growable: false);
+    if (matched.isNotEmpty) return matched;
+  }
+  final hasAccepted =
+      items.any((e) => e.kitchenLineStatus.toLowerCase() == 'accepted');
+  // Есть принятое, но повар не в списке кнопок / id не совпал —
+  // всё равно даём «Готово», иначе заказ зависает без действий.
+  if (hasAccepted && actors.isNotEmpty) {
+    return actors;
+  }
+  return const [];
 }
 
 LocalKitchenActorProfile? _kitchenOrderPrimaryAcceptedActor({

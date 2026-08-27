@@ -152,7 +152,7 @@ void _onServiceStart(ServiceInstance service) async {
     lastForegroundStatus: '',
   );
 
-  Timer.periodic(const Duration(seconds: 10), (_) async {
+  Timer.periodic(const Duration(seconds: 35), (_) async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString(KitchenBackgroundService._kToken)?.trim() ?? '';
     if (token.isEmpty) {

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'package:dk_pos/core/error/api_exception.dart';
@@ -8,21 +8,7 @@ import 'package:dk_pos/features/shifts/data/shift_close_preflight.dart';
 import 'package:dk_pos/features/shifts/presentation/shift_close_guard.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/cash/data/local_cash_repository.dart';
-
-String _formatLastEncashmentLine(CashEncashmentHint hint) {
-  final at = hint.lastEncashmentAt;
-  if (at == null) return '';
-  final dt = DateTime.tryParse(at)?.toLocal();
-  final when = dt == null
-      ? at
-      : '${dt.day.toString().padLeft(2, '0')}.${dt.month.toString().padLeft(2, '0')}.${dt.year} '
-            '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
-  final amt = hint.lastEncashmentAmount;
-  if (amt != null && amt > 0) {
-    return 'Последняя инкассация: $when, ${formatSomoni(amt)}';
-  }
-  return 'Последняя инкассация: $when';
-}
+import 'package:dk_pos/features/pos/presentation/widgets/pos_numeric_keypad.dart';
 
 Future<void> showPosCashManagementDialog(BuildContext context) async {
   final shiftWasClosed = await showDialog<bool>(
@@ -44,6 +30,31 @@ Future<bool> ensureCashShiftOpen(BuildContext context) async {
       final snap = await repo.fetchActiveShift();
       if (snap.hasOpenShift) return true;
     } on ApiException catch (e) {
+      if (e.statusCode == 423 && context.mounted) {
+        final logout = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (ctx) => AlertDialog(
+            title: const Text('Касса занята'),
+            content: Text(e.message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(false),
+                child: const Text('Проверить снова'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(true),
+                child: const Text('Выйти'),
+              ),
+            ],
+          ),
+        );
+        if (logout == true && context.mounted) {
+          await performPosSessionLogout(context, cashShiftNeverOpened: true);
+          return false;
+        }
+        continue;
+      }
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Касса: ${e.message}')),
@@ -119,16 +130,10 @@ class _PosCashManagementDialogState extends State<_PosCashManagementDialog> {
   }
 
   bool get _isAdmin {
-    final role = _normalizedRole;
+    final role = (context.read<AuthBloc>().state.user?.role ?? '')
+        .trim()
+        .toLowerCase();
     return role == 'admin';
-  }
-
-  String get _normalizedRole =>
-      (context.read<AuthBloc>().state.user?.role ?? '').trim().toLowerCase();
-
-  bool _cashierMayRunOperation(String opType) {
-    if (_isAdmin) return true;
-    return opType == 'encashment';
   }
 
   Future<void> _openShiftFlow() async {
@@ -147,16 +152,65 @@ class _PosCashManagementDialogState extends State<_PosCashManagementDialog> {
     }
   }
 
+  Future<void> _encashmentFlow() async {
+    final snap = _snapshot;
+    if (snap == null || !snap.hasOpenShift) return;
+    final done = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => _EncashmentDialog(snapshot: snap),
+    );
+    if (done == true && mounted) await _reload();
+  }
+
   Future<void> _closeShiftFlow() async {
     final snap = _snapshot;
     if (snap == null || !snap.hasOpenShift) return;
     if (!mounted) return;
+
+    final available = snap.availableCash;
+    if (available > 0.009) {
+      final goEncash = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Инкассация не сделана'),
+          content: Text(
+            'По учёту сверх размена доступно ${formatSomoni(available)}. '
+            'Если закрыть смену сейчас, эти деньги останутся в ящике '
+            'и перейдут на следующую смену.\n\n'
+            'Сначала сделайте инкассацию (пересчёт → в сейф, размен останется), '
+            'либо закройте без неё, если нал должен остаться.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(null),
+              child: const Text('Отмена'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Закрыть без инкассации'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('Инкассация'),
+            ),
+          ],
+        ),
+      );
+      if (!mounted) return;
+      if (goEncash == null) return;
+      if (goEncash == true) {
+        await _encashmentFlow();
+        return;
+      }
+    }
+
     final allowed = await confirmShiftCloseAllowed(
       context,
       title: 'Закрыть кассовую смену?',
       confirmMessage:
-          'Все заказы должны быть выданы или отменены. Сверьте суммы по учёту '
-          'и укажите по факту: нал в ящике и по каждому банку.',
+          'Все заказы должны быть выданы или отменены. '
+          'Данные по учёту уйдут в global; сверку «по факту» сделаете в админке.',
       strictOrders: true,
     );
     if (!allowed || !mounted) return;
@@ -169,38 +223,6 @@ class _PosCashManagementDialogState extends State<_PosCashManagementDialog> {
     } else {
       await _reload();
     }
-  }
-
-  Future<void> _operationFlow(String opType) async {
-    final snap = _snapshot;
-    if (snap == null || !snap.hasOpenShift) {
-      await _openShiftFlow();
-      return;
-    }
-    if (!_cashierMayRunOperation(opType)) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Эта операция доступна только администратору'),
-        ),
-      );
-      return;
-    }
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => opType == 'encashment'
-          ? _EncashmentDialog(
-              snapshot: snap,
-              isAdmin: _isAdmin,
-            )
-          : _CashOperationDialog(
-              opType: opType,
-              availableCash: snap.availableCash,
-              expectedInDrawer: snap.expectedInDrawer,
-              minReserve: snap.minReserve,
-            ),
-    );
-    if (ok == true) await _reload();
   }
 
   @override
@@ -223,42 +245,38 @@ class _PosCashManagementDialogState extends State<_PosCashManagementDialog> {
                   if (snap != null && snap.hasOpenShift) ...[
                     if (_isAdmin) ...[
                       _CashMetricRow(
+                        label: 'Выручка нал',
+                        value: formatSomoni(snap.cashSalesIn),
+                      ),
+                      if ((snap.encashmentHint?.recommendedAmount ?? 0) > 0.009 ||
+                          snap.operationsOut > 0.009)
+                        _CashMetricRow(
+                          label: 'Выемки (в т.ч. инкассация)',
+                          value: '−${formatSomoni(snap.operationsOut)}',
+                        ),
+                      _CashMetricRow(
                         label: 'По расчёту в ящике',
                         value: formatSomoni(snap.expectedInDrawer),
                         bold: true,
+                        subtitle: 'Это ожидаемый факт при закрытии',
                       ),
                       _CashMetricRow(
-                        label: 'Доступно для оплаты',
+                        label: 'Доступно к инкассации',
                         value: formatSomoni(snap.availableCash),
                         subtitle:
                             'Резерв ${formatSomoni(snap.minReserve)} не трогаем',
                       ),
-                      _CashMetricRow(
-                        label: 'Наличные продажи',
-                        value: formatSomoni(snap.cashSalesIn),
-                      ),
-                      _CashMetricRow(
-                        label: 'Внесения / выемки',
-                        value:
-                            '+${formatSomoni(snap.operationsIn)} / −${formatSomoni(snap.operationsOut)}',
-                      ),
                     ] else ...[
                       Text(
-                        'К инкассации по расчёту: ${formatSomoni(snap.availableCash)}',
+                        'Смена открыта. Перед закрытием сделайте инкассацию, '
+                        'если нал нужно убрать в сейф (размен останется в ящике).',
                         style: theme.textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      if (snap.encashmentHint?.lastEncashmentAt != null) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          _formatLastEncashmentLine(snap.encashmentHint!),
-                          style: theme.textTheme.bodySmall,
-                        ),
-                      ],
                       const SizedBox(height: 4),
                       Text(
-                        'В ящике остаётся резерв ${formatSomoni(snap.minReserve)}',
+                        'Принятие смены и деньги на баланс — в глобальной админке.',
                         style: theme.textTheme.bodySmall,
                       ),
                     ],
@@ -278,32 +296,11 @@ class _PosCashManagementDialogState extends State<_PosCashManagementDialog> {
                           label: const Text('Открыть смену'),
                         )
                       else ...[
-                        OutlinedButton(
-                          onPressed: () => _operationFlow('encashment'),
-                          child: const Text('Инкассация'),
+                        FilledButton.icon(
+                          onPressed: _encashmentFlow,
+                          icon: const Icon(Icons.savings_outlined),
+                          label: const Text('Инкассация'),
                         ),
-                        if (_isAdmin) ...[
-                          OutlinedButton(
-                            onPressed: () => _operationFlow('change_in'),
-                            child: const Text('Внесение'),
-                          ),
-                          OutlinedButton(
-                            onPressed: () => _operationFlow('off_register'),
-                            child: const Text('Вне кассы'),
-                          ),
-                          OutlinedButton(
-                            onPressed: () => _operationFlow('supplier_cash'),
-                            child: const Text('Поставщику'),
-                          ),
-                          OutlinedButton(
-                            onPressed: () => _operationFlow('owner_payout'),
-                            child: const Text('Владельцу'),
-                          ),
-                          OutlinedButton(
-                            onPressed: () => _operationFlow('rent_cash'),
-                            child: const Text('Аренда'),
-                          ),
-                        ],
                         FilledButton.tonal(
                           onPressed: _closeShiftFlow,
                           child: const Text('Закрыть смену'),
@@ -437,7 +434,8 @@ class _OpenCashShiftDialogState extends State<_OpenCashShiftDialog> {
           children: [
             const Text(
               'Смена откроется без пересчёта ящика. '
-              'Сколько нал в кассе — укажете при закрытии смены и инкассации.',
+              'Чтобы убрать нал в сейф — Касса → «Инкассация» '
+              '(пересчёт; размен останется в ящике).',
             ),
             if (widget.mandatory) ...[
               const SizedBox(height: 8),
@@ -503,9 +501,7 @@ class _CloseCashShiftDialog extends StatefulWidget {
 }
 
 class _CloseCashShiftDialogState extends State<_CloseCashShiftDialog> {
-  final _actualCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
-  final _bankCtrls = <String, TextEditingController>{};
   bool _busy = false;
   bool _loading = true;
   String? _error;
@@ -522,9 +518,6 @@ class _CloseCashShiftDialogState extends State<_CloseCashShiftDialog> {
       final preview =
           await context.read<LocalCashRepository>().fetchCloseShiftPreview();
       if (!mounted) return;
-      for (final bank in preview.banks) {
-        _bankCtrls[bank.key] = TextEditingController();
-      }
       setState(() {
         _preview = preview;
         _loading = false;
@@ -538,19 +531,9 @@ class _CloseCashShiftDialogState extends State<_CloseCashShiftDialog> {
     }
   }
 
-  double? _parseAmount(String raw) {
-    final t = raw.trim().replaceAll(RegExp(r'\s+'), '').replaceAll(',', '.');
-    if (t.isEmpty) return null;
-    return double.tryParse(t);
-  }
-
   @override
   void dispose() {
-    _actualCtrl.dispose();
     _notesCtrl.dispose();
-    for (final c in _bankCtrls.values) {
-      c.dispose();
-    }
     super.dispose();
   }
 
@@ -560,29 +543,13 @@ class _CloseCashShiftDialogState extends State<_CloseCashShiftDialog> {
       setState(() => _error = 'Кассовая смена не открыта');
       return;
     }
-    final actual = _parseAmount(_actualCtrl.text);
-    if (actual == null || actual < 0) {
-      setState(() => _error = 'Укажите, сколько нал в ящике по факту');
-      return;
-    }
-    final nonCashActual = <Map<String, dynamic>>[];
-    for (final bank in preview.banks) {
-      final ctrl = _bankCtrls[bank.key];
-      final parsed = _parseAmount(ctrl?.text ?? '');
-      if (parsed == null || parsed < 0) {
-        setState(() => _error = 'Укажите, сколько на счету «${bank.title}» (можно 0)');
-        return;
-      }
-      nonCashActual.add({'key': bank.key, 'actual': parsed});
-    }
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
+      // Без «по факту»: только закрытие + отправка учёта в global.
       final result = await context.read<LocalCashRepository>().closeCashShift(
-        closingActual: actual,
-        nonCashActual: nonCashActual,
         closeNotes: _notesCtrl.text,
       );
       if (!mounted) return;
@@ -595,7 +562,7 @@ class _CloseCashShiftDialogState extends State<_CloseCashShiftDialog> {
         return;
       }
 
-      if (result.report != null) {
+      if (result.report != null && widget.isAdmin) {
         await showDialog<void>(
           context: context,
           barrierDismissible: false,
@@ -605,12 +572,7 @@ class _CloseCashShiftDialogState extends State<_CloseCashShiftDialog> {
           ),
         );
       } else {
-        final msg = result.message ??
-            (result.variance != null
-                ? (result.variance!.abs() < 0.01
-                      ? 'Смена закрыта. Касса сошлась.'
-                      : 'Смена закрыта. Разница нал: ${formatSomoni(result.variance!)}')
-                : 'Смена закрыта.');
+        final msg = result.message ?? 'Смена закрыта. Данные отправлены в global.';
         final syncMsg = result.globalSync?.message;
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -649,72 +611,6 @@ class _CloseCashShiftDialogState extends State<_CloseCashShiftDialog> {
     }
   }
 
-  Widget _reconcileRow({
-    required ThemeData theme,
-    required String title,
-    required double expected,
-    required TextEditingController actualCtrl,
-  }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        border: Border.all(color: theme.dividerColor),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            title,
-            style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'По учёту',
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      formatSomoni(expected),
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: actualCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'По факту',
-                    hintText: '0',
-                    isDense: true,
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final preview = _preview;
@@ -722,91 +618,69 @@ class _CloseCashShiftDialogState extends State<_CloseCashShiftDialog> {
     return AlertDialog(
       title: const Text('Закрыть кассовую смену'),
       content: SizedBox(
-        width: 520,
+        width: 440,
         child: _loading
             ? const Center(child: CircularProgressIndicator())
-            : SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Слева — сумма по учёту POS, справа — введите по факту '
-                      '(пересчёт ящика, отчёт терминала / приложения банка).',
-                      style: theme.textTheme.bodySmall,
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Закроем смену и отправим учёт в global. '
+                    'Факт по налу введёте при принятии смены в админке.',
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                  if (preview != null) ...[
+                    const SizedBox(height: 14),
+                    _CashMetricRow(
+                      label: 'Выручка нал (учёт)',
+                      value: formatSomoni(preview.cashSalesIn),
                     ),
-                    const SizedBox(height: 12),
-                    Text(
-                      '1. Наличные в ящике',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
+                    if (preview.encashmentDone)
+                      _CashMetricRow(
+                        label: 'Инкассация',
+                        value: '−${formatSomoni(preview.encashmentTotal)}',
+                      )
+                    else
+                      _CashMetricRow(
+                        label: 'Инкассация',
+                        value: 'не было',
                       ),
+                    if (preview.openingBalance > 0.009)
+                      _CashMetricRow(
+                        label: 'Остаток на открытии',
+                        value: formatSomoni(preview.openingBalance),
+                      ),
+                    _CashMetricRow(
+                      label: 'В ящике по учёту (факт)',
+                      value: formatSomoni(preview.expectedInDrawer),
+                      bold: true,
+                      subtitle: preview.encashmentDone
+                          ? 'Нал продажи минус инкассация'
+                          : 'Без инкассации = вся выручка нал (+остаток)',
                     ),
-                    const SizedBox(height: 8),
-                    if (preview != null)
-                      _reconcileRow(
-                        theme: theme,
-                        title: 'Наличные',
-                        expected: preview.expectedInDrawer,
-                        actualCtrl: _actualCtrl,
+                    if (preview.banks.isNotEmpty)
+                      _CashMetricRow(
+                        label: 'Безнал по учёту',
+                        value: formatSomoni(preview.nonCashExpectedTotal),
                       ),
-                    if (preview != null && preview.banks.isEmpty) ...[
-                      const SizedBox(height: 16),
-                      Text(
-                        preview.nonCashExpectedTotal > 0.009
-                            ? 'Безнал за смену есть, но банки не настроены. '
-                                'Добавьте их в админке POS → Способы оплаты.'
-                            : 'Банки не настроены (админка POS → Способы оплаты). '
-                                'Безнал по банкам вводить не нужно.',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: preview.nonCashExpectedTotal > 0.009
-                              ? theme.colorScheme.error
-                              : theme.colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ] else if (preview != null && preview.banks.isNotEmpty) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        '2. Безнал по банкам',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Банки из настроек оплаты. Итого по учёту: '
-                        '${formatSomoni(preview.nonCashExpectedTotal)}',
-                        style: theme.textTheme.bodySmall,
-                      ),
-                      const SizedBox(height: 8),
-                      ...preview.banks.map((bank) {
-                        final ctrl = _bankCtrls[bank.key];
-                        if (ctrl == null) return const SizedBox.shrink();
-                        return _reconcileRow(
-                          theme: theme,
-                          title: bank.title,
-                          expected: bank.expectedNet,
-                          actualCtrl: ctrl,
-                        );
-                      }),
-                    ],
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: _notesCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Комментарий (если есть расхождение)',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    if (_error != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        _error!,
-                        style: TextStyle(color: theme.colorScheme.error),
-                      ),
-                    ],
                   ],
-                ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _notesCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Комментарий (необязательно)',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  if (_error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _error!,
+                      style: TextStyle(color: theme.colorScheme.error),
+                    ),
+                  ],
+                ],
               ),
       ),
       actions: [
@@ -829,161 +703,91 @@ class _CloseCashShiftDialogState extends State<_CloseCashShiftDialog> {
   }
 }
 
+double? _parseCashAmount(String raw) {
+  final t = raw.trim().replaceAll(',', '.').replaceAll(' ', '');
+  if (t.isEmpty) return null;
+  return double.tryParse(t);
+}
+
+/// Пересчёт ящика → в сейф всё сверх резерва размена.
 class _EncashmentDialog extends StatefulWidget {
-  const _EncashmentDialog({
-    required this.snapshot,
-    required this.isAdmin,
-  });
+  const _EncashmentDialog({required this.snapshot});
 
   final CashShiftSnapshot snapshot;
-  final bool isAdmin;
 
   @override
   State<_EncashmentDialog> createState() => _EncashmentDialogState();
 }
 
 class _EncashmentDialogState extends State<_EncashmentDialog> {
-  final _countedCtrl = TextEditingController();
-  final _offRegisterAmountCtrl = TextEditingController();
-  final _commentCtrl = TextEditingController();
+  late final TextEditingController _countCtrl;
   bool _busy = false;
-  bool _showPhysicalCount = false;
-  bool _showOffRegisterEncashment = false;
   String? _error;
 
-  CashEncashmentHint get _hint =>
-      widget.snapshot.encashmentHint ??
-      CashEncashmentHint(
-        recommendedAmount: widget.snapshot.availableCash,
-        expectedInDrawer: widget.snapshot.expectedInDrawer,
-        minReserve: widget.snapshot.minReserve,
-        openingBalance: widget.snapshot.openingBalance,
-        cashSalesIn: widget.snapshot.cashSalesIn,
-        cashRefundsOut: widget.snapshot.cashRefundsOut,
-        operationsIn: widget.snapshot.operationsIn,
-        operationsOut: widget.snapshot.operationsOut,
-      );
+  @override
+  void initState() {
+    super.initState();
+    final expected = widget.snapshot.expectedInDrawer;
+    _countCtrl = TextEditingController();
+    if (expected > 0.009) {
+      posMoneySetAmount(_countCtrl, expected);
+    }
+  }
 
   @override
   void dispose() {
-    _countedCtrl.dispose();
-    _offRegisterAmountCtrl.dispose();
-    _commentCtrl.dispose();
+    _countCtrl.dispose();
     super.dispose();
   }
 
-  double? _parseAmount(String raw) {
-    final t = raw.trim().replaceAll(RegExp(r'\s+'), '').replaceAll(',', '.');
-    if (t.isEmpty) return null;
-    return double.tryParse(t);
+  double get _reserve => widget.snapshot.minReserve;
+
+  double? get _counted => _parseCashAmount(_countCtrl.text);
+
+  double? get _toSafe {
+    final counted = _counted;
+    if (counted == null) return null;
+    final v = counted - _reserve;
+    return v > 0.009 ? v : 0;
   }
 
-  static String _formatAmountInput(double v) {
-    if (v == v.roundToDouble()) return v.toStringAsFixed(0);
-    return v.toStringAsFixed(2);
-  }
-
-  double? _encashmentFromCounted(double countedInDrawer) {
-    if (countedInDrawer < _hint.minReserve - 0.009) return null;
-    return countedInDrawer - _hint.minReserve;
-  }
-
-  Future<void> _submitByCalculation() async {
-    final amount = _hint.recommendedAmount;
-    if (amount <= 0) {
-      setState(() => _error = 'По расчёту нечего инкассировать');
+  Future<void> _submit() async {
+    final counted = _counted;
+    if (counted == null || counted < 0) {
+      setState(() => _error = 'Укажите, сколько наличных в ящике');
       return;
     }
-    await _runEncashment(amount: amount);
-  }
-
-  Future<void> _submitByPhysicalCount({required bool reconcileSurplus}) async {
-    final counted = _parseAmount(_countedCtrl.text);
-    if (counted == null || counted <= 0) {
-      setState(() => _error = 'Укажите полную сумму наличных в ящике');
-      return;
-    }
-    if (counted < _hint.minReserve - 0.009) {
+    if (counted + 0.009 < _reserve) {
       setState(
         () => _error =
-            'В ящике меньше резерва (${formatSomoni(_hint.minReserve)})',
+            'В ящике меньше резерва размена (${formatSomoni(_reserve)})',
       );
       return;
     }
-    await _runEncashment(
-      countedInDrawer: counted,
-      reconcileSurplus: reconcileSurplus,
-    );
-  }
-
-  Future<void> _submitOffRegisterEncashment() async {
-    final amount = _parseAmount(_offRegisterAmountCtrl.text);
-    if (amount == null || amount <= 0) {
-      setState(() => _error = 'Укажите сумму инкассации');
+    final toSafe = _toSafe ?? 0;
+    if (toSafe <= 0.009) {
+      setState(() => _error = 'Нечего инкассировать после резерва');
       return;
     }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final result = await context.read<LocalCashRepository>().postOperation(
-        opType: 'encashment_off_register',
-        amount: amount,
-        comment: _commentCtrl.text,
-      );
-      if (!mounted) return;
-      Navigator.of(context).pop(true);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Инкассация вне учёта: ${formatSomoni(amount)}. '
-            'В сейф (не из выручки POS). Доступно в кассе: '
-            '${formatSomoni(result.snapshot.availableCash)}',
-          ),
-        ),
-      );
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.message;
-        _busy = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _busy = false;
-      });
-    }
-  }
 
-  Future<void> _runEncashment({
-    double? amount,
-    double? countedInDrawer,
-    bool reconcileSurplus = false,
-  }) async {
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
       final result = await context.read<LocalCashRepository>().postEncashment(
-        amount: amount,
-        countedInDrawer: countedInDrawer,
-        reconcileSurplus: reconcileSurplus,
-        comment: _commentCtrl.text,
+        countedInDrawer: counted,
+        reconcileSurplus: true,
       );
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      final msg =
+          'В сейф: ${formatSomoni(result.operation.amount)}. '
+          'В ящике остаётся размен ~${formatSomoni(_reserve)}.';
+      final hw = result.hardwareHint;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Инкассация выполнена. Доступно: '
-            '${formatSomoni(result.snapshot.availableCash)}',
-          ),
-        ),
+        SnackBar(content: Text(hw != null && hw.isNotEmpty ? '$msg\n$hw' : msg)),
       );
+      Navigator.of(context).pop(true);
     } on ApiException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -1002,424 +806,69 @@ class _EncashmentDialogState extends State<_EncashmentDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final hint = _hint;
-    final counted = _showPhysicalCount ? _parseAmount(_countedCtrl.text) : null;
-    final encFromPhysical =
-        counted != null ? _encashmentFromCounted(counted) : null;
-    final surplus = encFromPhysical != null
-        ? encFromPhysical - hint.recommendedAmount
-        : null;
-    final hasSurplus = surplus != null && surplus > 0.02;
+    final snap = widget.snapshot;
+    final toSafe = _toSafe;
+    final hint = snap.encashmentHint;
 
     return AlertDialog(
-      title: const Text('Инкассация в сейф'),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (hint.lastEncashmentAt != null) ...[
+      title: const Text('Инкассация'),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
               Text(
-                _formatLastEncashmentLine(hint),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
+                'Пересчитайте нал в ящике. В сейф уйдёт сумма сверх размена '
+                '(${formatSomoni(_reserve)} останется в кассе).',
+                style: theme.textTheme.bodyMedium,
               ),
               const SizedBox(height: 10),
-            ],
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: scheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(8),
+              Text(
+                'По учёту в ящике: ${formatSomoni(snap.expectedInDrawer)}',
+                style: theme.textTheme.bodySmall,
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(
-                    'Состав суммы в учёте',
-                    style: theme.textTheme.labelLarge,
-                  ),
-                  const SizedBox(height: 6),
-                  _EncashmentBreakdownRow(
-                    label: 'На начало смены',
-                    value: formatSomoni(hint.openingBalance),
-                  ),
-                  _EncashmentBreakdownRow(
-                    label: 'Наличные продажи',
-                    value: '+ ${formatSomoni(hint.cashSalesIn)}',
-                  ),
-                  if (hint.cashRefundsOut > 0.009)
-                    _EncashmentBreakdownRow(
-                      label: 'Возвраты налом',
-                      value: '− ${formatSomoni(hint.cashRefundsOut)}',
-                    ),
-                  if (hint.operationsIn > 0.009)
-                    _EncashmentBreakdownRow(
-                      label: 'Внесения',
-                      value: '+ ${formatSomoni(hint.operationsIn)}',
-                    ),
-                  if (hint.operationsOut > 0.009)
-                    _EncashmentBreakdownRow(
-                      label: 'Выемки',
-                      value: '− ${formatSomoni(hint.operationsOut)}',
-                    ),
-                  const Divider(height: 16),
-                  _EncashmentBreakdownRow(
-                    label: 'В ящике по расчёту',
-                    value: formatSomoni(hint.expectedInDrawer),
-                    bold: true,
-                  ),
-                  _EncashmentBreakdownRow(
-                    label: 'Оставить (резерв)',
-                    value: formatSomoni(hint.minReserve),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'К инкассации по расчёту: ${formatSomoni(hint.recommendedAmount)}',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-                color: scheme.primary,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Не инкассировали неделю — всё равно смотрите эту сумму: '
-              'в неё входит остаток на начало смены и все наличные продажи.',
-              style: theme.textTheme.bodySmall,
-            ),
-            const SizedBox(height: 12),
-            FilledButton.icon(
-              onPressed: _busy || hint.recommendedAmount <= 0
-                  ? null
-                  : _submitByCalculation,
-              icon: const Icon(Icons.savings_outlined),
-              label: Text(
-                'Инкассировать ${formatSomoni(hint.recommendedAmount)}',
-              ),
-            ),
-            const SizedBox(height: 8),
-            OutlinedButton(
-              onPressed: _busy
-                  ? null
-                  : () => setState(() => _showPhysicalCount = !_showPhysicalCount),
-              child: Text(
-                _showPhysicalCount
-                    ? 'Скрыть пересчёт ящика'
-                    : 'Пересчитали ящик — другая сумма',
-              ),
-            ),
-            if (_showPhysicalCount) ...[
-              const SizedBox(height: 10),
-              TextField(
-                controller: _countedCtrl,
-                autofocus: true,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Полная сумма наличных в ящике',
-                  border: OutlineInputBorder(),
-                ),
-                onChanged: (_) => setState(() => _error = null),
-              ),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton(
-                  onPressed: _busy
-                      ? null
-                      : () {
-                          _countedCtrl.text = _formatAmountInput(
-                            hint.expectedInDrawer > 0
-                                ? hint.expectedInDrawer
-                                : hint.recommendedAmount + hint.minReserve,
-                          );
-                          setState(() {});
-                        },
-                  child: const Text('Подставить по расчёту'),
-                ),
-              ),
-              if (encFromPhysical != null && encFromPhysical > 0) ...[
+              if (hint != null && hint.recommendedAmount > 0.009) ...[
+                const SizedBox(height: 2),
                 Text(
-                  'К инкассации по пересчёту: ${formatSomoni(encFromPhysical)}',
+                  'Рекомендуется в сейф: ${formatSomoni(hint.recommendedAmount)}',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              PosMoneyKeypadInput(
+                controller: _countCtrl,
+                label: 'Нал в ящике (факт)',
+                presetAmount: snap.expectedInDrawer > 0.009
+                    ? snap.expectedInDrawer
+                    : null,
+                presetLabel: 'По учёту',
+                onChanged: () => setState(() {}),
+              ),
+              if (toSafe != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  toSafe > 0.009
+                      ? 'В сейф: ${formatSomoni(toSafe)}'
+                      : 'После резерва инкассировать нечего',
                   style: theme.textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                if (hasSurplus) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    'В ящике на ${formatSomoni(surplus)} больше, чем в учёте POS. '
-                    'По пересчёту можно инкассировать — учёт подстроится автоматически.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: scheme.primary,
-                    ),
-                  ),
-                ],
               ],
-            ],
-            if (widget.isAdmin) ...[
-              const SizedBox(height: 12),
-              OutlinedButton(
-                onPressed: _busy
-                    ? null
-                    : () => setState(
-                          () => _showOffRegisterEncashment =
-                              !_showOffRegisterEncashment,
-                        ),
-                child: Text(
-                  _showOffRegisterEncashment
-                      ? 'Скрыть инкассацию вне учёта'
-                      : 'Инкассация вне учёта кассы (больше выручки)',
-                ),
-              ),
-              if (_showOffRegisterEncashment) ...[
+              if (_error != null) ...[
                 const SizedBox(height: 8),
                 Text(
-                  'Сумма уходит в сейф, но не списывается с наличных в ящике по учёту POS '
-                  '(например, деньги не из продаж кассы).',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _offRegisterAmountCtrl,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'Сумма инкассации вне кассы',
-                    border: OutlineInputBorder(),
-                  ),
-                  onChanged: (_) => setState(() => _error = null),
+                  _error!,
+                  style: TextStyle(color: theme.colorScheme.error),
                 ),
               ],
             ],
-            const SizedBox(height: 8),
-            TextField(
-              controller: _commentCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Комментарий',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 8),
-              Text(_error!, style: TextStyle(color: scheme.error)),
-            ],
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _busy ? null : () => Navigator.of(context).pop(false),
-          child: const Text('Отмена'),
-        ),
-        if (_showOffRegisterEncashment && widget.isAdmin)
-          FilledButton(
-            onPressed: _busy ? null : _submitOffRegisterEncashment,
-            child: _busy
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Text('Вне учёта — в сейф'),
-          )
-        else if (_showPhysicalCount &&
-            encFromPhysical != null &&
-            encFromPhysical > 0)
-          FilledButton(
-            onPressed: _busy
-                ? null
-                : () => _submitByPhysicalCount(reconcileSurplus: false),
-            child: _busy
-                ? const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : Text(
-                    hasSurplus
-                        ? 'Инкассировать ${formatSomoni(encFromPhysical)}'
-                        : 'По пересчёту',
-                  ),
-          ),
-      ],
-    );
-  }
-}
-
-class _EncashmentBreakdownRow extends StatelessWidget {
-  const _EncashmentBreakdownRow({
-    required this.label,
-    required this.value,
-    this.bold = false,
-  });
-
-  final String label;
-  final String value;
-  final bool bold;
-
-  @override
-  Widget build(BuildContext context) {
-    final style = bold
-        ? Theme.of(context).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700)
-        : Theme.of(context).textTheme.bodySmall;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: style),
-          Text(value, style: style),
-        ],
-      ),
-    );
-  }
-}
-
-class _CashOperationDialog extends StatefulWidget {
-  const _CashOperationDialog({
-    required this.opType,
-    required this.availableCash,
-    this.expectedInDrawer = 0,
-    this.minReserve = 0,
-  });
-
-  final String opType;
-  final double availableCash;
-  final double expectedInDrawer;
-  final double minReserve;
-
-  @override
-  State<_CashOperationDialog> createState() => _CashOperationDialogState();
-}
-
-class _CashOperationDialogState extends State<_CashOperationDialog> {
-  late final TextEditingController _amountCtrl;
-  final _commentCtrl = TextEditingController();
-  bool _busy = false;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _amountCtrl = TextEditingController();
-    _amountCtrl.addListener(_onAmountChanged);
-  }
-
-  void _onAmountChanged() {
-    if (mounted) setState(() => _error = null);
-  }
-
-  double? _parseAmount(String raw) {
-    final t = raw.trim().replaceAll(RegExp(r'\s+'), '').replaceAll(',', '.');
-    if (t.isEmpty) return null;
-    return double.tryParse(t);
-  }
-
-  @override
-  void dispose() {
-    _amountCtrl.removeListener(_onAmountChanged);
-    _amountCtrl.dispose();
-    _commentCtrl.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    final parsed = _parseAmount(_amountCtrl.text);
-    if (parsed == null || parsed <= 0) {
-      setState(() => _error = 'Сумма должна быть больше нуля');
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final result = await context.read<LocalCashRepository>().postOperation(
-        opType: widget.opType,
-        amount: parsed,
-        comment: _commentCtrl.text,
-      );
-      if (!mounted) return;
-      Navigator.of(context).pop(true);
-      final label = cashOpTypeLabels[widget.opType] ?? widget.opType;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '$label выполнено. Доступно: ${formatSomoni(result.snapshot.availableCash)}',
           ),
         ),
-      );
-    } on ApiException catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.message;
-        _busy = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _busy = false;
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final title = cashOpTypeLabels[widget.opType] ?? 'Операция';
-    final isOut = widget.opType != 'change_in';
-    final isOffRegister = widget.opType == 'off_register';
-    final isEncOffRegister = widget.opType == 'encashment_off_register';
-
-    return AlertDialog(
-      title: Text(title),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          if (isEncOffRegister)
-            Text(
-              'Инкассация в сейф без ограничения по выручке POS. '
-              'Наличные в ящике по учёту не уменьшаются.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          if (isOffRegister)
-            Text(
-              'Расход вне кассового ящика (не уменьшает нал в ящике). '
-              'Списание со склада — в разделе «Склад».',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          if (isOut && !isOffRegister && !isEncOffRegister)
-            Text('Доступно: ${formatSomoni(widget.availableCash)}'),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _amountCtrl,
-            autofocus: true,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(
-              labelText: 'Сумма',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _commentCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Комментарий',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 8),
-            Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
-          ],
-        ],
       ),
       actions: [
         TextButton(
@@ -1434,7 +883,7 @@ class _CashOperationDialogState extends State<_CashOperationDialog> {
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('Подтвердить'),
+              : const Text('В сейф'),
         ),
       ],
     );

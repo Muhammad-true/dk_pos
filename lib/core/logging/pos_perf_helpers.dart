@@ -42,7 +42,10 @@ bool kitchenSnapshotChanged(
       _orderIds(prev.readyForPickup) != _orderIds(next.readyForPickup) ||
       _orderStatuses(prev.preparing) != _orderStatuses(next.preparing) ||
       _orderStatuses(prev.waitingOthers) != _orderStatuses(next.waitingOthers) ||
-      _orderStatuses(prev.readyForPickup) != _orderStatuses(next.readyForPickup);
+      _orderStatuses(prev.readyForPickup) != _orderStatuses(next.readyForPickup) ||
+      _orderMeta(prev.preparing) != _orderMeta(next.preparing) ||
+      _orderMeta(prev.waitingOthers) != _orderMeta(next.waitingOthers) ||
+      _orderMeta(prev.readyForPickup) != _orderMeta(next.readyForPickup);
 }
 
 String _orderIds(List<LocalKitchenQueueOrder> rows) =>
@@ -50,3 +53,11 @@ String _orderIds(List<LocalKitchenQueueOrder> rows) =>
 
 String _orderStatuses(List<LocalKitchenQueueOrder> rows) =>
     rows.map((e) => '${e.id}:${e.status}').join(',');
+
+/// Стол / тип — меняются с кассы без смены состава позиций.
+String _orderMeta(List<LocalKitchenQueueOrder> rows) => rows
+    .map(
+      (e) =>
+          '${e.id}:${e.tableLabel ?? ''}:${e.orderType ?? ''}:${e.number}',
+    )
+    .join(',');

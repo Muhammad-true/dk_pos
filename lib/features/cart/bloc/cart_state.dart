@@ -34,15 +34,21 @@ class CartLine extends Equatable {
   double get lineTotal => item.price * quantity;
 
   String get displayName {
+    final modLabel = modifiers
+        .map(PosCartModifier.formatLabel)
+        .where((n) => n.isNotEmpty)
+        .join(', ');
+    final baseName =
+        modLabel.isNotEmpty ? '${item.name} ($modLabel)' : item.name;
     if (actualQty != null && defaultSaleQty != null && saleMeasure != null) {
       return VariableSaleQty(
         enabled: true,
         measure: saleMeasure!,
         defaultQty: defaultSaleQty!,
         actualQty: actualQty!,
-      ).displayName(item.name, quantity: quantity);
+      ).displayName(baseName, quantity: quantity);
     }
-    return quantity > 1 ? '$quantity× ${item.name}' : item.name;
+    return quantity > 1 ? '$quantity× $baseName' : baseName;
   }
 
   @override

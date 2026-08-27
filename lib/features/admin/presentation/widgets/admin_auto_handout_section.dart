@@ -4,7 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'package:dk_pos/features/admin/data/local_order_handout_settings_repository.dart';
 
-/// Автовыдача: вкл/выкл и интервал (минуты в статусе «Готов к выдаче»).
+/// Автовыдача и режим «Готово на кухне = выдан».
 class AdminAutoHandoutSection extends StatefulWidget {
   const AdminAutoHandoutSection({super.key});
 
@@ -16,19 +16,23 @@ class _AdminAutoHandoutSectionState extends State<AdminAutoHandoutSection> {
   bool _loading = true;
   bool _saving = false;
   bool _enabled = true;
+  bool _kitchenReadyHandout = false;
   late final TextEditingController _minutesCtrl;
+  late final TextEditingController _tvMinutesCtrl;
   Object? _error;
 
   @override
   void initState() {
     super.initState();
     _minutesCtrl = TextEditingController(text: '20');
+    _tvMinutesCtrl = TextEditingController(text: '10');
     _reload();
   }
 
   @override
   void dispose() {
     _minutesCtrl.dispose();
+    _tvMinutesCtrl.dispose();
     super.dispose();
   }
 
@@ -44,7 +48,9 @@ class _AdminAutoHandoutSectionState extends State<AdminAutoHandoutSection> {
       if (!mounted) return;
       setState(() {
         _enabled = s.autoHandoutEnabled;
+        _kitchenReadyHandout = s.kitchenReadyAutoHandoutEnabled;
         _minutesCtrl.text = '${s.autoHandoutMinutes}';
+        _tvMinutesCtrl.text = '${s.tvReadyDisplayMinutes}';
         _loading = false;
       });
     } catch (e) {
@@ -56,14 +62,22 @@ class _AdminAutoHandoutSectionState extends State<AdminAutoHandoutSection> {
     }
   }
 
+  int? _parseMinutes(String raw) => int.tryParse(raw.trim());
+
   Future<void> _save() async {
     if (_saving || _loading) return;
-    final minutes = int.tryParse(_minutesCtrl.text.trim());
+    final minutes = _parseMinutes(_minutesCtrl.text);
+    final tvMinutes = _parseMinutes(_tvMinutesCtrl.text);
     if (_enabled && (minutes == null || minutes < 1 || minutes > 24 * 60)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Укажите время от 1 до 1440 минут'),
-        ),
+        const SnackBar(content: Text('Укажите время автовыдачи от 1 до 1440 минут')),
+      );
+      return;
+    }
+    if (_kitchenReadyHandout &&
+        (tvMinutes == null || tvMinutes < 1 || tvMinutes > 24 * 60)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Укажите время на ТВ от 1 до 1440 минут')),
       );
       return;
     }
@@ -72,16 +86,12 @@ class _AdminAutoHandoutSectionState extends State<AdminAutoHandoutSection> {
       await context.read<LocalOrderHandoutSettingsRepository>().update(
             autoHandoutEnabled: _enabled,
             autoHandoutMinutes: _enabled ? minutes! : (minutes ?? 20),
+            kitchenReadyAutoHandoutEnabled: _kitchenReadyHandout,
+            tvReadyDisplayMinutes: tvMinutes ?? 10,
           );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _enabled
-                ? 'Автовыдача включена ($minutes мин)'
-                : 'Автовыдача выключена',
-          ),
-        ),
+        const SnackBar(content: Text('Настройки выдачи сохранены')),
       );
       await _reload();
     } catch (e) {
@@ -119,7 +129,7 @@ class _AdminAutoHandoutSectionState extends State<AdminAutoHandoutSection> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                'Не удалось загрузить настройки автовыдачи',
+                'Не удалось загрузить настройки выдачи',
                 style: textTheme.titleSmall,
               ),
               const SizedBox(height: 8),
@@ -144,19 +154,44 @@ class _AdminAutoHandoutSectionState extends State<AdminAutoHandoutSection> {
           children: [
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Автовыдача'),
+              title: const Text('Выдача при «Готово» на кухне'),
+              subtitle: Text(
+                _kitchenReadyHandout
+                    ? 'Заказ сразу «Выдан» на кассе. На ТВ — звук и колонка «Готово», затем скрытие.'
+                    : 'Обычный путь: сборка/выдача с кассы или экспедитора',
+                style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+              value: _kitchenReadyHandout,
+              onChanged: _saving ? null : (v) => setState(() => _kitchenReadyHandout = v),
+            ),
+            if (_kitchenReadyHandout) ...[
+              const SizedBox(height: 8),
+              TextField(
+                controller: _tvMinutesCtrl,
+                enabled: !_saving,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                decoration: const InputDecoration(
+                  labelText: 'На ТВ в колонке «Готово» (минуты)',
+                  helperText:
+                      'После «Готово» на кухне: звук, объявление, затем заказ исчезает с ТВ.',
+                  border: OutlineInputBorder(),
+                  suffixText: 'мин',
+                ),
+              ),
+              const Divider(height: 28),
+            ],
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Автовыдача (касса)'),
               subtitle: Text(
                 _enabled
                     ? 'Заказы в «Готов к выдаче» автоматически переходят в «Выдан»'
                     : 'Выдача только вручную с кассы или экспедитора',
-                style: textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
+                style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
               ),
               value: _enabled,
-              onChanged: _saving
-                  ? null
-                  : (v) => setState(() => _enabled = v),
+              onChanged: _saving ? null : (v) => setState(() => _enabled = v),
             ),
             if (_enabled) ...[
               const SizedBox(height: 8),
@@ -168,7 +203,7 @@ class _AdminAutoHandoutSectionState extends State<AdminAutoHandoutSection> {
                 decoration: const InputDecoration(
                   labelText: 'Время до автовыдачи (минуты)',
                   helperText:
-                      'Отсчёт с момента «Готов к выдаче» (поле ready_at). От 1 до 1440.',
+                      'Отсчёт с момента «Готов к выдаче» (поле ready_at). Не для режима кухни выше.',
                   border: OutlineInputBorder(),
                   suffixText: 'мин',
                 ),

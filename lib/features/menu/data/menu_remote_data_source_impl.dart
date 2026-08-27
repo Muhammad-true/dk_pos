@@ -26,4 +26,18 @@ class MenuRemoteDataSourceImpl implements MenuRemoteDataSource {
         .map(PosCategory.fromJson)
         .toList();
   }
+
+  @override
+  Future<void> setSoldOutToday({
+    required String menuItemId,
+    required bool stopped,
+  }) async {
+    final res = await _http.post(
+      'api/menu/items/$menuItemId/sold-out-today',
+      body: {'stopped': stopped},
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(res.statusCode, res.body);
+    }
+  }
 }

@@ -1,32 +1,34 @@
 import 'dart:async';
 import 'dart:math' as math;
 
-import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart' show defaultTargetPlatform, TargetPlatform;
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-
+import 'package:dk_digitial_menu/models/tv_layout_config.dart';
+import 'package:dk_pos/app/locale/locale_bloc.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
+import 'package:dk_pos/core/locale/api_locale.dart';
 import 'package:dk_pos/features/admin/data/admin_combo_row.dart';
 import 'package:dk_pos/features/admin/data/admin_menu_item_row.dart';
 import 'package:dk_pos/features/admin/data/admin_screen_page_row.dart';
 import 'package:dk_pos/features/admin/data/admin_screen_row.dart';
 import 'package:dk_pos/features/admin/data/combos_admin_repository.dart';
+import 'package:dk_pos/features/admin/data/menu_display_preview_repository.dart';
 import 'package:dk_pos/features/admin/data/menu_items_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/screen_page_item_row.dart';
 import 'package:dk_pos/features/admin/data/screens_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/upload_repository.dart';
+import 'package:dk_pos/features/admin/presentation/screens/admin_tv_preview_page.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_tv_master_detail_layout.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_color_picker_field.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/tv_layout_type_catalog.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/tv_layout_type_picker.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/tv_media_guide.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/tv_video_bg_media_editor.dart';
-import 'package:dk_pos/features/admin/presentation/screens/admin_tv_preview_page.dart';
-import 'package:dk_pos/features/admin/data/menu_display_preview_repository.dart';
-import 'package:dk_pos/app/locale/locale_bloc.dart';
-import 'package:dk_pos/core/locale/api_locale.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
-import 'package:dk_digitial_menu/models/tv_layout_config.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart'
+    show defaultTargetPlatform, TargetPlatform;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
 const _kRoles = ['hero', 'list', 'hotdog'];
 
@@ -35,12 +37,32 @@ bool _tv2EditorIsList(String t) => t.toLowerCase().trim() == 'list';
 bool _tv2EditorIsProductGrid(String t) =>
     t.toLowerCase().trim() == 'product_grid';
 
+bool _tv2EditorIsFourShowcase(String t) =>
+    t.toLowerCase().trim() == 'four_showcase';
+
+bool _tv2EditorIsEditorialShowcase(String t) =>
+    t.toLowerCase().trim() == 'editorial_showcase';
+
+bool _tv2EditorIsTwoProductShowcase(String t) {
+  final x = t.toLowerCase().trim();
+  return x == 'two_product_equal' || x == 'two_product_diagonal';
+}
+
+bool _tv2EditorIsPizzaPage(String t) {
+  final x = t.toLowerCase().trim();
+  return x == 'pizza_show' || x == 'pizza_grid';
+}
+
 bool _tv2EditorIsCatalogPage(String t) =>
-    _tv2EditorIsList(t) || _tv2EditorIsProductGrid(t);
+    _tv2EditorIsList(t) ||
+    _tv2EditorIsProductGrid(t) ||
+    _tv2EditorIsFourShowcase(t) ||
+    _tv2EditorIsEditorialShowcase(t) ||
+    _tv2EditorIsTwoProductShowcase(t) ||
+    _tv2EditorIsPizzaPage(t);
 
 int _readProductGridColsFromCfg(Map<String, dynamic>? cfg) {
-  final raw =
-      cfg?['tv2ProductGridColumns'] ?? cfg?['tv2_product_grid_columns'];
+  final raw = cfg?['tv2ProductGridColumns'] ?? cfg?['tv2_product_grid_columns'];
   if (raw is num) {
     final n = raw.toInt();
     if (n >= 2 && n <= 5) return n;
@@ -201,12 +223,34 @@ List<String> _tv2EditorRoles(String pageType, Map<String, dynamic>? config) {
   final t = pageType.toLowerCase().trim();
   if (t == 'list') return ['hero', 'list'];
   if (t == 'product_grid') return ['list'];
+  if (t == 'four_showcase') return ['list'];
+  if (t == 'editorial_showcase') return ['list'];
+  if (t == 'two_product_equal' || t == 'two_product_diagonal') {
+    return ['left', 'right'];
+  }
+  if (t == 'pizza_show' || t == 'pizza_grid') return ['list'];
   if (t == 'video_bg') return [];
   return _kRoles;
 }
 
 /// Красный акцент ТВ2 (как в `dk_digitial_menu`).
 const Color _kTv2PreviewRed = Color(0xFFE4002B);
+
+class _TwoProductPreviewDiagonalClipper extends CustomClipper<Path> {
+  const _TwoProductPreviewDiagonalClipper();
+
+  @override
+  Path getClip(Size size) => Path()
+    ..moveTo(0, 0)
+    ..lineTo(size.width * .56, 0)
+    ..lineTo(size.width * .44, size.height)
+    ..lineTo(0, size.height)
+    ..close();
+
+  @override
+  bool shouldReclip(covariant _TwoProductPreviewDiagonalClipper oldClipper) =>
+      false;
+}
 
 /// Редактор страниц ТВ2: заголовки секций и товары (герой / список / вторая колонка).
 class Tv2ScreenPagesEditorScreen extends StatefulWidget {
@@ -230,17 +274,19 @@ class Tv2ScreenPagesEditorScreen extends StatefulWidget {
       _Tv2ScreenPagesEditorScreenState();
 }
 
-class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen> {
+class _Tv2ScreenPagesEditorScreenState
+    extends State<Tv2ScreenPagesEditorScreen> {
   List<AdminScreenPageRow> _pages = [];
   List<AdminMenuItemRow> _menuItems = [];
   final Map<int, _PageDetail> _detailByPageId = {};
   final Set<int> _expandedPageIds = {};
-  final Map<int, ExpansionTileController> _expansionControllers = {};
+  final Map<int, ExpansibleController> _expansionControllers = {};
   bool _loading = true;
   bool _savingPageOrder = false;
   String? _error;
   String _newPageType = 'split';
   int? _selectedPageId;
+
   /// На узком экране Android включаем портрет, при выходе возвращаем все ориентации.
   bool _androidPhonePortraitLock = false;
 
@@ -274,11 +320,8 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
     super.dispose();
   }
 
-  ExpansionTileController _expansionControllerFor(int pageId) {
-    return _expansionControllers.putIfAbsent(
-      pageId,
-      ExpansionTileController.new,
-    );
+  ExpansibleController _expansionControllerFor(int pageId) {
+    return _expansionControllers.putIfAbsent(pageId, ExpansibleController.new);
   }
 
   void _reopenExpandedTile(int pageId) {
@@ -327,9 +370,7 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         _pages = pages;
         _menuItems = items;
         _detailByPageId.clear();
-        _expandedPageIds.removeWhere(
-          (id) => !pages.any((p) => p.id == id),
-        );
+        _expandedPageIds.removeWhere((id) => !pages.any((p) => p.id == id));
         final alive = _pages.map((p) => p.id).toSet();
         _expansionControllers.removeWhere((id, _) => !alive.contains(id));
         if (_selectedPageId != null &&
@@ -385,17 +426,24 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       });
     } on ApiException catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.message)));
     }
   }
 
-  Future<void> _confirmDeletePage(AdminScreenPageRow p, AppLocalizations l10n) async {
+  Future<void> _confirmDeletePage(
+    AdminScreenPageRow p,
+    AppLocalizations l10n,
+  ) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(l10n.adminScreenPageDeleteTitle),
         content: Text(
-          l10n.adminScreenPageDeleteConfirm(_tv2PageTypeLabel(l10n, p.pageType)),
+          l10n.adminScreenPageDeleteConfirm(
+            _tv2PageTypeLabel(l10n, p.pageType),
+          ),
         ),
         actions: [
           TextButton(
@@ -419,17 +467,21 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       _detailByPageId.remove(p.id);
       await _reload();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.adminScreenPageDeleted)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(l10n.adminScreenPageDeleted)));
       }
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
       }
     }
   }
@@ -445,17 +497,21 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
           ),
       ]);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.adminTv2EditorOrderSaved)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.adminTv2EditorOrderSaved)));
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
         await _reload();
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.toString())));
         await _reload();
       }
     } finally {
@@ -496,27 +552,127 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
     _persistTv2PageOrderAfterReorder(l10n);
   }
 
-  Future<void> _addPage(AppLocalizations l10n) async {
+  Future<void> _addPage(AppLocalizations l10n, {String? pageType}) async {
     final nextOrder = _pages.isEmpty
         ? 0
         : _pages.map((e) => e.sortOrder).reduce((a, b) => a > b ? a : b) + 1;
     try {
-      await widget.screensRepo.addScreenPage(
+      final created = await widget.screensRepo.addScreenPage(
         widget.screenId,
-        pageType: _newPageType,
+        pageType: pageType ?? _newPageType,
         sortOrder: nextOrder,
       );
       await _reload();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.adminTv2EditorPageAdded)),
-        );
+        setState(() => _selectedPageId = created.id);
+        unawaited(_loadDetail(created.id));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(l10n.adminTv2EditorPageAdded)));
       }
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
+  }
+
+  Future<void> _showTv2Help(AppLocalizations l10n) {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.help_outline_rounded),
+            SizedBox(width: 10),
+            Text('Справка по ТВ2'),
+          ],
+        ),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 680),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  l10n.adminTv2EditorSubtitle,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                const SizedBox(height: 16),
+                const TvMediaHintCard(showMixed: true),
+                const SizedBox(height: 16),
+                Text(
+                  l10n.adminTv2UserGuideTitle,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 8),
+                for (final text in [
+                  l10n.adminTv2UserGuide1,
+                  l10n.adminTv2UserGuide2,
+                  l10n.adminTv2UserGuide3,
+                  l10n.adminTv2UserGuide4,
+                ])
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(text, style: Theme.of(context).textTheme.bodySmall),
+                  ),
+                Text(
+                  l10n.adminTv2UserGuidePhotoHint,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Закрыть'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showAddPageDialog(AppLocalizations l10n) async {
+    var selectedType = _newPageType;
+    final pageType = await showDialog<String>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(l10n.adminScreenPageTypeLabel),
+          content: SizedBox(
+            width: 1080,
+            child: TvLayoutTypePicker(
+              options: tv2PageTypeOptions(l10n),
+              selectedId: selectedType,
+              hint: l10n.adminTvPageTypePickerHint,
+              crossAxisCount: 4,
+              onSelected: (value) => setDialogState(() => selectedType = value),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: Text(l10n.actionCancel),
+            ),
+            FilledButton.icon(
+              onPressed: () => Navigator.pop(context, selectedType),
+              icon: const Icon(Icons.add_rounded),
+              label: Text(l10n.adminScreenPageAdd),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (pageType == null || !mounted) return;
+    setState(() => _newPageType = pageType);
+    await _addPage(l10n, pageType: pageType);
   }
 
   Future<void> _saveTitles(
@@ -534,13 +690,15 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       );
       await _afterPageMutation(pageId);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.adminTv2EditorTitlesSaved)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(l10n.adminTv2EditorTitlesSaved)));
       }
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
   }
@@ -564,9 +722,9 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         ok++;
       } on ApiException catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(e.message)),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(e.message)));
         }
       }
     }
@@ -598,13 +756,15 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       );
       await _afterPageMutation(pageId);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.adminTv2EditorItemRemoved)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(l10n.adminTv2EditorItemRemoved)));
       }
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
   }
@@ -647,7 +807,9 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       await _afterPageMutation(pageId);
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
   }
@@ -684,7 +846,9 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       await _afterPageMutation(pageId);
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
   }
@@ -703,7 +867,9 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       await _afterPageMutation(pageId);
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
   }
@@ -730,13 +896,15 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       await _afterPageMutation(pageId);
       if (mounted) {
         final ln = AppLocalizations.of(context)!;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(ln.adminTv2PageLayoutSaved)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(ln.adminTv2PageLayoutSaved)));
       }
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
   }
@@ -760,7 +928,9 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       await _afterPageMutation(pageId);
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
   }
@@ -781,7 +951,9 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       await _pickItemDialog(pageId, 'hero', l10n);
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
   }
@@ -803,13 +975,15 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       );
       await _afterPageMutation(pageId);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.adminTv2EditorItemAdded)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(l10n.adminTv2EditorItemAdded)));
       }
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
   }
@@ -826,8 +1000,26 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         return l10n.adminTv2PageTypeList;
       case 'product_grid':
         return l10n.adminTv2PageTypeProductGrid;
+      case 'four_showcase':
+        return 'Витрина 4 товара';
+      case 'editorial_showcase':
+        return 'Красная витрина';
+      case 'two_product_equal':
+        return 'Два товара — поровну';
+      case 'two_product_diagonal':
+        return 'Два товара — акция';
+      case 'pizza_show':
+        return 'Пицца — шоу';
+      case 'pizza_grid':
+        return 'Пицца — витрина';
       case 'video_bg':
         return l10n.adminTv2PageTypeVideoBg;
+      case 'media_only':
+        return 'Только видео/фото';
+      case 'menu_ribbon':
+        return 'Лента меню';
+      case 'queue':
+        return 'Очередь заказов';
       default:
         return t;
     }
@@ -857,6 +1049,18 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
     if (_tv2EditorIsProductGrid(pageType) && role == 'list') {
       return l10n.adminTv2EditorRoleProductGridItem;
     }
+    if (_tv2EditorIsFourShowcase(pageType) && role == 'list') {
+      return 'Товары витрины';
+    }
+    if (_tv2EditorIsEditorialShowcase(pageType) && role == 'list') {
+      return 'Товары красной витрины';
+    }
+    if (_tv2EditorIsTwoProductShowcase(pageType)) {
+      return role == 'left' ? 'Левый товар' : 'Правый товар';
+    }
+    if (_tv2EditorIsPizzaPage(pageType) && role == 'list') {
+      return 'Пицца (все размеры 25/30/35)';
+    }
     return _roleLabel(l10n, role);
   }
 
@@ -865,7 +1069,7 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
     String role,
     AppLocalizations l10n,
   ) async {
-    final isHero = role == 'hero';
+    final isSingleSlot = role == 'hero' || role == 'left' || role == 'right';
     final ids = await showDialog<List<String>>(
       context: context,
       builder: (ctx) {
@@ -882,7 +1086,7 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
                       e.id.toLowerCase().contains(q.toLowerCase()),
                 )
                 .toList();
-            final nSel = isHero ? (heroId != null ? 1 : 0) : selected.length;
+            final nSel = isSingleSlot ? (heroId != null ? 1 : 0) : selected.length;
             return AlertDialog(
               title: Text(l10n.adminTv2EditorPickItem),
               content: SizedBox(
@@ -909,15 +1113,27 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
                         itemCount: filtered.length,
                         itemBuilder: (_, i) {
                           final it = filtered[i];
-                          if (isHero) {
+                          if (isSingleSlot) {
                             final sel = heroId == it.id;
                             return ListTile(
                               leading: Icon(
-                                sel ? Icons.radio_button_checked : Icons.radio_button_off,
-                                color: sel ? Theme.of(ctx).colorScheme.primary : null,
+                                sel
+                                    ? Icons.radio_button_checked
+                                    : Icons.radio_button_off,
+                                color: sel
+                                    ? Theme.of(ctx).colorScheme.primary
+                                    : null,
                               ),
-                              title: Text(it.name.ru, maxLines: 2, overflow: TextOverflow.ellipsis),
-                              subtitle: Text(it.id, maxLines: 1, overflow: TextOverflow.ellipsis),
+                              title: Text(
+                                it.name.ru,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              subtitle: Text(
+                                it.id,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                               selected: sel,
                               dense: true,
                               onTap: () => setSt(() => heroId = it.id),
@@ -932,8 +1148,16 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
                                 selected.remove(it.id);
                               }
                             }),
-                            title: Text(it.name.ru, maxLines: 2, overflow: TextOverflow.ellipsis),
-                            subtitle: Text(it.id, maxLines: 1, overflow: TextOverflow.ellipsis),
+                            title: Text(
+                              it.name.ru,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              it.id,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
                             dense: true,
                             controlAffinity: ListTileControlAffinity.leading,
                           );
@@ -952,9 +1176,9 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
                   onPressed: nSel < 1
                       ? null
                       : () {
-                          if (isHero && heroId != null) {
+                          if (isSingleSlot && heroId != null) {
                             Navigator.pop(ctx, [heroId!]);
-                          } else if (!isHero) {
+                          } else {
                             Navigator.pop(ctx, selected.toList());
                           }
                         },
@@ -1004,7 +1228,9 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       );
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     }
   }
@@ -1063,6 +1289,11 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
         title: Text(l10n.adminTv2EditorTitle),
         actions: [
           IconButton(
+            tooltip: 'Справка',
+            icon: const Icon(Icons.help_outline_rounded),
+            onPressed: _loading ? null : () => _showTv2Help(l10n),
+          ),
+          IconButton(
             tooltip: l10n.adminTv2EditorPreviewOnTv,
             icon: const Icon(Icons.live_tv_rounded),
             onPressed: _loading ? null : () => _openPreview(l10n),
@@ -1072,171 +1303,129 @@ class _Tv2ScreenPagesEditorScreenState extends State<Tv2ScreenPagesEditorScreen>
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
+          ? Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_error!, textAlign: TextAlign.center),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: _reload,
+                      child: Text(l10n.actionRetry),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final wide = constraints.maxWidth >= 840;
+                final header = Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
                       children: [
-                        Text(_error!, textAlign: TextAlign.center),
-                        const SizedBox(height: 16),
-                        FilledButton(
-                          onPressed: _reload,
-                          child: Text(l10n.actionRetry),
+                        Expanded(
+                          child: Text(
+                            l10n.adminTv2EditorSubtitle,
+                            style: Theme.of(context).textTheme.bodyMedium,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        FilledButton.icon(
+                          onPressed: () => _showAddPageDialog(l10n),
+                          icon: const Icon(Icons.add_rounded),
+                          label: Text(l10n.adminScreenPageAdd),
                         ),
                       ],
                     ),
-                  ),
-                )
-              : LayoutBuilder(
-                  builder: (context, constraints) {
-                    final wide = constraints.maxWidth >= 840;
-                    final header = Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Text(
-                          l10n.adminTv2EditorSubtitle,
-                          style: Theme.of(context).textTheme.bodyMedium,
-                        ),
-                        const SizedBox(height: 16),
-                        ExpansionTile(
-                          tilePadding: EdgeInsets.zero,
-                          title: Text(
-                            l10n.adminTv2UserGuideTitle,
-                            style: Theme.of(context).textTheme.titleSmall,
-                          ),
-                          children: [
-                            Text(
-                              l10n.adminTv2UserGuide1,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              l10n.adminTv2UserGuide2,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              l10n.adminTv2UserGuide3,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              l10n.adminTv2UserGuide4,
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              l10n.adminTv2UserGuidePhotoHint,
-                              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                    color: Theme.of(context).colorScheme.primary,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          l10n.adminScreenPageTypeLabel,
-                          style: Theme.of(context).textTheme.titleSmall,
-                        ),
-                        const SizedBox(height: 8),
-                        TvLayoutTypePicker(
-                          options: tv2PageTypeOptions(l10n),
-                          selectedId: _newPageType,
-                          hint: l10n.adminTvPageTypePickerHint,
-                          crossAxisCount: constraints.maxWidth >= 720 ? 3 : 2,
-                          onSelected: (v) => setState(() => _newPageType = v),
-                        ),
-                        const SizedBox(height: 12),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: FilledButton.icon(
-                            onPressed: () => _addPage(l10n),
-                            icon: const Icon(Icons.add_rounded),
-                            label: Text(l10n.adminScreenPageAdd),
-                          ),
-                        ),
-                      ],
-                    );
+                  ],
+                );
 
-                    if (_pages.isEmpty) {
-                      return ListView(
-                        padding: const EdgeInsets.all(16),
-                        children: [
-                          header,
-                          const SizedBox(height: 24),
-                          Text(l10n.adminTv2EditorNoPages),
-                        ],
-                      );
-                    }
+                if (_pages.isEmpty) {
+                  return ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      header,
+                      const SizedBox(height: 24),
+                      Text(l10n.adminTv2EditorNoPages),
+                    ],
+                  );
+                }
 
-                    if (!wide) {
-                      return ListView(
-                        padding: const EdgeInsets.all(16),
-                        children: [
-                          header,
-                          const SizedBox(height: 24),
-                          Text(
-                            l10n.adminTv2EditorReorderHint,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                          const SizedBox(height: 8),
-                          IgnorePointer(
-                            ignoring: _savingPageOrder,
-                            child: Opacity(
-                              opacity: _savingPageOrder ? 0.55 : 1,
-                              child: ReorderableListView(
-                                shrinkWrap: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                buildDefaultDragHandles: false,
-                                onReorder: (oldIndex, newIndex) =>
-                                    _onReorderTv2Pages(oldIndex, newIndex, l10n),
-                                children: [
-                                  for (var i = 0; i < _pages.length; i++)
-                                    _buildTv2PageCard(i, l10n),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      );
-                    }
-
-                    final selectedIndex = _pages.indexWhere(
-                      (p) => p.id == _selectedPageId,
-                    );
-
-                    return AdminTvMasterDetailLayout(
-                      header: header,
-                      master: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Text(
-                            l10n.adminTv2EditorReorderHint,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                          const SizedBox(height: 8),
-                          for (final p in _pages)
-                            AdminTvPageMasterTile(
-                              title:
-                                  '${l10n.adminTv2EditorPageLabel} #${p.id} · ${p.pageType}',
-                              subtitle: l10n.adminScreenPageItems(p.itemsCount),
-                              selected: p.id == _selectedPageId,
-                              onTap: () {
-                                setState(() => _selectedPageId = p.id);
-                                unawaited(_loadDetail(p.id));
-                              },
-                              onDelete: () => _confirmDeletePage(p, l10n),
-                            ),
-                        ],
+                if (!wide) {
+                  return ListView(
+                    padding: const EdgeInsets.all(16),
+                    children: [
+                      header,
+                      const SizedBox(height: 24),
+                      Text(
+                        l10n.adminTv2EditorReorderHint,
+                        style: Theme.of(context).textTheme.bodySmall,
                       ),
-                      detail: selectedIndex < 0
-                          ? null
-                          : _buildTv2PageCard(selectedIndex, l10n, detailOnly: true),
-                    );
-                  },
-                ),
+                      const SizedBox(height: 8),
+                      IgnorePointer(
+                        ignoring: _savingPageOrder,
+                        child: Opacity(
+                          opacity: _savingPageOrder ? 0.55 : 1,
+                          child: ReorderableListView(
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            buildDefaultDragHandles: false,
+                            onReorder: (oldIndex, newIndex) =>
+                                _onReorderTv2Pages(oldIndex, newIndex, l10n),
+                            children: [
+                              for (var i = 0; i < _pages.length; i++)
+                                _buildTv2PageCard(i, l10n),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                }
+
+                final selectedIndex = _pages.indexWhere(
+                  (p) => p.id == _selectedPageId,
+                );
+
+                return AdminTvMasterDetailLayout(
+                  header: header,
+                  detailScrollIdentity: _selectedPageId,
+                  master: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        l10n.adminTv2EditorReorderHint,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 8),
+                      for (final p in _pages)
+                        AdminTvPageMasterTile(
+                          title:
+                              '${l10n.adminTv2EditorPageLabel} #${p.id} · ${p.pageType}',
+                          subtitle: l10n.adminScreenPageItems(p.itemsCount),
+                          selected: p.id == _selectedPageId,
+                          onTap: () {
+                            setState(() => _selectedPageId = p.id);
+                            unawaited(_loadDetail(p.id));
+                          },
+                          onDelete: () => _confirmDeletePage(p, l10n),
+                        ),
+                    ],
+                  ),
+                  detail: selectedIndex < 0
+                      ? null
+                      : _buildTv2PageCard(
+                          selectedIndex,
+                          l10n,
+                          detailOnly: true,
+                        ),
+                );
+              },
+            ),
     );
   }
 }
@@ -1257,6 +1446,7 @@ class _Tv2LayoutMiniPreview extends StatelessWidget {
   final String secondTitle;
   final List<ScreenPageItemRow> items;
   final AppLocalizations l10n;
+
   /// Для `video_bg`: `tvVideoBg`, `tv2Content` и т.д.
   final Map<String, dynamic>? pageConfig;
 
@@ -1264,6 +1454,13 @@ class _Tv2LayoutMiniPreview extends StatelessWidget {
     final copy = List<ScreenPageItemRow>.from(raw);
     copy.sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
     return copy;
+  }
+
+  static Color _showcaseColor(Object? raw, Color fallback) {
+    var value = raw?.toString().trim() ?? '';
+    if (value.startsWith('#')) value = value.substring(1);
+    if (value.length == 6) value = 'FF$value';
+    return Color(int.tryParse(value, radix: 16) ?? fallback.value);
   }
 
   static List<Widget> _productTiles(
@@ -1361,8 +1558,9 @@ class _Tv2LayoutMiniPreview extends StatelessWidget {
     }
 
     if (t == 'product_grid') {
-      final gridItems =
-          sorted.where((e) => e.role.toLowerCase().trim() == 'list').toList();
+      final gridItems = sorted
+          .where((e) => e.role.toLowerCase().trim() == 'list')
+          .toList();
       final cols = _previewProductGridCols(pageConfig);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1400,6 +1598,296 @@ class _Tv2LayoutMiniPreview extends StatelessWidget {
       );
     }
 
+    if (t == 'two_product_equal' || t == 'two_product_diagonal') {
+      final leftRows = sorted
+          .where((e) => e.role.toLowerCase().trim() == 'left')
+          .toList();
+      final rightRows = sorted
+          .where((e) => e.role.toLowerCase().trim() == 'right')
+          .toList();
+      final left = leftRows.isEmpty ? null : leftRows.first;
+      final right = rightRows.isEmpty ? null : rightRows.first;
+      final leftBg = _showcaseColor(
+        pageConfig?['twoProductLeftBackground'],
+        const Color(0xFF970B21),
+      );
+      final rightBg = _showcaseColor(
+        pageConfig?['twoProductRightBackground'],
+        const Color(0xFFE4002B),
+      );
+      final leftName = _showcaseColor(
+        pageConfig?['twoProductLeftNameColor'],
+        Colors.white,
+      );
+      final rightName = _showcaseColor(
+        pageConfig?['twoProductRightNameColor'],
+        Colors.white,
+      );
+      final leftPrice = _showcaseColor(
+        pageConfig?['twoProductLeftPriceColor'],
+        const Color(0xFFFFDD7A),
+      );
+      final rightPrice = _showcaseColor(
+        pageConfig?['twoProductRightPriceColor'],
+        const Color(0xFFFFDD7A),
+      );
+      Widget tile(ScreenPageItemRow? item, Color name, Color price) => Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.fastfood_rounded, size: 34, color: name.withValues(alpha: .78)),
+          const SizedBox(height: 4),
+          Text(
+            item?.name.ru ?? 'Выберите товар',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.labelMedium?.copyWith(color: name, fontWeight: FontWeight.w800),
+          ),
+          Text(
+            item == null ? '' : 'Цена из меню',
+            style: theme.textTheme.labelSmall?.copyWith(color: price, fontWeight: FontWeight.w900),
+          ),
+        ],
+      );
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            t == 'two_product_equal'
+                ? 'Предпросмотр «Два товара — поровну»'
+                : 'Предпросмотр «Два товара — акция»',
+            style: theme.textTheme.titleSmall,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Товар, фон, цвета и размеры текста настраиваются отдельно; на ТВ они плавно появляются.',
+            style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 8),
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(10),
+              child: t == 'two_product_equal'
+                  ? Row(
+                      children: [
+                        Expanded(child: ColoredBox(color: leftBg, child: tile(left, leftName, leftPrice))),
+                        const VerticalDivider(width: 1, thickness: 1, color: Colors.white54),
+                        Expanded(child: ColoredBox(color: rightBg, child: tile(right, rightName, rightPrice))),
+                      ],
+                    )
+                  : Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        ColoredBox(color: rightBg),
+                        ClipPath(
+                          clipper: const _TwoProductPreviewDiagonalClipper(),
+                          child: ColoredBox(color: leftBg),
+                        ),
+                        Row(
+                          children: [
+                            Expanded(child: tile(left, leftName, leftPrice)),
+                            Expanded(child: tile(right, rightName, rightPrice)),
+                          ],
+                        ),
+                      ],
+                    ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (t == 'four_showcase') {
+      final showcaseItems = sorted
+          .where((e) => e.role.toLowerCase().trim() == 'list')
+          .take(4)
+          .toList();
+      final bgStart = _showcaseColor(
+        pageConfig?['fourShowcaseBackgroundStart'],
+        const Color(0xFF140305),
+      );
+      final bgEnd = _showcaseColor(
+        pageConfig?['fourShowcaseBackgroundEnd'],
+        const Color(0xFFE4002B),
+      );
+      final nameColor = _showcaseColor(
+        pageConfig?['fourShowcaseNameColor'],
+        Colors.white,
+      );
+      final priceColor = _showcaseColor(
+        pageConfig?['fourShowcasePriceColor'],
+        Colors.white,
+      );
+      final priceBg = _showcaseColor(
+        pageConfig?['fourShowcasePriceBackground'],
+        const Color(0xFFE4002B),
+      );
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Предпросмотр витрины', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 6),
+          Text(
+            'На экране всегда ровно четыре товара. Смена лишних позиций — слева направо.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 8),
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                gradient: LinearGradient(colors: [bgStart, bgEnd]),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: List.generate(4, (index) {
+                    final item = index < showcaseItems.length
+                        ? showcaseItems[index]
+                        : null;
+                    return Expanded(
+                      child: Padding(
+                        padding: EdgeInsets.only(right: index == 3 ? 0 : 6),
+                        child: Column(
+                          children: [
+                            Expanded(
+                              child: Center(
+                                child: Icon(
+                                  Icons.fastfood_rounded,
+                                  size: 28,
+                                  color: nameColor.withValues(alpha: .78),
+                                ),
+                              ),
+                            ),
+                            Text(
+                              item?.name.ru ?? 'Товар',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: nameColor,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: priceBg,
+                                borderRadius: BorderRadius.circular(99),
+                              ),
+                              child: Text(
+                                '25 с.',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: priceColor,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    if (t == 'editorial_showcase') {
+      final showcaseItems = sorted
+          .where((e) => e.role.toLowerCase().trim() == 'list')
+          .take(6)
+          .toList();
+      final bgStart = _showcaseColor(
+        pageConfig?['editorialBackgroundStart'],
+        const Color(0xFFE4002B),
+      );
+      final bgEnd = _showcaseColor(
+        pageConfig?['editorialBackgroundEnd'],
+        const Color(0xFFB3001B),
+      );
+      final nameColor = _showcaseColor(
+        pageConfig?['editorialNameColor'],
+        const Color(0xFF8B111A),
+      );
+      final labelBg = _showcaseColor(
+        pageConfig?['editorialLabelBackground'],
+        const Color(0xFFFFF4E5),
+      );
+      Widget chip(int index, {bool large = false}) {
+        final item = index < showcaseItems.length ? showcaseItems[index] : null;
+        return DecoratedBox(
+          decoration: BoxDecoration(
+            color: labelBg,
+            borderRadius: BorderRadius.circular(large ? 14 : 8),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.fastfood_rounded, size: large ? 32 : 18, color: nameColor),
+                Text(
+                  item?.name.ru ?? 'Товар',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.labelSmall?.copyWith(color: nameColor, fontWeight: FontWeight.w800),
+                ),
+                Text(
+                  '25 с.',
+                  style: theme.textTheme.labelSmall?.copyWith(color: nameColor, fontWeight: FontWeight.w900),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Предпросмотр красной витрины', style: theme.textTheme.titleSmall),
+          const SizedBox(height: 6),
+          Text(
+            'Главный товар крупный в центре, вокруг — ещё пять позиций. При избытке товаров — плавная смена.',
+            style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 8),
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                gradient: LinearGradient(colors: [bgStart, bgEnd]),
+              ),
+              child: Stack(
+                children: [
+                  Positioned(left: 14, top: 16, width: 56, child: chip(1)),
+                  Positioned(left: 100, top: 12, width: 46, child: chip(2)),
+                  Positioned(right: 12, top: 30, width: 62, child: chip(3)),
+                  Positioned(left: 30, bottom: 12, width: 44, child: chip(4)),
+                  Positioned(right: 28, bottom: 10, width: 56, child: chip(5)),
+                  Positioned(left: 76, right: 76, top: 58, bottom: 4, child: chip(0, large: true)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
     if (t == 'video_bg') {
       final cfg = pageConfig;
       final vg = cfg?['tvVideoBg'] ?? cfg?['tv_video_bg'];
@@ -1414,12 +1902,11 @@ class _Tv2LayoutMiniPreview extends StatelessWidget {
         }
       }
       final tc = cfg?['tv2Content'] ?? cfg?['tv2_content'];
-      final isCombo = tc is Map &&
+      final isCombo =
+          tc is Map &&
           (tc['mode'] ?? '').toString().toLowerCase().trim() == 'combo';
       final heroes = sorted.where((e) => e.role == 'hero').toList();
-      final heroLabel = heroes.isEmpty
-          ? null
-          : heroes.first.name.ru;
+      final heroLabel = heroes.isEmpty ? null : heroes.first.name.ru;
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1502,7 +1989,7 @@ class _Tv2LayoutMiniPreview extends StatelessWidget {
                                 isCombo
                                     ? l10n.adminTv2VideoBgModeCombo
                                     : (heroLabel ??
-                                        l10n.adminTv2EditorLayoutHeroEmpty),
+                                          l10n.adminTv2EditorLayoutHeroEmpty),
                                 maxLines: 2,
                                 overflow: TextOverflow.ellipsis,
                                 style: theme.textTheme.titleSmall?.copyWith(
@@ -1738,7 +2225,7 @@ class _PageCard extends StatefulWidget {
   final int reorderListIndex;
   final AdminScreenPageRow pageListRow;
   final _PageDetail? detail;
-  final ExpansionTileController expansionController;
+  final ExpansibleController expansionController;
   final ValueChanged<bool> onExpansionChanged;
   final AppLocalizations l10n;
   final CombosAdminRepository combosRepo;
@@ -1748,7 +2235,7 @@ class _PageCard extends StatefulWidget {
   final Future<void> Function(String role) onPickItem;
   final Future<void> Function(int itemRowId) onRemoveItem;
   final Future<void> Function(String role, int oldIndex, int newIndex)
-      onReorderItems;
+  onReorderItems;
   final Future<void> Function(Map<String, dynamic> patch) onPatchTvVideoBg;
   final Future<void> Function(Map<String, dynamic> patch) onPatchPageLayout;
   final Future<void> Function() onVideoBgPickHero;
@@ -1803,7 +2290,9 @@ class _PageCardState extends State<_PageCard> {
     }
     setState(() => _savingLayout = true);
     try {
-      await widget.onPatchPageLayout(Map<String, dynamic>.from(_pendingLayoutPatch));
+      await widget.onPatchPageLayout(
+        Map<String, dynamic>.from(_pendingLayoutPatch),
+      );
       if (!mounted) return;
       setState(() {
         _pendingLayoutPatch.clear();
@@ -1865,17 +2354,31 @@ class _PageCardState extends State<_PageCard> {
     final pt = p.pageType.toLowerCase().trim();
     final listOnly = _tv2EditorIsCatalogPage(p.pageType);
     final productGrid = _tv2EditorIsProductGrid(p.pageType);
+    final fourShowcase = _tv2EditorIsFourShowcase(p.pageType);
+    final editorialShowcase = _tv2EditorIsEditorialShowcase(p.pageType);
+    final twoProductShowcase = _tv2EditorIsTwoProductShowcase(p.pageType);
+    final pizzaPage = _tv2EditorIsPizzaPage(p.pageType);
     final videoBg = pt == 'video_bg';
     final pageCfg = _effectivePageConfig();
     final roles = _tv2EditorRoles(p.pageType, pageCfg);
 
     final subtitleHint = videoBg
         ? l10n.adminTv2EditorPageHintVideoBg
+        : pizzaPage
+        ? (pt == 'pizza_show'
+              ? 'Добавьте все размеры одной пиццы (25/30/35) — на ТВ они склеятся.'
+              : 'Сетка пицц: добавьте позиции всех размеров, настройте колонки и цвета.')
         : _tv2EditorIsProductGrid(p.pageType)
-            ? l10n.adminTv2EditorPageHintProductGrid
-            : listOnly
-                ? l10n.adminTv2EditorPageHintList
-                : l10n.adminTv2EditorPageHintSplit;
+        ? l10n.adminTv2EditorPageHintProductGrid
+        : fourShowcase
+        ? 'На ТВ всегда четыре товара. Добавьте больше четырёх — позиции будут плавно сменяться.'
+        : editorialShowcase
+        ? 'На ТВ большой главный товар и пять акцентных. Добавьте больше шести — товары будут плавно сменяться.'
+        : twoProductShowcase
+        ? 'Выберите строго один товар слева и один справа. Каждый появится на экране плавно.'
+        : listOnly
+        ? l10n.adminTv2EditorPageHintList
+        : l10n.adminTv2EditorPageHintSplit;
 
     final editorBody = Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -1888,8 +2391,16 @@ class _PageCardState extends State<_PageCard> {
               decoration: InputDecoration(
                 labelText: listOnly
                     ? (_tv2EditorIsProductGrid(p.pageType)
-                        ? l10n.adminTv2EditorProductGridTitleRu
-                        : l10n.adminTv2EditorListGridTitleRu)
+                          ? l10n.adminTv2EditorProductGridTitleRu
+                          : fourShowcase
+                          ? 'Служебное название страницы (на ТВ не видно)'
+                          : editorialShowcase
+                          ? 'Служебное название страницы (на ТВ не видно)'
+                          : twoProductShowcase
+                          ? 'Служебное название страницы (на ТВ не видно)'
+                          : pizzaPage
+                          ? 'Заголовок страницы пицц'
+                          : l10n.adminTv2EditorListGridTitleRu)
                     : l10n.adminTv2EditorListTitleRu,
                 border: const OutlineInputBorder(),
               ),
@@ -1906,7 +2417,8 @@ class _PageCardState extends State<_PageCard> {
             ],
             const SizedBox(height: 8),
             FilledButton(
-              onPressed: () => widget.onSaveTitles(_listCtrl.text, _secondCtrl.text),
+              onPressed: () =>
+                  widget.onSaveTitles(_listCtrl.text, _secondCtrl.text),
               child: Text(l10n.adminTv2EditorSaveTitles),
             ),
             if (productGrid) ...[
@@ -1917,6 +2429,42 @@ class _PageCardState extends State<_PageCard> {
                 itemCount: items
                     .where((e) => e.role.toLowerCase().trim() == 'list')
                     .length,
+                onDraftChanged: _mergeLayoutDraft,
+              ),
+            ],
+            if (fourShowcase) ...[
+              const Divider(height: 24),
+              _FourProductShowcaseLayoutEditor(
+                config: pageCfg,
+                itemCount: items
+                    .where((e) => e.role.toLowerCase().trim() == 'list')
+                    .length,
+                onDraftChanged: _mergeLayoutDraft,
+              ),
+            ],
+            if (editorialShowcase) ...[
+              const Divider(height: 24),
+              _EditorialShowcaseLayoutEditor(
+                config: pageCfg,
+                itemCount: items
+                    .where((e) => e.role.toLowerCase().trim() == 'list')
+                    .length,
+                onDraftChanged: _mergeLayoutDraft,
+              ),
+            ],
+            if (twoProductShowcase) ...[
+              const Divider(height: 24),
+              _TwoProductShowcaseLayoutEditor(
+                config: pageCfg,
+                diagonal: pt == 'two_product_diagonal',
+                onDraftChanged: _mergeLayoutDraft,
+              ),
+            ],
+            if (pizzaPage) ...[
+              const Divider(height: 24),
+              _PizzaTvLayoutEditor(
+                pageType: p.pageType,
+                config: pageCfg,
                 onDraftChanged: _mergeLayoutDraft,
               ),
             ],
@@ -1973,8 +2521,8 @@ class _PageCardState extends State<_PageCard> {
               Text(
                 l10n.adminTv2PageLayoutUnsavedHint,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.primary,
-                    ),
+                  color: Theme.of(context).colorScheme.primary,
+                ),
               ),
               const SizedBox(height: 8),
               FilledButton.icon(
@@ -1989,13 +2537,15 @@ class _PageCardState extends State<_PageCard> {
                 label: Text(l10n.adminTv2PageLayoutSaveButton),
               ),
             ],
-            const Divider(height: 24),
-            _Tv2OptionalBackgroundVideoEditor(
-              l10n: l10n,
-              config: pageCfg,
-              uploadRepo: widget.uploadRepo,
-              onPatchTvVideoBg: widget.onPatchTvVideoBg,
-            ),
+            if (!fourShowcase && !editorialShowcase && !twoProductShowcase) ...[
+              const Divider(height: 24),
+              _Tv2OptionalBackgroundVideoEditor(
+                l10n: l10n,
+                config: pageCfg,
+                uploadRepo: widget.uploadRepo,
+                onPatchTvVideoBg: widget.onPatchTvVideoBg,
+              ),
+            ],
           ],
           if (videoBg) ...[
             _VideoBgPageEditor(
@@ -2016,7 +2566,7 @@ class _PageCardState extends State<_PageCard> {
               secondTitle: listOnly ? '' : _secondCtrl.text.trim(),
               items: items,
               l10n: l10n,
-              pageConfig: widget.detail?.page.config,
+              pageConfig: pageCfg,
             ),
           ],
           if (roles.isNotEmpty) ...[
@@ -2032,7 +2582,7 @@ class _PageCardState extends State<_PageCard> {
               secondTitle: listOnly ? '' : _secondCtrl.text.trim(),
               items: items,
               l10n: l10n,
-              pageConfig: widget.detail?.page.config,
+              pageConfig: pageCfg,
             ),
             const SizedBox(height: 16),
             Column(
@@ -2041,7 +2591,9 @@ class _PageCardState extends State<_PageCard> {
                 DropdownButtonFormField<String>(
                   key: ValueKey<String>('${_addRole}_${roles.join()}'),
                   isExpanded: true,
-                  initialValue: roles.contains(_addRole) ? _addRole : roles.first,
+                  initialValue: roles.contains(_addRole)
+                      ? _addRole
+                      : roles.first,
                   decoration: InputDecoration(
                     labelText: l10n.adminTv2EditorAddAsRole,
                     border: const OutlineInputBorder(),
@@ -2230,7 +2782,9 @@ class _Tv2OptionalBackgroundVideoEditorState
       await widget.onPatchTvVideoBg({'path': path});
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     } finally {
       if (mounted) setState(() => _uploading = false);
@@ -2255,7 +2809,9 @@ class _Tv2OptionalBackgroundVideoEditorState
       await widget.onPatchTvVideoBg({'imagePath': path});
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     } finally {
       if (mounted) setState(() => _uploading = false);
@@ -2423,7 +2979,9 @@ class _VideoBgPageEditorState extends State<_VideoBgPageEditor> {
       await widget.onPatchTvVideoBg({'path': path});
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     } finally {
       if (mounted) setState(() => _uploading = false);
@@ -2448,7 +3006,9 @@ class _VideoBgPageEditorState extends State<_VideoBgPageEditor> {
       await widget.onPatchTvVideoBg({'imagePath': path});
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     } finally {
       if (mounted) setState(() => _uploading = false);
@@ -2492,7 +3052,10 @@ class _VideoBgPageEditorState extends State<_VideoBgPageEditor> {
           onSelected: (v) => widget.onPatchTvVideoBg({'showItemImages': v}),
         ),
         const Divider(height: 24),
-        Text(l10n.adminTv2VideoBgContentSource, style: theme.textTheme.titleSmall),
+        Text(
+          l10n.adminTv2VideoBgContentSource,
+          style: theme.textTheme.titleSmall,
+        ),
         const SizedBox(height: 8),
         SegmentedButton<String>(
           segments: [
@@ -2543,7 +3106,8 @@ class _VideoBgPageEditorState extends State<_VideoBgPageEditor> {
               FilterChip(
                 label: Text(l10n.adminTv2VideoBgShowDescription),
                 selected: _vgBool('showDescription', 'show_description'),
-                onSelected: (v) => widget.onPatchTvVideoBg({'showDescription': v}),
+                onSelected: (v) =>
+                    widget.onPatchTvVideoBg({'showDescription': v}),
               ),
               FilterChip(
                 label: Text(l10n.adminTv2VideoBgShowPrice),
@@ -2563,7 +3127,8 @@ class _VideoBgPageEditorState extends State<_VideoBgPageEditor> {
                 labelText: l10n.adminTv2VideoBgSelectCombo,
                 border: const OutlineInputBorder(),
               ),
-              initialValue: _comboPick != null && _combos.any((c) => c.id == _comboPick)
+              initialValue:
+                  _comboPick != null && _combos.any((c) => c.id == _comboPick)
                   ? _comboPick
                   : null,
               items: [
@@ -2592,7 +3157,8 @@ class _VideoBgPageEditorState extends State<_VideoBgPageEditor> {
               FilterChip(
                 label: Text(l10n.adminTv2VideoBgShowDescription),
                 selected: _vgBool('showDescription', 'show_description'),
-                onSelected: (v) => widget.onPatchTvVideoBg({'showDescription': v}),
+                onSelected: (v) =>
+                    widget.onPatchTvVideoBg({'showDescription': v}),
               ),
               FilterChip(
                 label: Text(l10n.adminTv2VideoBgShowPrice),
@@ -2602,7 +3168,8 @@ class _VideoBgPageEditorState extends State<_VideoBgPageEditor> {
               FilterChip(
                 label: Text(l10n.adminTv2VideoBgShowComboComposition),
                 selected: _vgBool('showComboParts', 'show_combo_parts'),
-                onSelected: (v) => widget.onPatchTvVideoBg({'showComboParts': v}),
+                onSelected: (v) =>
+                    widget.onPatchTvVideoBg({'showComboParts': v}),
               ),
             ],
           ),
@@ -2629,7 +3196,7 @@ class _PageItemsReorderSection extends StatelessWidget {
   final String Function(AppLocalizations l10n, String role) roleLabel;
   final Future<void> Function(int itemRowId) onRemoveItem;
   final Future<void> Function(String role, int oldIndex, int newIndex)
-      onReorderItems;
+  onReorderItems;
 
   @override
   Widget build(BuildContext context) {
@@ -2688,7 +3255,7 @@ class _RoleItemsList extends StatelessWidget {
   final AppLocalizations l10n;
   final Future<void> Function(int itemRowId) onRemoveItem;
   final Future<void> Function(String role, int oldIndex, int newIndex)
-      onReorderItems;
+  onReorderItems;
 
   @override
   Widget build(BuildContext context) {
@@ -2696,7 +3263,11 @@ class _RoleItemsList extends StatelessWidget {
       final it = items.first;
       return ListTile(
         title: Text(it.name.ru),
-        subtitle: Text(it.menuItemId, maxLines: 1, overflow: TextOverflow.ellipsis),
+        subtitle: Text(
+          it.menuItemId,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         trailing: IconButton(
           icon: const Icon(Icons.delete_outline_rounded),
           onPressed: () => onRemoveItem(it.id),
@@ -2730,7 +3301,11 @@ class _RoleItemsList extends StatelessWidget {
                   color: Theme.of(context).colorScheme.outline,
                 ),
               ),
-              title: Text(it.name.ru, maxLines: 2, overflow: TextOverflow.ellipsis),
+              title: Text(
+                it.name.ru,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
               subtitle: Text(
                 it.menuItemId,
                 maxLines: 1,
@@ -2747,7 +3322,6 @@ class _RoleItemsList extends StatelessWidget {
     );
   }
 }
-
 /// Конструктор сетки `product_grid`: свайп влево/вправо меняет число колонок (2–5).
 class _ProductGridLayoutEditor extends StatefulWidget {
   const _ProductGridLayoutEditor({
@@ -2807,15 +3381,17 @@ class _ProductGridLayoutEditorState extends State<_ProductGridLayoutEditor> {
 
   void _emitDraft() {
     widget.onDraftChanged({
-      'tv2ProductGridColumns':
-          (_cols >= 2 && _cols <= 5) ? _cols : null,
+      'tv2ProductGridColumns': (_cols >= 2 && _cols <= 5) ? _cols : null,
       'tv2ProductGridCardSize': _cardSize,
-      'tv2ProductGridNameSizeMode':
-          _nameMode == TvProductGridSizeMode.auto ? 'auto' : 'manual',
-      'tv2ProductGridNameSize':
-          _nameMode == TvProductGridSizeMode.manual ? _nameSize.round() : null,
-      'tv2ProductGridPriceSizeMode':
-          _priceMode == TvProductGridSizeMode.auto ? 'auto' : 'manual',
+      'tv2ProductGridNameSizeMode': _nameMode == TvProductGridSizeMode.auto
+          ? 'auto'
+          : 'manual',
+      'tv2ProductGridNameSize': _nameMode == TvProductGridSizeMode.manual
+          ? _nameSize.round()
+          : null,
+      'tv2ProductGridPriceSizeMode': _priceMode == TvProductGridSizeMode.auto
+          ? 'auto'
+          : 'manual',
       'tv2ProductGridPriceSize': _priceMode == TvProductGridSizeMode.manual
           ? _priceSize.round()
           : null,
@@ -2928,7 +3504,10 @@ class _ProductGridLayoutEditorState extends State<_ProductGridLayoutEditor> {
           ),
         ),
         const SizedBox(height: 10),
-        Text(l10n.adminTv2ProductGridNameSizeLabel, style: theme.textTheme.labelLarge),
+        Text(
+          l10n.adminTv2ProductGridNameSizeLabel,
+          style: theme.textTheme.labelLarge,
+        ),
         const SizedBox(height: 6),
         SegmentedButton<TvProductGridSizeMode>(
           segments: [
@@ -2959,7 +3538,10 @@ class _ProductGridLayoutEditorState extends State<_ProductGridLayoutEditor> {
           ),
         ],
         const SizedBox(height: 8),
-        Text(l10n.adminTv2ProductGridPriceSizeLabel, style: theme.textTheme.labelLarge),
+        Text(
+          l10n.adminTv2ProductGridPriceSizeLabel,
+          style: theme.textTheme.labelLarge,
+        ),
         const SizedBox(height: 6),
         SegmentedButton<TvProductGridSizeMode>(
           segments: [
@@ -3113,6 +3695,972 @@ class _ProductGridLayoutEditorState extends State<_ProductGridLayoutEditor> {
               child: Text(l10n.adminScreenColsAuto),
             ),
           ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Конструктор отдельной витрины: четыре товара остаются на экране постоянно.
+class _FourProductShowcaseLayoutEditor extends StatefulWidget {
+  const _FourProductShowcaseLayoutEditor({
+    required this.config,
+    required this.itemCount,
+    required this.onDraftChanged,
+  });
+
+  final Map<String, dynamic>? config;
+  final int itemCount;
+  final void Function(Map<String, dynamic> patch) onDraftChanged;
+
+  @override
+  State<_FourProductShowcaseLayoutEditor> createState() =>
+      _FourProductShowcaseLayoutEditorState();
+}
+class _FourProductShowcaseLayoutEditorState
+    extends State<_FourProductShowcaseLayoutEditor> {
+  late TextEditingController _backgroundStart;
+  late TextEditingController _backgroundEnd;
+  late TextEditingController _logoColor;
+  late TextEditingController _nameColor;
+  late TextEditingController _priceColor;
+  late TextEditingController _priceBackground;
+  late bool _showLogo;
+  late String _font;
+  late double _photoScale;
+  late double _nameScale;
+  late double _priceScale;
+  late double _holdSec;
+  late double _transitionSec;
+
+  @override
+  void initState() {
+    super.initState();
+    _backgroundStart = TextEditingController();
+    _backgroundEnd = TextEditingController();
+    _logoColor = TextEditingController();
+    _nameColor = TextEditingController();
+    _priceColor = TextEditingController();
+    _priceBackground = TextEditingController();
+    _syncFromConfig(widget.config);
+  }
+
+  @override
+  void didUpdateWidget(covariant _FourProductShowcaseLayoutEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.config != widget.config) _syncFromConfig(widget.config);
+  }
+
+  @override
+  void dispose() {
+    _backgroundStart.dispose();
+    _backgroundEnd.dispose();
+    _logoColor.dispose();
+    _nameColor.dispose();
+    _priceColor.dispose();
+    _priceBackground.dispose();
+    super.dispose();
+  }
+
+  String _hex(Object? raw, String fallback) {
+    final value = raw?.toString().trim() ?? '';
+    if (value.isEmpty) return fallback;
+    return value.startsWith('#') ? value : '#$value';
+  }
+
+  double _double(Object? raw, double fallback) {
+    return raw is num
+        ? raw.toDouble()
+        : double.tryParse(raw?.toString() ?? '') ?? fallback;
+  }
+
+  bool _bool(Object? raw, bool fallback) {
+    if (raw is bool) return raw;
+    final value = raw?.toString().trim().toLowerCase();
+    if (value == 'false' || value == '0') return false;
+    if (value == 'true' || value == '1') return true;
+    return fallback;
+  }
+
+  void _syncFromConfig(Map<String, dynamic>? config) {
+    final c = config ?? const <String, dynamic>{};
+    _backgroundStart.text = _hex(c['fourShowcaseBackgroundStart'], '#140305');
+    _backgroundEnd.text = _hex(c['fourShowcaseBackgroundEnd'], '#E4002B');
+    _logoColor.text = _hex(c['fourShowcaseLogoColor'], '#FFFFFF');
+    _nameColor.text = _hex(c['fourShowcaseNameColor'], '#FFFFFF');
+    _priceColor.text = _hex(c['fourShowcasePriceColor'], '#FFFFFF');
+    _priceBackground.text =
+        _hex(c['fourShowcasePriceBackground'], '#E4002B');
+    _showLogo = _bool(c['fourShowcaseShowLogo'], true);
+    _font = c['fourShowcaseFont']?.toString().trim() == 'montserrat'
+        ? 'montserrat'
+        : 'oswald';
+    _photoScale = _double(c['fourShowcasePhotoScale'], 1).clamp(.65, 1.45);
+    _nameScale = _double(c['fourShowcaseNameScale'], 1).clamp(.65, 1.5);
+    _priceScale = _double(c['fourShowcasePriceScale'], 1).clamp(.65, 1.5);
+    _holdSec = (_double(c['fourShowcaseHoldMs'], 5000) / 1000).clamp(2, 20);
+    _transitionSec =
+        (_double(c['fourShowcaseTransitionMs'], 650) / 1000).clamp(.25, 2);
+  }
+
+  void _emit() {
+    widget.onDraftChanged({
+      'fourShowcaseBackgroundStart': _hex(_backgroundStart.text, '#140305'),
+      'fourShowcaseBackgroundEnd': _hex(_backgroundEnd.text, '#E4002B'),
+      'fourShowcaseLogoColor': _hex(_logoColor.text, '#FFFFFF'),
+      'fourShowcaseNameColor': _hex(_nameColor.text, '#FFFFFF'),
+      'fourShowcasePriceColor': _hex(_priceColor.text, '#FFFFFF'),
+      'fourShowcasePriceBackground': _hex(_priceBackground.text, '#E4002B'),
+      'fourShowcaseShowLogo': _showLogo,
+      'fourShowcaseFont': _font,
+      'fourShowcasePhotoScale': _photoScale,
+      'fourShowcaseNameScale': _nameScale,
+      'fourShowcasePriceScale': _priceScale,
+      'fourShowcaseHoldMs': (_holdSec * 1000).round(),
+      'fourShowcaseTransitionMs': (_transitionSec * 1000).round(),
+    });
+  }
+
+  Widget _colorField(TextEditingController controller, String label) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: TextField(
+        controller: controller,
+        decoration: InputDecoration(
+          labelText: label,
+          hintText: '#E4002B',
+          border: const OutlineInputBorder(),
+          isDense: true,
+        ),
+        onChanged: (_) => _emit(),
+      ),
+    );
+  }
+
+  Widget _scaleSlider({
+    required BuildContext context,
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required ValueChanged<double> onChanged,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '$label: ${value.toStringAsFixed(2)}',
+          style: Theme.of(context).textTheme.labelLarge,
+        ),
+        Slider(
+          value: value,
+          min: min,
+          max: max,
+          divisions: divisions,
+          onChanged: onChanged,
+          onChangeEnd: (_) => _emit(),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Конструктор «4 товара»', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 4),
+        Text(
+          widget.itemCount < 4
+              ? 'Добавьте ещё ${4 - widget.itemCount} товар(а): на витрине всегда четыре места.'
+              : widget.itemCount == 4
+              ? 'Ровно 4 товара — витрина будет без движения.'
+              : 'Товаров: ${widget.itemCount}. Каждые ${_holdSec.toStringAsFixed(0)} с крайний слева уходит, новый входит справа.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _colorField(_backgroundStart, 'Начало фона'),
+        _colorField(_backgroundEnd, 'Конец фона'),
+        _colorField(_nameColor, 'Цвет названия'),
+        _colorField(_priceColor, 'Цвет цены'),
+        _colorField(_priceBackground, 'Фон цены'),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Показывать логотип DK'),
+          value: _showLogo,
+          onChanged: (value) {
+            setState(() => _showLogo = value);
+            _emit();
+          },
+        ),
+        if (_showLogo) _colorField(_logoColor, 'Цвет логотипа'),
+        const SizedBox(height: 4),
+        Text('Шрифт', style: theme.textTheme.labelLarge),
+        const SizedBox(height: 6),
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment(value: 'oswald', label: Text('Oswald')),
+            ButtonSegment(value: 'montserrat', label: Text('Montserrat')),
+          ],
+          selected: {_font},
+          onSelectionChanged: (value) {
+            setState(() => _font = value.first);
+            _emit();
+          },
+        ),
+        const SizedBox(height: 12),
+        _scaleSlider(
+          context: context,
+          label: 'Размер фото PNG',
+          value: _photoScale,
+          min: .65,
+          max: 1.45,
+          divisions: 16,
+          onChanged: (value) => setState(() => _photoScale = value),
+        ),
+        _scaleSlider(
+          context: context,
+          label: 'Размер названия',
+          value: _nameScale,
+          min: .65,
+          max: 1.5,
+          divisions: 17,
+          onChanged: (value) => setState(() => _nameScale = value),
+        ),
+        _scaleSlider(
+          context: context,
+          label: 'Размер цены',
+          value: _priceScale,
+          min: .65,
+          max: 1.5,
+          divisions: 17,
+          onChanged: (value) => setState(() => _priceScale = value),
+        ),
+        _scaleSlider(
+          context: context,
+          label: 'Пауза между сменами (сек.)',
+          value: _holdSec,
+          min: 2,
+          max: 20,
+          divisions: 18,
+          onChanged: (value) => setState(() => _holdSec = value),
+        ),
+        _scaleSlider(
+          context: context,
+          label: 'Длительность сдвига (сек.)',
+          value: _transitionSec,
+          min: .25,
+          max: 2,
+          divisions: 14,
+          onChanged: (value) => setState(() => _transitionSec = value),
+        ),
+      ],
+    );
+  }
+}
+/// Конструктор красной «журнальной» витрины: главный товар + пять акцентных.
+class _EditorialShowcaseLayoutEditor extends StatefulWidget {
+  const _EditorialShowcaseLayoutEditor({
+    required this.config,
+    required this.itemCount,
+    required this.onDraftChanged,
+  });
+
+  final Map<String, dynamic>? config;
+  final int itemCount;
+  final void Function(Map<String, dynamic> patch) onDraftChanged;
+
+  @override
+  State<_EditorialShowcaseLayoutEditor> createState() =>
+      _EditorialShowcaseLayoutEditorState();
+}
+
+class _EditorialShowcaseLayoutEditorState
+    extends State<_EditorialShowcaseLayoutEditor> {
+  late TextEditingController _backgroundStart;
+  late TextEditingController _backgroundEnd;
+  late TextEditingController _logoColor;
+  late TextEditingController _nameColor;
+  late TextEditingController _priceColor;
+  late TextEditingController _labelBackground;
+  late bool _showLogo;
+  late String _font;
+  late double _mainPhotoScale;
+  late double _tilePhotoScale;
+  late double _nameScale;
+  late double _priceScale;
+  late double _holdSec;
+  late double _transitionSec;
+
+  @override
+  void initState() {
+    super.initState();
+    _backgroundStart = TextEditingController();
+    _backgroundEnd = TextEditingController();
+    _logoColor = TextEditingController();
+    _nameColor = TextEditingController();
+    _priceColor = TextEditingController();
+    _labelBackground = TextEditingController();
+    _syncFromConfig(widget.config);
+  }
+
+  @override
+  void didUpdateWidget(covariant _EditorialShowcaseLayoutEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.config != widget.config) _syncFromConfig(widget.config);
+  }
+
+  @override
+  void dispose() {
+    _backgroundStart.dispose();
+    _backgroundEnd.dispose();
+    _logoColor.dispose();
+    _nameColor.dispose();
+    _priceColor.dispose();
+    _labelBackground.dispose();
+    super.dispose();
+  }
+
+  String _hex(Object? raw, String fallback) {
+    final value = raw?.toString().trim() ?? '';
+    if (value.isEmpty) return fallback;
+    return value.startsWith('#') ? value : '#$value';
+  }
+
+  double _double(Object? raw, double fallback) => raw is num
+      ? raw.toDouble()
+      : double.tryParse(raw?.toString() ?? '') ?? fallback;
+
+  bool _bool(Object? raw, bool fallback) {
+    if (raw is bool) return raw;
+    final value = raw?.toString().trim().toLowerCase();
+    if (value == 'false' || value == '0') return false;
+    if (value == 'true' || value == '1') return true;
+    return fallback;
+  }
+
+  void _syncFromConfig(Map<String, dynamic>? config) {
+    final c = config ?? const <String, dynamic>{};
+    _backgroundStart.text = _hex(c['editorialBackgroundStart'], '#E4002B');
+    _backgroundEnd.text = _hex(c['editorialBackgroundEnd'], '#B3001B');
+    _logoColor.text = _hex(c['editorialLogoColor'], '#FFF4E5');
+    _nameColor.text = _hex(c['editorialNameColor'], '#8B111A');
+    _priceColor.text = _hex(c['editorialPriceColor'], '#8B111A');
+    _labelBackground.text = _hex(c['editorialLabelBackground'], '#FFF4E5');
+    _showLogo = _bool(c['editorialShowLogo'], true);
+    _font = c['editorialFont']?.toString().trim() == 'montserrat'
+        ? 'montserrat'
+        : 'oswald';
+    _mainPhotoScale =
+        _double(c['editorialMainPhotoScale'], 1).clamp(.65, 1.5);
+    _tilePhotoScale =
+        _double(c['editorialTilePhotoScale'], 1).clamp(.65, 1.5);
+    _nameScale = _double(c['editorialNameScale'], 1).clamp(.65, 1.5);
+    _priceScale = _double(c['editorialPriceScale'], 1).clamp(.65, 1.5);
+    _holdSec = (_double(c['editorialHoldMs'], 5000) / 1000).clamp(2, 20);
+    _transitionSec =
+        (_double(c['editorialTransitionMs'], 650) / 1000).clamp(.25, 2);
+  }
+
+  void _emit() => widget.onDraftChanged({
+    'editorialBackgroundStart': _hex(_backgroundStart.text, '#E4002B'),
+    'editorialBackgroundEnd': _hex(_backgroundEnd.text, '#B3001B'),
+    'editorialLogoColor': _hex(_logoColor.text, '#FFF4E5'),
+    'editorialNameColor': _hex(_nameColor.text, '#8B111A'),
+    'editorialPriceColor': _hex(_priceColor.text, '#8B111A'),
+    'editorialLabelBackground': _hex(_labelBackground.text, '#FFF4E5'),
+    'editorialShowLogo': _showLogo,
+    'editorialFont': _font,
+    'editorialMainPhotoScale': _mainPhotoScale,
+    'editorialTilePhotoScale': _tilePhotoScale,
+    'editorialNameScale': _nameScale,
+    'editorialPriceScale': _priceScale,
+    'editorialHoldMs': (_holdSec * 1000).round(),
+    'editorialTransitionMs': (_transitionSec * 1000).round(),
+  });
+
+  Widget _colorField(TextEditingController controller, String label) =>
+      AdminColorPickerField(
+        label: label,
+        value: controller.text,
+        compact: true,
+        onChanged: (value) {
+          setState(() => controller.text = value);
+          _emit();
+        },
+      );
+
+  Widget _slider({
+    required BuildContext context,
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required ValueChanged<double> onChanged,
+  }) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text('$label: ${value.toStringAsFixed(2)}', style: Theme.of(context).textTheme.labelLarge),
+      Slider(
+        value: value,
+        min: min,
+        max: max,
+        divisions: divisions,
+        onChanged: onChanged,
+        onChangeEnd: (_) => _emit(),
+      ),
+    ],
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final countText = widget.itemCount == 0
+        ? 'Добавьте товары: центральный товар и пять акцентных мест.'
+        : widget.itemCount == 1
+        ? 'Добавьте ещё товары: центральная позиция начнёт сменяться от двух товаров.'
+        : 'Товаров: ${widget.itemCount}. Каждые ${_holdSec.toStringAsFixed(0)} с центральный товар и витрина плавно сменяются.';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Конструктор «Красная витрина»', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 4),
+        Text(countText, style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+        const SizedBox(height: 12),
+        _colorField(_backgroundStart, 'Начало красного фона'),
+        _colorField(_backgroundEnd, 'Конец красного фона'),
+        _colorField(_nameColor, 'Цвет названия'),
+        _colorField(_priceColor, 'Цвет цены'),
+        _colorField(_labelBackground, 'Фон плашки названия и цены'),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Показывать логотип DK'),
+          value: _showLogo,
+          onChanged: (value) {
+            setState(() => _showLogo = value);
+            _emit();
+          },
+        ),
+        if (_showLogo) _colorField(_logoColor, 'Цвет логотипа'),
+        const SizedBox(height: 4),
+        Text('Шрифт', style: theme.textTheme.labelLarge),
+        const SizedBox(height: 6),
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment(value: 'oswald', label: Text('Oswald')),
+            ButtonSegment(value: 'montserrat', label: Text('Montserrat')),
+          ],
+          selected: {_font},
+          onSelectionChanged: (value) {
+            setState(() => _font = value.first);
+            _emit();
+          },
+        ),
+        const SizedBox(height: 12),
+        _slider(context: context, label: 'Размер главного фото', value: _mainPhotoScale, min: .65, max: 1.5, divisions: 17, onChanged: (value) => setState(() => _mainPhotoScale = value)),
+        _slider(context: context, label: 'Размер остальных фото', value: _tilePhotoScale, min: .65, max: 1.5, divisions: 17, onChanged: (value) => setState(() => _tilePhotoScale = value)),
+        _slider(context: context, label: 'Размер названий', value: _nameScale, min: .65, max: 1.5, divisions: 17, onChanged: (value) => setState(() => _nameScale = value)),
+        _slider(context: context, label: 'Размер цен', value: _priceScale, min: .65, max: 1.5, divisions: 17, onChanged: (value) => setState(() => _priceScale = value)),
+        _slider(context: context, label: 'Пауза между сменами (сек.)', value: _holdSec, min: 2, max: 20, divisions: 18, onChanged: (value) => setState(() => _holdSec = value)),
+        _slider(context: context, label: 'Длительность анимации (сек.)', value: _transitionSec, min: .25, max: 2, divisions: 14, onChanged: (value) => setState(() => _transitionSec = value)),
+      ],
+    );
+  }
+}
+
+/// Конструктор страниц с двумя фиксированными товарами.
+class _TwoProductShowcaseLayoutEditor extends StatefulWidget {
+  const _TwoProductShowcaseLayoutEditor({
+    required this.config,
+    required this.diagonal,
+    required this.onDraftChanged,
+  });
+
+  final Map<String, dynamic>? config;
+  final bool diagonal;
+  final void Function(Map<String, dynamic> patch) onDraftChanged;
+
+  @override
+  State<_TwoProductShowcaseLayoutEditor> createState() =>
+      _TwoProductShowcaseLayoutEditorState();
+}
+
+class _TwoProductShowcaseLayoutEditorState
+    extends State<_TwoProductShowcaseLayoutEditor> {
+  late TextEditingController _leftBackground;
+  late TextEditingController _rightBackground;
+  late TextEditingController _logoColor;
+  late TextEditingController _leftNameColor;
+  late TextEditingController _rightNameColor;
+  late TextEditingController _leftPriceColor;
+  late TextEditingController _rightPriceColor;
+  late bool _showLogo;
+  late String _font;
+  late double _photoScale;
+  late double _nameScale;
+  late double _priceScale;
+  late double _motionSec;
+
+  @override
+  void initState() {
+    super.initState();
+    _leftBackground = TextEditingController();
+    _rightBackground = TextEditingController();
+    _logoColor = TextEditingController();
+    _leftNameColor = TextEditingController();
+    _rightNameColor = TextEditingController();
+    _leftPriceColor = TextEditingController();
+    _rightPriceColor = TextEditingController();
+    _sync(widget.config);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TwoProductShowcaseLayoutEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.config != widget.config) _sync(widget.config);
+  }
+
+  @override
+  void dispose() {
+    _leftBackground.dispose();
+    _rightBackground.dispose();
+    _logoColor.dispose();
+    _leftNameColor.dispose();
+    _rightNameColor.dispose();
+    _leftPriceColor.dispose();
+    _rightPriceColor.dispose();
+    super.dispose();
+  }
+
+  String _hex(Object? raw, String fallback) {
+    final value = raw?.toString().trim() ?? '';
+    if (value.isEmpty) return fallback;
+    return value.startsWith('#') ? value : '#$value';
+  }
+
+  double _double(Object? raw, double fallback) => raw is num
+      ? raw.toDouble()
+      : double.tryParse(raw?.toString() ?? '') ?? fallback;
+
+  bool _bool(Object? raw, bool fallback) {
+    if (raw is bool) return raw;
+    final value = raw?.toString().trim().toLowerCase();
+    if (value == 'false' || value == '0') return false;
+    if (value == 'true' || value == '1') return true;
+    return fallback;
+  }
+
+  void _sync(Map<String, dynamic>? config) {
+    final c = config ?? const <String, dynamic>{};
+    _leftBackground.text = _hex(c['twoProductLeftBackground'], '#970B21');
+    _rightBackground.text = _hex(c['twoProductRightBackground'], '#E4002B');
+    _logoColor.text = _hex(c['twoProductLogoColor'], '#FFFFFF');
+    _leftNameColor.text = _hex(c['twoProductLeftNameColor'], '#FFFFFF');
+    _rightNameColor.text = _hex(c['twoProductRightNameColor'], '#FFFFFF');
+    _leftPriceColor.text = _hex(c['twoProductLeftPriceColor'], '#FFDD7A');
+    _rightPriceColor.text = _hex(c['twoProductRightPriceColor'], '#FFDD7A');
+    _showLogo = _bool(c['twoProductShowLogo'], true);
+    _font = c['twoProductFont']?.toString().trim() == 'montserrat'
+        ? 'montserrat'
+        : 'oswald';
+    _photoScale = _double(c['twoProductPhotoScale'], 1).clamp(.65, 1.5);
+    _nameScale = _double(c['twoProductNameScale'], 1).clamp(.65, 1.5);
+    _priceScale = _double(c['twoProductPriceScale'], 1).clamp(.65, 1.5);
+    _motionSec =
+        (_double(c['twoProductMotionMs'], 650) / 1000).clamp(.25, 2);
+  }
+
+  void _emit() => widget.onDraftChanged({
+    'twoProductLeftBackground': _hex(_leftBackground.text, '#970B21'),
+    'twoProductRightBackground': _hex(_rightBackground.text, '#E4002B'),
+    'twoProductLogoColor': _hex(_logoColor.text, '#FFFFFF'),
+    'twoProductLeftNameColor': _hex(_leftNameColor.text, '#FFFFFF'),
+    'twoProductRightNameColor': _hex(_rightNameColor.text, '#FFFFFF'),
+    'twoProductLeftPriceColor': _hex(_leftPriceColor.text, '#FFDD7A'),
+    'twoProductRightPriceColor': _hex(_rightPriceColor.text, '#FFDD7A'),
+    'twoProductShowLogo': _showLogo,
+    'twoProductFont': _font,
+    'twoProductPhotoScale': _photoScale,
+    'twoProductNameScale': _nameScale,
+    'twoProductPriceScale': _priceScale,
+    'twoProductMotionMs': (_motionSec * 1000).round(),
+  });
+
+  Widget _colorField(TextEditingController controller, String label) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
+    child: TextField(
+      controller: controller,
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: '#E4002B',
+        border: const OutlineInputBorder(),
+        isDense: true,
+      ),
+      onChanged: (_) => _emit(),
+    ),
+  );
+
+  Widget _slider({
+    required BuildContext context,
+    required String label,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required ValueChanged<double> onChanged,
+  }) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text('$label: ${value.toStringAsFixed(2)}', style: Theme.of(context).textTheme.labelLarge),
+      Slider(
+        value: value,
+        min: min,
+        max: max,
+        divisions: divisions,
+        onChanged: onChanged,
+        onChangeEnd: (_) => _emit(),
+      ),
+    ],
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          widget.diagonal
+              ? 'Конструктор «Два товара — акция»'
+              : 'Конструктор «Два товара — поровну»',
+          style: theme.textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Ниже — оформление. Сами товары выберите в секции «Товары страницы»: один левый и один правый.',
+          style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 12),
+        _colorField(_leftBackground, 'Фон слева'),
+        _colorField(_rightBackground, 'Фон справа'),
+        _colorField(_leftNameColor, 'Цвет названия слева'),
+        _colorField(_rightNameColor, 'Цвет названия справа'),
+        _colorField(_leftPriceColor, 'Цвет цены слева'),
+        _colorField(_rightPriceColor, 'Цвет цены справа'),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Показывать логотип DK'),
+          value: _showLogo,
+          onChanged: (value) {
+            setState(() => _showLogo = value);
+            _emit();
+          },
+        ),
+        if (_showLogo) _colorField(_logoColor, 'Цвет логотипа'),
+        const SizedBox(height: 4),
+        Text('Шрифт', style: theme.textTheme.labelLarge),
+        const SizedBox(height: 6),
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment(value: 'oswald', label: Text('Oswald')),
+            ButtonSegment(value: 'montserrat', label: Text('Montserrat')),
+          ],
+          selected: {_font},
+          onSelectionChanged: (value) {
+            setState(() => _font = value.first);
+            _emit();
+          },
+        ),
+        const SizedBox(height: 12),
+        _slider(context: context, label: 'Размер фото PNG', value: _photoScale, min: .65, max: 1.5, divisions: 17, onChanged: (value) => setState(() => _photoScale = value)),
+        _slider(context: context, label: 'Размер названий', value: _nameScale, min: .65, max: 1.5, divisions: 17, onChanged: (value) => setState(() => _nameScale = value)),
+        _slider(context: context, label: 'Размер цен', value: _priceScale, min: .65, max: 1.5, divisions: 17, onChanged: (value) => setState(() => _priceScale = value)),
+        _slider(context: context, label: 'Длительность появления (сек.)', value: _motionSec, min: .25, max: 2, divisions: 14, onChanged: (value) => setState(() => _motionSec = value)),
+      ],
+    );
+  }
+}
+
+/// Конструктор страниц пиццы: цвета, масштаб, анимация, «Можете забирать».
+class _PizzaTvLayoutEditor extends StatefulWidget {
+  const _PizzaTvLayoutEditor({
+    required this.pageType,
+    required this.config,
+    required this.onDraftChanged,
+  });
+
+  final String pageType;
+  final Map<String, dynamic>? config;
+  final void Function(Map<String, dynamic> patch) onDraftChanged;
+
+  @override
+  State<_PizzaTvLayoutEditor> createState() => _PizzaTvLayoutEditorState();
+}
+
+class _PizzaTvLayoutEditorState extends State<_PizzaTvLayoutEditor> {
+  late double _photoScale;
+  late double _nameFontScale;
+  late double _priceFontScale;
+  late double _holdSec;
+  late double _transitSec;
+  late double _spinRpm;
+  late int _gridCols;
+  late bool _announceReady;
+  late TextEditingController _bgColor;
+  late TextEditingController _nameColor;
+  late TextEditingController _priceColor;
+
+  bool get _isShow => widget.pageType.toLowerCase().trim() == 'pizza_show';
+
+  @override
+  void initState() {
+    super.initState();
+    _bgColor = TextEditingController();
+    _nameColor = TextEditingController();
+    _priceColor = TextEditingController();
+    _syncFromConfig(widget.config);
+  }
+
+  @override
+  void didUpdateWidget(covariant _PizzaTvLayoutEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.config != widget.config) {
+      _syncFromConfig(widget.config);
+    }
+  }
+
+  @override
+  void dispose() {
+    _bgColor.dispose();
+    _nameColor.dispose();
+    _priceColor.dispose();
+    super.dispose();
+  }
+
+  String _hex(Object? v, String fb) {
+    final t = (v ?? '').toString().trim();
+    if (t.isEmpty) return fb;
+    return t.startsWith('#') ? t : '#$t';
+  }
+
+  double _dbl(Object? v, double fb) {
+    if (v is num) return v.toDouble();
+    return double.tryParse(v?.toString() ?? '') ?? fb;
+  }
+
+  int _int(Object? v, int fb) {
+    if (v is num) return v.toInt();
+    return int.tryParse(v?.toString() ?? '') ?? fb;
+  }
+
+  bool _bool(Object? v, bool fb) {
+    if (v == null) return fb;
+    if (v is bool) return v;
+    final s = v.toString().trim().toLowerCase();
+    if (s == '0' || s == 'false' || s == 'no' || s == 'off') return false;
+    if (s == '1' || s == 'true' || s == 'yes' || s == 'on') return true;
+    return fb;
+  }
+
+  void _syncFromConfig(Map<String, dynamic>? cfg) {
+    final c = cfg ?? const <String, dynamic>{};
+    _photoScale =
+        _dbl(c['pizzaPhotoScale'] ?? c['pizza_photo_scale'], 1).clamp(0.6, 2.2);
+    _nameFontScale = _dbl(c['pizzaNameFontScale'] ?? c['pizza_name_font_scale'], 1)
+        .clamp(0.6, 2);
+    _priceFontScale =
+        _dbl(c['pizzaPriceFontScale'] ?? c['pizza_price_font_scale'], 1)
+            .clamp(0.6, 2);
+    _holdSec =
+        (_dbl(c['pizzaHoldMs'] ?? c['pizza_hold_ms'], 5000) / 1000).clamp(2, 15);
+    _transitSec =
+        (_dbl(c['pizzaTransitMs'] ?? c['pizza_transit_ms'], 1400) / 1000)
+            .clamp(0.6, 4);
+    _spinRpm = _dbl(c['pizzaSpinRpm'] ?? c['pizza_spin_rpm'], 0.35).clamp(0, 2);
+    _gridCols =
+        _int(c['pizzaGridColumns'] ?? c['pizza_grid_columns'], 3).clamp(2, 4);
+    _announceReady =
+        _bool(c['pizzaAnnounceReady'] ?? c['pizza_announce_ready'], true);
+    _bgColor.text = _hex(c['pizzaBgColor'] ?? c['pizza_bg_color'], '#E4002B');
+    _nameColor.text =
+        _hex(c['pizzaNameColor'] ?? c['pizza_name_color'], '#FFFFFF');
+    _priceColor.text =
+        _hex(c['pizzaPriceColor'] ?? c['pizza_price_color'], '#FFFFFF');
+  }
+
+  void _emit() {
+    widget.onDraftChanged({
+      'pizzaBgColor':
+          _bgColor.text.trim().isEmpty ? '#E4002B' : _bgColor.text.trim(),
+      'pizzaNameColor':
+          _nameColor.text.trim().isEmpty ? '#FFFFFF' : _nameColor.text.trim(),
+      'pizzaPriceColor':
+          _priceColor.text.trim().isEmpty ? '#FFFFFF' : _priceColor.text.trim(),
+      'pizzaSizeColor':
+          _priceColor.text.trim().isEmpty ? '#FFFFFF' : _priceColor.text.trim(),
+      'pizzaPhotoScale': _photoScale,
+      'pizzaNameFontScale': _nameFontScale,
+      'pizzaPriceFontScale': _priceFontScale,
+      'pizzaHoldMs': (_holdSec * 1000).round(),
+      'pizzaTransitMs': (_transitSec * 1000).round(),
+      'pizzaSpinRpm': _spinRpm,
+      'pizzaGridColumns': _gridCols,
+      'pizzaAnnounceReady': _announceReady,
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Конструктор пиццы', style: theme.textTheme.titleSmall),
+        const SizedBox(height: 4),
+        Text(
+          _isShow
+              ? 'Фон, масштаб фото, скорость въезда и вращение.'
+              : 'Фон, колонки сетки и размеры текста.',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _bgColor,
+          decoration: const InputDecoration(
+            labelText: 'Цвет фона (#E4002B)',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+          onChanged: (_) => _emit(),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _nameColor,
+          decoration: const InputDecoration(
+            labelText: 'Цвет названия',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+          onChanged: (_) => _emit(),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _priceColor,
+          decoration: const InputDecoration(
+            labelText: 'Цвет цены / размеров',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+          onChanged: (_) => _emit(),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Масштаб фото: ${_photoScale.toStringAsFixed(2)}',
+          style: theme.textTheme.labelLarge,
+        ),
+        Slider(
+          value: _photoScale,
+          min: 0.6,
+          max: 2.2,
+          divisions: 32,
+          onChanged: (v) => setState(() => _photoScale = v),
+          onChangeEnd: (_) => _emit(),
+        ),
+        Text(
+          'Масштаб названия: ${_nameFontScale.toStringAsFixed(2)}',
+          style: theme.textTheme.labelLarge,
+        ),
+        Slider(
+          value: _nameFontScale,
+          min: 0.6,
+          max: 2.0,
+          divisions: 28,
+          onChanged: (v) => setState(() => _nameFontScale = v),
+          onChangeEnd: (_) => _emit(),
+        ),
+        Text(
+          'Масштаб цены: ${_priceFontScale.toStringAsFixed(2)}',
+          style: theme.textTheme.labelLarge,
+        ),
+        Slider(
+          value: _priceFontScale,
+          min: 0.6,
+          max: 2.0,
+          divisions: 28,
+          onChanged: (v) => setState(() => _priceFontScale = v),
+          onChangeEnd: (_) => _emit(),
+        ),
+        if (_isShow) ...[
+          Text(
+            'Пауза в центре: ${_holdSec.toStringAsFixed(1)} с',
+            style: theme.textTheme.labelLarge,
+          ),
+          Slider(
+            value: _holdSec,
+            min: 2,
+            max: 15,
+            divisions: 26,
+            onChanged: (v) => setState(() => _holdSec = v),
+            onChangeEnd: (_) => _emit(),
+          ),
+          Text(
+            'Въезд / выезд: ${_transitSec.toStringAsFixed(1)} с',
+            style: theme.textTheme.labelLarge,
+          ),
+          Slider(
+            value: _transitSec,
+            min: 0.6,
+            max: 4,
+            divisions: 34,
+            onChanged: (v) => setState(() => _transitSec = v),
+            onChangeEnd: (_) => _emit(),
+          ),
+          Text(
+            'Вращение: ${_spinRpm.toStringAsFixed(2)} об/мин',
+            style: theme.textTheme.labelLarge,
+          ),
+          Slider(
+            value: _spinRpm,
+            min: 0,
+            max: 2,
+            divisions: 40,
+            onChanged: (v) => setState(() => _spinRpm = v),
+            onChangeEnd: (_) => _emit(),
+          ),
+        ] else ...[
+          Text(
+            'Колонок в сетке: $_gridCols',
+            style: theme.textTheme.labelLarge,
+          ),
+          Slider(
+            value: _gridCols.toDouble(),
+            min: 2,
+            max: 4,
+            divisions: 2,
+            label: '$_gridCols',
+            onChanged: (v) => setState(() => _gridCols = v.round()),
+            onChangeEnd: (_) => _emit(),
+          ),
+        ],
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('«Можете забирать» при готовности'),
+          subtitle: const Text(
+            'Оверлей + озвучка номера заказа. Табло очереди не показывается.',
+          ),
+          value: _announceReady,
+          onChanged: (v) {
+            setState(() => _announceReady = v);
+            _emit();
+          },
         ),
       ],
     );

@@ -358,14 +358,14 @@ class _AdminKitchenOpsPanelState extends State<AdminKitchenOpsPanel> {
                               ),
                               const SizedBox(height: 6),
                               Text(
-                                'Push worker: ${_yesNo(sync.pushWorker.enabled)} | interval: ${sync.pushWorker.intervalMs} ms | endpoint: ${_yesNo(sync.pushWorker.endpointConfigured)}',
+                                'Push: ${_yesNo(sync.pushWorker.enabled)} | режим: ${sync.pushWorker.mode ?? 'shift_close'} | retry: ${sync.pushWorker.intervalMs} ms | endpoint: ${_yesNo(sync.pushWorker.endpointConfigured)}',
                               ),
                               Text(
                                 'Pull worker: ${_yesNo(sync.pullWorker.enabled)} | interval: ${sync.pullWorker.intervalMs} ms | endpoint: ${_yesNo(sync.pullWorker.endpointConfigured)}',
                               ),
                               if (sync.siteOrdersWorker != null)
                                 Text(
-                                  'Site-orders worker: ${_yesNo(sync.siteOrdersWorker!.enabled)} | interval: ${sync.siteOrdersWorker!.intervalMs} ms | endpoint: ${_yesNo(sync.siteOrdersWorker!.endpointConfigured)}',
+                                  'Site-orders (сайт → POS): ${_yesNo(sync.siteOrdersWorker!.enabled)} | интервал: ${sync.siteOrdersWorker!.intervalMs} ms',
                                 ),
                               const SizedBox(height: 4),
                               Text('Push last success: ${sync.pushState?.lastSuccessAt ?? '—'}'),
@@ -399,7 +399,7 @@ class _AdminKitchenOpsPanelState extends State<AdminKitchenOpsPanel> {
                                       child: CircularProgressIndicator(strokeWidth: 2),
                                     )
                                   : const Icon(Icons.upload_rounded),
-                              label: const Text('Push now'),
+                              label: const Text('Отправить очередь'),
                             ),
                             OutlinedButton.icon(
                               onPressed: _syncBusy

@@ -17,6 +17,7 @@ class _AdminInventoryReceiveScreenState extends State<AdminInventoryReceiveScree
   bool _enabled = true;
   String? _error;
   List<InventoryTransferSummary> _items = const [];
+  List<InventoryCookableProduct> _cookable = const [];
   int? _receivingId;
 
   @override
@@ -33,10 +34,12 @@ class _AdminInventoryReceiveScreenState extends State<AdminInventoryReceiveScree
     try {
       final repo = context.read<LocalInventoryRepository>();
       final result = await repo.fetchInTransit();
+      final cookable = await repo.fetchCookableProducts();
       if (!mounted) return;
       setState(() {
         _enabled = result.enabled;
         _items = result.items;
+        _cookable = cookable;
         _loading = false;
       });
     } catch (e) {
@@ -115,6 +118,39 @@ class _AdminInventoryReceiveScreenState extends State<AdminInventoryReceiveScree
                     Text(_error!, style: TextStyle(color: scheme.error)),
                   ],
                   const SizedBox(height: 16),
+                  Text(
+                    'Можно приготовить',
+                    style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Расчёт по остаткам точки и техкартам. Ограничение — сырьё, которое закончится первым.',
+                    style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
+                  const SizedBox(height: 8),
+                  if (_cookable.isEmpty)
+                    Text(
+                      'Нет данных о техкартах или остатках.',
+                      style: textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                  ..._cookable.take(12).map(
+                        (item) => ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(
+                            item.maxQty <= 0 ? Icons.block_rounded : Icons.restaurant_outlined,
+                            color: item.maxQty <= 0 ? scheme.error : scheme.primary,
+                          ),
+                          title: Text(item.productName),
+                          subtitle: item.limitingIngredientName == null
+                              ? null
+                              : Text('Ограничивает: ${item.limitingIngredientName}'),
+                          trailing: Text(
+                            '${item.maxQty} порц.',
+                            style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                  const Divider(height: 28),
                   Text(
                     'Ожидают приёма (${_items.length})',
                     style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),

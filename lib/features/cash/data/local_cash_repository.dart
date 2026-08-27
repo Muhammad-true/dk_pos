@@ -490,20 +490,39 @@ class CashCloseShiftPreview {
     required this.expectedInDrawer,
     required this.banks,
     this.nonCashExpectedTotal = 0,
+    this.openingBalance = 0,
+    this.cashSalesIn = 0,
+    this.cashRefundsOut = 0,
+    this.encashmentTotal = 0,
+    this.encashmentDone = false,
+    this.totalSalesNet = 0,
   });
 
   final bool hasOpenShift;
   final double expectedInDrawer;
   final double nonCashExpectedTotal;
+  final double openingBalance;
+  final double cashSalesIn;
+  final double cashRefundsOut;
+  final double encashmentTotal;
+  final bool encashmentDone;
+  final double totalSalesNet;
   final List<CashCloseBankPreviewRow> banks;
 
   factory CashCloseShiftPreview.fromJson(Map<String, dynamic> json) {
     final banksRaw = json['banks'];
+    final encashmentTotal = CashShiftSnapshot._asDouble(json['encashmentTotal']);
     return CashCloseShiftPreview(
       hasOpenShift: json['hasOpenShift'] == true,
       expectedInDrawer: CashShiftSnapshot._asDouble(json['expectedInDrawer']),
       nonCashExpectedTotal:
           CashShiftSnapshot._asDouble(json['nonCashExpectedTotal']),
+      openingBalance: CashShiftSnapshot._asDouble(json['openingBalance']),
+      cashSalesIn: CashShiftSnapshot._asDouble(json['cashSalesIn']),
+      cashRefundsOut: CashShiftSnapshot._asDouble(json['cashRefundsOut']),
+      encashmentTotal: encashmentTotal,
+      encashmentDone: json['encashmentDone'] == true || encashmentTotal > 0.009,
+      totalSalesNet: CashShiftSnapshot._asDouble(json['totalSalesNet']),
       banks: banksRaw is List
           ? banksRaw
                 .whereType<Map>()
@@ -848,7 +867,7 @@ class LocalCashRepository {
   }
 
   Future<CashShiftCloseResult> closeCashShift({
-    required double closingActual,
+    double? closingActual,
     List<Map<String, dynamic>>? nonCashActual,
     String? closeNotes,
     String? branchId,
@@ -859,7 +878,8 @@ class LocalCashRepository {
       body: {
         'branchId': branchId ?? _defaultBranchId,
         'terminalId': terminalId ?? _defaultTerminalId,
-        'closingActual': closingActual,
+        // «По факту» больше не спрашиваем на кассе — сверка в global admin.
+        if (closingActual != null) 'closingActual': closingActual,
         if (nonCashActual != null && nonCashActual.isNotEmpty)
           'nonCashActual': nonCashActual,
         if (closeNotes != null && closeNotes.trim().isNotEmpty)

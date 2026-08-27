@@ -5,6 +5,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:dk_pos/core/cache/pos_menu_image_prefetch.dart';
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/features/menu/data/menu_repository.dart';
+import 'package:dk_pos/shared/models/pos_menu_models.dart';
 
 import 'menu_event.dart';
 import 'menu_state.dart';
@@ -12,9 +13,38 @@ import 'menu_state.dart';
 class MenuBloc extends Bloc<MenuEvent, MenuState> {
   MenuBloc(this._repo) : super(const MenuState()) {
     on<MenuLoadRequested>(_onLoad);
+    on<MenuSoldOutTodayChanged>(_onSoldOutTodayChanged);
     on<MenuDrillInto>(_onDrill);
     on<MenuCatalogBack>(_onBack);
     on<MenuCatalogPathSet>(_onPathSet);
+  }
+
+  void _onSoldOutTodayChanged(
+    MenuSoldOutTodayChanged event,
+    Emitter<MenuState> emit,
+  ) {
+    PosCategory patch(PosCategory category) {
+      return PosCategory(
+        id: category.id,
+        name: category.name,
+        subtitle: category.subtitle,
+        sortOrder: category.sortOrder,
+        items: category.items
+            .map(
+              (item) => item.id == event.menuItemId
+                  ? item.copyWith(soldOutToday: event.soldOutToday)
+                  : item,
+            )
+            .toList(growable: false),
+        children: category.children.map(patch).toList(growable: false),
+      );
+    }
+
+    emit(
+      state.copyWith(
+        categoryRoots: state.categoryRoots.map(patch).toList(growable: false),
+      ),
+    );
   }
 
   final MenuRepository _repo;

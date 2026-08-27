@@ -16,6 +16,22 @@ final class MenuLoadRequested extends MenuEvent {
   List<Object?> get props => [lang];
 }
 
+/// Обновляет доступность позиции в уже открытом меню, не ожидая повторной
+/// загрузки с сервера. Это сохраняет отметку «закончилось сегодня» при
+/// моментальном закрытии и повторном открытии окна кассы.
+final class MenuSoldOutTodayChanged extends MenuEvent {
+  const MenuSoldOutTodayChanged({
+    required this.menuItemId,
+    required this.soldOutToday,
+  });
+
+  final String menuItemId;
+  final bool soldOutToday;
+
+  @override
+  List<Object?> get props => [menuItemId, soldOutToday];
+}
+
 /// Войти в подкатегорию по индексу в [MenuState.currentChildCategories].
 final class MenuDrillInto extends MenuEvent {
   const MenuDrillInto(this.childIndex);

@@ -1,15 +1,10 @@
 import 'dart:math' show min, max;
 
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:provider/provider.dart';
-
 import 'package:dk_digitial_menu/core/app_config.dart' as dm_app_config;
 import 'package:dk_digitial_menu/models/display_models.dart';
 import 'package:dk_digitial_menu/models/tv_layout_config.dart';
 import 'package:dk_digitial_menu/ui/tv3_shell_colors.dart';
 import 'package:dk_digitial_menu/widgets/display_layout.dart';
-
 import 'package:dk_pos/core/config/app_config.dart' as pos_app_config;
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/features/admin/data/combos_admin_repository.dart';
@@ -21,7 +16,11 @@ import 'package:dk_pos/features/admin/presentation/screens/tv2_screen_pages_edit
 import 'package:dk_pos/features/admin/presentation/screens/tv3_promo_pages_editor_screen.dart';
 import 'package:dk_pos/features/admin/presentation/screens/tv4_slides_editor_screen.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_color_picker_field.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/tv_media_guide.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 
 Color _previewScaffoldBg(DisplayPayload p) => tv3PromoShellBackgroundColor(p);
 
@@ -99,6 +98,7 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
   late TextEditingController _cTv3HeaderText;
   late TextEditingController _cTv3Accent;
   double _tv3Scale = 1.0;
+
   /// `page3` | `promos`
   String _tv3LayoutMode = 'page3';
 
@@ -109,6 +109,11 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
   /// Длительность показа одного слайда ТВ4 (сек), в конфиг сохраняется как `tv4SlideDurationMs`.
   int _tv4SlideDurationSec = 15;
 
+  /// Синхрон ТВ: off | together | wave (активен только после «Запустить» на сервере).
+  String _syncMode = 'off';
+  int _syncCascadeIndex = 0;
+  final int _syncMinutes = 10;
+
   Map<String, dynamic>? _previewDraftBody;
   bool _saving = false;
   bool _forcedLandscapePreview = false;
@@ -116,33 +121,33 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
   static Color _kfcRed() => const Color(0xFFE4002B);
 
   static Map<String, dynamic> _demoDraftSlides() => {
-        'slides': [
+    'slides': [
+      {
+        'key': 'draft-demo',
+        'sections': [
           {
-            'key': 'draft-demo',
-            'sections': [
+            'id': 'cat-draft',
+            'title': 'Черновик категории',
+            'subtitle': 'Только для превью',
+            'items': [
               {
-                'id': 'cat-draft',
-                'title': 'Черновик категории',
-                'subtitle': 'Только для превью',
-                'items': [
-                  {
-                    'id': 'd1',
-                    'name': 'Позиция демо',
-                    'priceText': '99',
-                    'description': 'Состав / описание для проверки флагов',
-                  },
-                  {
-                    'id': 'd2',
-                    'name': 'Вторая позиция',
-                    'priceText': '120',
-                    'description': '',
-                  },
-                ],
+                'id': 'd1',
+                'name': 'Позиция демо',
+                'priceText': '99',
+                'description': 'Состав / описание для проверки флагов',
+              },
+              {
+                'id': 'd2',
+                'name': 'Вторая позиция',
+                'priceText': '120',
+                'description': '',
               },
             ],
           },
         ],
-      };
+      },
+    ],
+  };
 
   @override
   void initState() {
@@ -191,7 +196,9 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
     _hydrateTv2Timing(r);
     _hydrateTv2Overlay(r);
     _load();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeForceLandscapePreview());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _maybeForceLandscapePreview(),
+    );
   }
 
   Future<void> _maybeForceLandscapePreview() async {
@@ -207,12 +214,17 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
 
   void _hydrateTv2Timing(TvLayoutResolved r) {
     _tv2PageTransition = r.tv2PageTransition;
-    _tv2PageHoldMs = r.tv2PageHoldMs ??
+    _tv2PageHoldMs =
+        r.tv2PageHoldMs ??
         (widget.requestBody['theme'] is Map
-            ? (((widget.requestBody['theme'] as Map)['tvSlideRotationMs'] as num?)?.toInt() ?? 5000)
+            ? (((widget.requestBody['theme'] as Map)['tvSlideRotationMs']
+                          as num?)
+                      ?.toInt() ??
+                  5000)
             : 5000);
     _tv2PageHoldMs = _tv2PageHoldMs.clamp(3000, 120000);
-    _tv2TransitionDurationMs = r.tv2TransitionDurationMs ??
+    _tv2TransitionDurationMs =
+        r.tv2TransitionDurationMs ??
         tvCarouselTransitionDuration(_tv2PageTransition).inMilliseconds;
     _tv2TransitionDurationMs = _tv2TransitionDurationMs.clamp(200, 3000);
   }
@@ -315,7 +327,8 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
 
   void _hydrateTv3Timing(TvLayoutResolved r) {
     _tv3PageTransition = r.tv3PageTransition;
-    _tv3TransitionDurationMs = r.tv3TransitionDurationMs ??
+    _tv3TransitionDurationMs =
+        r.tv3TransitionDurationMs ??
         resolvedTv3PromoTransitionDuration(r).inMilliseconds;
     if (_tv3PageTransition == 'none') {
       _tv3TransitionDurationMs = _tv3TransitionDurationMs.clamp(0, 3000);
@@ -391,7 +404,9 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
   /// [DigitalMenuDisplayLayout] берёт URL из `dk_digitial_menu` [AppConfig], у POS — свой
   /// статический origin; без синхронизации превью в админке грузит медиа с неверного хоста.
   void _syncDigitalMenuMediaBaseWithPos() {
-    dm_app_config.AppConfig.setApiOriginOverride(pos_app_config.AppConfig.apiOrigin);
+    dm_app_config.AppConfig.setApiOriginOverride(
+      pos_app_config.AppConfig.apiOrigin,
+    );
   }
 
   Future<void> _load() async {
@@ -435,11 +450,15 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
           }
           if (p.screenType == 'tv4') {
             final c = p.screenConfig;
-            final ms = (c?['tv4SlideDurationMs'] ?? c?['tv4_slide_duration_ms']) as num?;
+            final ms =
+                (c?['tv4SlideDurationMs'] ?? c?['tv4_slide_duration_ms'])
+                    as num?;
             final themeMs = p.theme.screenRotationMs.clamp(3000, 120000);
             final eff = (ms?.round() ?? themeMs).clamp(3000, 120000);
             _tv4SlideDurationSec = (eff / 1000).round().clamp(3, 120);
           }
+          _syncMode = TvMediaGuide.readSyncMode(p.screenConfig);
+          _syncCascadeIndex = TvMediaGuide.readCascadeIndex(p.screenConfig);
         }
         _loading = false;
         _error = null;
@@ -490,8 +509,16 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
       'tv3Layout': _tv3LayoutMode,
     };
     if (_payload?.screenType == 'tv4') {
-      patch['tv4SlideDurationMs'] = (_tv4SlideDurationSec * 1000).clamp(3000, 120000);
+      patch['tv4SlideDurationMs'] = (_tv4SlideDurationSec * 1000).clamp(
+        3000,
+        120000,
+      );
     }
+    patch['tvSync'] = TvMediaGuide.buildTvSyncConfig(
+      mode: _syncMode,
+      cascadeIndex: _syncCascadeIndex,
+      durationMinutes: _syncMinutes,
+    );
     return patch;
   }
 
@@ -499,8 +526,8 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
     final base = _payload?.screenConfig != null
         ? Map<String, dynamic>.from(_payload!.screenConfig!)
         : (widget.requestBody['config'] is Map
-            ? Map<String, dynamic>.from(widget.requestBody['config'] as Map)
-            : <String, dynamic>{});
+              ? Map<String, dynamic>.from(widget.requestBody['config'] as Map)
+              : <String, dynamic>{});
     return mergeScreenConfigMaps(base, _editorConfigPatch());
   }
 
@@ -520,11 +547,45 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
     }
     if (merged.screenType == 'tv4' && merged.tv4 != null) {
       final ms = (_tv4SlideDurationSec * 1000).clamp(3000, 120000);
-      merged = merged.copyWith(
-        tv4: merged.tv4!.withSlideDurationOverride(ms),
-      );
+      merged = merged.copyWith(tv4: merged.tv4!.withSlideDurationOverride(ms));
     }
     return merged;
+  }
+
+  Future<void> _runTvSyncNow() async {
+    try {
+      await widget.previewRepo.triggerTvDisplaySync(
+        durationMinutes: _syncMinutes,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Синхрон запущен на $_syncMinutes мин. После этого ТВ снова независимы.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Синхрон: $e')));
+    }
+  }
+
+  void _applyRecommendedVideoSettings() {
+    setState(() {
+      _tv2PageHoldMs = 12000;
+      _tv2PageTransition = 'crossFade';
+      _tv2TransitionDurationMs = 480;
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Подставлены: 12 с на страницу, плавный crossFade. Загрузите MP4 1080p до 25 МБ.',
+        ),
+      ),
+    );
   }
 
   Future<void> _saveToScreen() async {
@@ -532,9 +593,9 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
     final repo = widget.screensRepo;
     final id = _payload?.screenId ?? 0;
     if (repo == null || id < 1) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.adminTvSlideNoScreenId)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.adminTvSlideNoScreenId)));
       return;
     }
     setState(() => _saving = true);
@@ -554,18 +615,20 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
           }
         });
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.adminTvSlideSaved)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.adminTvSlideSaved)));
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.adminTvSlideSaveError)),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(l10n.adminTvSlideSaveError)));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -581,12 +644,14 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
     try {
       await repo.mergeScreenConfig(id, {'previewDraft': _previewDraftBody});
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.adminTvDraftSavedToConfig)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.adminTvDraftSavedToConfig)));
     } on ApiException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(e.message)));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -676,7 +741,8 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
     final isCarousel = displayPayload.screenType == 'carousel';
     final isTv3 = displayPayload.screenType == 'tv3';
     final isTv4 = displayPayload.screenType == 'tv4';
-    final canSave = (widget.screensRepo != null) && (displayPayload.screenId > 0);
+    final canSave =
+        (widget.screensRepo != null) && (displayPayload.screenId > 0);
 
     final mqSize = MediaQuery.sizeOf(context);
     final drawerWidth = mqSize.shortestSide < 600
@@ -697,6 +763,62 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 12),
+              const TvMediaHintCard(showMixed: true),
+              const SizedBox(height: 12),
+              Text('Синхрон ТВ', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                isExpanded: true,
+                initialValue: _syncMode,
+                decoration: const InputDecoration(
+                  labelText: 'Режим',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 'off',
+                    child: Text('Обычный (каждый ТВ сам)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'together',
+                    child: Text('Вместе (10 мин)'),
+                  ),
+                  DropdownMenuItem(
+                    value: 'wave',
+                    child: Text('Волна 1→2→3 (10 мин)'),
+                  ),
+                ],
+                onChanged: (v) => setState(() => _syncMode = v ?? 'off'),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<int>(
+                isExpanded: true,
+                initialValue: _syncCascadeIndex.clamp(0, 3),
+                decoration: const InputDecoration(
+                  labelText: 'Этот экран в стене',
+                  border: OutlineInputBorder(),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 0, child: Text('1-й ТВ')),
+                  DropdownMenuItem(value: 1, child: Text('2-й ТВ')),
+                  DropdownMenuItem(value: 2, child: Text('3-й ТВ')),
+                  DropdownMenuItem(value: 3, child: Text('4-й ТВ')),
+                ],
+                onChanged: (v) => setState(() => _syncCascadeIndex = v ?? 0),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _syncMode == 'off' ? null : _runTvSyncNow,
+                icon: const Icon(Icons.sync_rounded),
+                label: Text('Запустить синхрон на $_syncMinutes мин'),
+              ),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _applyRecommendedVideoSettings,
+                icon: const Icon(Icons.movie_outlined),
+                label: const Text('Рекомендации для видео-страницы'),
+              ),
+              const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 isExpanded: true,
                 initialValue: 'custom',
@@ -705,10 +827,22 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                   border: const OutlineInputBorder(),
                 ),
                 items: [
-                  DropdownMenuItem(value: 'custom', child: Text(l10n.adminTvPresetCustom)),
-                  DropdownMenuItem(value: 'default', child: Text(l10n.adminTvPresetDefault)),
-                  DropdownMenuItem(value: 'compact', child: Text(l10n.adminTvPresetCompact)),
-                  DropdownMenuItem(value: 'bold', child: Text(l10n.adminTvPresetBold)),
+                  DropdownMenuItem(
+                    value: 'custom',
+                    child: Text(l10n.adminTvPresetCustom),
+                  ),
+                  DropdownMenuItem(
+                    value: 'default',
+                    child: Text(l10n.adminTvPresetDefault),
+                  ),
+                  DropdownMenuItem(
+                    value: 'compact',
+                    child: Text(l10n.adminTvPresetCompact),
+                  ),
+                  DropdownMenuItem(
+                    value: 'bold',
+                    child: Text(l10n.adminTvPresetBold),
+                  ),
                 ],
                 onChanged: (v) {
                   if (v == null || v == 'custom') return;
@@ -717,7 +851,10 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
               ),
               const SizedBox(height: 16),
               if (isCarousel) ...[
-                Text(l10n.adminTvTransition, style: Theme.of(context).textTheme.titleSmall),
+                Text(
+                  l10n.adminTvTransition,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
                 const SizedBox(height: 8),
                 DropdownButtonFormField<String>(
                   isExpanded: true,
@@ -727,11 +864,26 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                     border: OutlineInputBorder(),
                   ),
                   items: [
-                    DropdownMenuItem(value: 'fade', child: Text(l10n.adminTvTransitionFade)),
-                    DropdownMenuItem(value: 'slide', child: Text(l10n.adminTvTransitionSlide)),
-                    DropdownMenuItem(value: 'crossFade', child: Text(l10n.adminTvTransitionCrossFade)),
-                    DropdownMenuItem(value: 'none', child: Text(l10n.adminTvTransitionNone)),
-                    DropdownMenuItem(value: 'scale', child: Text(l10n.adminTvTransitionScale)),
+                    DropdownMenuItem(
+                      value: 'fade',
+                      child: Text(l10n.adminTvTransitionFade),
+                    ),
+                    DropdownMenuItem(
+                      value: 'slide',
+                      child: Text(l10n.adminTvTransitionSlide),
+                    ),
+                    DropdownMenuItem(
+                      value: 'crossFade',
+                      child: Text(l10n.adminTvTransitionCrossFade),
+                    ),
+                    DropdownMenuItem(
+                      value: 'none',
+                      child: Text(l10n.adminTvTransitionNone),
+                    ),
+                    DropdownMenuItem(
+                      value: 'scale',
+                      child: Text(l10n.adminTvTransitionScale),
+                    ),
                   ],
                   onChanged: (v) {
                     if (v != null) setState(() => _transition = v);
@@ -741,63 +893,98 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                 SwitchListTile(
                   title: Text(l10n.adminTvCategorySubtitle),
                   value: _cShow.categorySubtitle,
-                  onChanged: (x) => setState(() => _cShow = TvCarouselShow(
-                        categorySubtitle: x,
-                        itemPrice: _cShow.itemPrice,
-                        itemDivider: _cShow.itemDivider,
-                        itemDescription: _cShow.itemDescription,
-                      )),
+                  onChanged: (x) => setState(
+                    () => _cShow = TvCarouselShow(
+                      categorySubtitle: x,
+                      itemPrice: _cShow.itemPrice,
+                      itemDivider: _cShow.itemDivider,
+                      itemDescription: _cShow.itemDescription,
+                    ),
+                  ),
                 ),
                 SwitchListTile(
                   title: Text(l10n.adminTvItemPrice),
                   value: _cShow.itemPrice,
-                  onChanged: (x) => setState(() => _cShow = TvCarouselShow(
-                        categorySubtitle: _cShow.categorySubtitle,
-                        itemPrice: x,
-                        itemDivider: _cShow.itemDivider,
-                        itemDescription: _cShow.itemDescription,
-                      )),
+                  onChanged: (x) => setState(
+                    () => _cShow = TvCarouselShow(
+                      categorySubtitle: _cShow.categorySubtitle,
+                      itemPrice: x,
+                      itemDivider: _cShow.itemDivider,
+                      itemDescription: _cShow.itemDescription,
+                    ),
+                  ),
                 ),
                 SwitchListTile(
                   title: Text(l10n.adminTvItemDivider),
                   value: _cShow.itemDivider,
-                  onChanged: (x) => setState(() => _cShow = TvCarouselShow(
-                        categorySubtitle: _cShow.categorySubtitle,
-                        itemPrice: _cShow.itemPrice,
-                        itemDivider: x,
-                        itemDescription: _cShow.itemDescription,
-                      )),
+                  onChanged: (x) => setState(
+                    () => _cShow = TvCarouselShow(
+                      categorySubtitle: _cShow.categorySubtitle,
+                      itemPrice: _cShow.itemPrice,
+                      itemDivider: x,
+                      itemDescription: _cShow.itemDescription,
+                    ),
+                  ),
                 ),
                 SwitchListTile(
                   title: Text(l10n.adminTvItemDescription),
                   value: _cShow.itemDescription,
-                  onChanged: (x) => setState(() => _cShow = TvCarouselShow(
-                        categorySubtitle: _cShow.categorySubtitle,
-                        itemPrice: _cShow.itemPrice,
-                        itemDivider: _cShow.itemDivider,
-                        itemDescription: x,
-                      )),
+                  onChanged: (x) => setState(
+                    () => _cShow = TvCarouselShow(
+                      categorySubtitle: _cShow.categorySubtitle,
+                      itemPrice: _cShow.itemPrice,
+                      itemDivider: _cShow.itemDivider,
+                      itemDescription: x,
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 16),
-                Text(l10n.adminTvStyleTitle, style: Theme.of(context).textTheme.titleSmall),
+                Text(
+                  l10n.adminTvStyleTitle,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
                 const SizedBox(height: 4),
                 Text(
                   'Нажмите на цветной образец или выберите из палитры',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
                 const SizedBox(height: 8),
-                _styleColorField(label: l10n.adminTvStyleSlideBg, controller: _cSlideBg),
-                _styleColorField(label: l10n.adminTvStyleHeaderBg, controller: _cHeaderBg),
-                _styleColorField(label: l10n.adminTvStyleHeaderText, controller: _cHeaderText),
-                _styleColorField(label: l10n.adminTvStyleCategoryTitle, controller: _cCategoryTitle),
+                _styleColorField(
+                  label: l10n.adminTvStyleSlideBg,
+                  controller: _cSlideBg,
+                ),
+                _styleColorField(
+                  label: l10n.adminTvStyleHeaderBg,
+                  controller: _cHeaderBg,
+                ),
+                _styleColorField(
+                  label: l10n.adminTvStyleHeaderText,
+                  controller: _cHeaderText,
+                ),
+                _styleColorField(
+                  label: l10n.adminTvStyleCategoryTitle,
+                  controller: _cCategoryTitle,
+                ),
                 _styleColorField(
                   label: l10n.adminTvStyleCategorySubtitle,
                   controller: _cCategorySubtitle,
                 ),
-                _styleColorField(label: l10n.adminTvStyleItemName, controller: _cItemName),
-                _styleColorField(label: l10n.adminTvStyleItemDesc, controller: _cItemDesc),
-                _styleColorField(label: l10n.adminTvStyleItemPrice, controller: _cItemPrice),
-                _styleColorField(label: l10n.adminTvStyleDivider, controller: _cDivider),
+                _styleColorField(
+                  label: l10n.adminTvStyleItemName,
+                  controller: _cItemName,
+                ),
+                _styleColorField(
+                  label: l10n.adminTvStyleItemDesc,
+                  controller: _cItemDesc,
+                ),
+                _styleColorField(
+                  label: l10n.adminTvStyleItemPrice,
+                  controller: _cItemPrice,
+                ),
+                _styleColorField(
+                  label: l10n.adminTvStyleDivider,
+                  controller: _cDivider,
+                ),
                 const SizedBox(height: 12),
                 Text(
                   '${l10n.adminTvStyleFontScale} (${_fontScale.toStringAsFixed(2)}×)',
@@ -817,9 +1004,15 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                   child: Text(l10n.adminTvStyleReset),
                 ),
                 const SizedBox(height: 8),
-                Text(l10n.adminTvSlotsTitle, style: Theme.of(context).textTheme.titleSmall),
+                Text(
+                  l10n.adminTvSlotsTitle,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
                 const SizedBox(height: 4),
-                Text(l10n.adminTvSlotsHint, style: Theme.of(context).textTheme.bodySmall),
+                Text(
+                  l10n.adminTvSlotsHint,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
                 ReorderableListView(
                   shrinkWrap: true,
                   physics: const NeverScrollableScrollPhysics(),
@@ -945,7 +1138,11 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                     },
                   ),
                   const SizedBox(height: 8),
-                  Text(l10n.adminTv2TransitionDurationLabel(_tv3TransitionDurationMs)),
+                  Text(
+                    l10n.adminTv2TransitionDurationLabel(
+                      _tv3TransitionDurationMs,
+                    ),
+                  ),
                   Slider(
                     value: _tv3TransitionDurationMs.toDouble().clamp(
                       _tv3PageTransition == 'none' ? 0 : 200,
@@ -957,17 +1154,31 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                     label: '$_tv3TransitionDurationMs ms',
                     onChanged: _tv3PageTransition == 'none'
                         ? null
-                        : (v) => setState(() => _tv3TransitionDurationMs = v.round()),
+                        : (v) => setState(
+                            () => _tv3TransitionDurationMs = v.round(),
+                          ),
                   ),
                 ],
                 const SizedBox(height: 12),
-                Text('Стиль ТВ3', style: Theme.of(context).textTheme.titleSmall),
+                Text(
+                  'Стиль ТВ3',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
                 const SizedBox(height: 8),
                 _styleColorField(label: 'Фон', controller: _cTv3Bg),
-                _styleColorField(label: 'Цвет заголовка', controller: _cTv3Title),
+                _styleColorField(
+                  label: 'Цвет заголовка',
+                  controller: _cTv3Title,
+                ),
                 _styleColorField(label: 'Цвет цены', controller: _cTv3Price),
-                _styleColorField(label: 'Цвет текста шапки', controller: _cTv3HeaderText),
-                _styleColorField(label: 'Акцентный цвет', controller: _cTv3Accent),
+                _styleColorField(
+                  label: 'Цвет текста шапки',
+                  controller: _cTv3HeaderText,
+                ),
+                _styleColorField(
+                  label: 'Акцентный цвет',
+                  controller: _cTv3Accent,
+                ),
                 const SizedBox(height: 8),
                 Text('Масштаб (${_tv3Scale.toStringAsFixed(2)}x)'),
                 Slider(
@@ -1027,7 +1238,8 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                   max: 120,
                   divisions: 117,
                   label: '${_tv4SlideDurationSec}s',
-                  onChanged: (v) => setState(() => _tv4SlideDurationSec = v.round()),
+                  onChanged: (v) =>
+                      setState(() => _tv4SlideDurationSec = v.round()),
                 ),
                 const SizedBox(height: 12),
                 if (canSave) ...[
@@ -1074,57 +1286,102 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                   ),
                   const SizedBox(height: 16),
                 ],
-                Text('Стиль ТВ2', style: Theme.of(context).textTheme.titleSmall),
+                Text(
+                  'Стиль ТВ2',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
                 const SizedBox(height: 8),
                 _styleColorField(label: 'Фон', controller: _cTv2Bg),
-                _styleColorField(label: 'Цвет заголовка', controller: _cTv2Title),
+                _styleColorField(
+                  label: 'Цвет заголовка',
+                  controller: _cTv2Title,
+                ),
                 _styleColorField(label: 'Цвет цены', controller: _cTv2Price),
-                _styleColorField(label: 'Цвет текста шапки', controller: _cTv2HeaderText),
-                _styleColorField(label: 'Акцентный цвет', controller: _cTv2Accent),
+                _styleColorField(
+                  label: 'Цвет текста шапки',
+                  controller: _cTv2HeaderText,
+                ),
+                _styleColorField(
+                  label: 'Акцентный цвет',
+                  controller: _cTv2Accent,
+                ),
                 const SizedBox(height: 8),
-                Text('Размер заголовка: ${_tv2TitleSize > 0 ? _tv2TitleSize.toStringAsFixed(0) : 'по умолчанию'}'),
+                Text(
+                  'Размер заголовка: ${_tv2TitleSize > 0 ? _tv2TitleSize.toStringAsFixed(0) : 'по умолчанию'}',
+                ),
                 Slider(
-                  value: ((_tv2TitleSize > 0 ? _tv2TitleSize : 40).clamp(16, 120)).toDouble(),
+                  value: ((_tv2TitleSize > 0 ? _tv2TitleSize : 40).clamp(
+                    16,
+                    120,
+                  )).toDouble(),
                   min: 16,
                   max: 120,
                   divisions: 52,
                   onChanged: (v) => setState(() => _tv2TitleSize = v),
                 ),
-                Text('Размер названия товара: ${_tv2ItemNameSize > 0 ? _tv2ItemNameSize.toStringAsFixed(0) : 'по умолчанию'}'),
+                Text(
+                  'Размер названия товара: ${_tv2ItemNameSize > 0 ? _tv2ItemNameSize.toStringAsFixed(0) : 'по умолчанию'}',
+                ),
                 Slider(
-                  value: ((_tv2ItemNameSize > 0 ? _tv2ItemNameSize : 32).clamp(12, 96)).toDouble(),
+                  value: ((_tv2ItemNameSize > 0 ? _tv2ItemNameSize : 32).clamp(
+                    12,
+                    96,
+                  )).toDouble(),
                   min: 12,
                   max: 96,
                   divisions: 42,
                   onChanged: (v) => setState(() => _tv2ItemNameSize = v),
                 ),
-                Text('Размер цены: ${_tv2ItemPriceSize > 0 ? _tv2ItemPriceSize.toStringAsFixed(0) : 'по умолчанию'}'),
+                Text(
+                  'Размер цены: ${_tv2ItemPriceSize > 0 ? _tv2ItemPriceSize.toStringAsFixed(0) : 'по умолчанию'}',
+                ),
                 Slider(
-                  value: ((_tv2ItemPriceSize > 0 ? _tv2ItemPriceSize : 28).clamp(10, 80)).toDouble(),
+                  value:
+                      ((_tv2ItemPriceSize > 0 ? _tv2ItemPriceSize : 28).clamp(
+                        10,
+                        80,
+                      )).toDouble(),
                   min: 10,
                   max: 80,
                   divisions: 35,
                   onChanged: (v) => setState(() => _tv2ItemPriceSize = v),
                 ),
-                Text('Hero — название: ${_tv2HeroNameSize > 0 ? _tv2HeroNameSize.toStringAsFixed(0) : 'по умолчанию'}'),
+                Text(
+                  'Hero — название: ${_tv2HeroNameSize > 0 ? _tv2HeroNameSize.toStringAsFixed(0) : 'по умолчанию'}',
+                ),
                 Slider(
-                  value: ((_tv2HeroNameSize > 0 ? _tv2HeroNameSize : 48).clamp(16, 120)).toDouble(),
+                  value: ((_tv2HeroNameSize > 0 ? _tv2HeroNameSize : 48).clamp(
+                    16,
+                    120,
+                  )).toDouble(),
                   min: 16,
                   max: 120,
                   divisions: 52,
                   onChanged: (v) => setState(() => _tv2HeroNameSize = v),
                 ),
-                Text('Hero — цена: ${_tv2HeroPriceSize > 0 ? _tv2HeroPriceSize.toStringAsFixed(0) : 'по умолчанию'}'),
+                Text(
+                  'Hero — цена: ${_tv2HeroPriceSize > 0 ? _tv2HeroPriceSize.toStringAsFixed(0) : 'по умолчанию'}',
+                ),
                 Slider(
-                  value: ((_tv2HeroPriceSize > 0 ? _tv2HeroPriceSize : 40).clamp(12, 96)).toDouble(),
+                  value:
+                      ((_tv2HeroPriceSize > 0 ? _tv2HeroPriceSize : 40).clamp(
+                        12,
+                        96,
+                      )).toDouble(),
                   min: 12,
                   max: 96,
                   divisions: 42,
                   onChanged: (v) => setState(() => _tv2HeroPriceSize = v),
                 ),
-                Text('Миниатюра в списке: ${_tv2ListThumbSize > 0 ? _tv2ListThumbSize.toStringAsFixed(0) : '56'} px'),
+                Text(
+                  'Миниатюра в списке: ${_tv2ListThumbSize > 0 ? _tv2ListThumbSize.toStringAsFixed(0) : '56'} px',
+                ),
                 Slider(
-                  value: ((_tv2ListThumbSize > 0 ? _tv2ListThumbSize : 56).clamp(32, 120)).toDouble(),
+                  value:
+                      ((_tv2ListThumbSize > 0 ? _tv2ListThumbSize : 56).clamp(
+                        32,
+                        120,
+                      )).toDouble(),
                   min: 32,
                   max: 120,
                   divisions: 22,
@@ -1178,15 +1435,30 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                     border: const OutlineInputBorder(),
                   ),
                   items: [
-                    DropdownMenuItem(value: 'fade', child: Text(l10n.adminTvTransitionFade)),
+                    DropdownMenuItem(
+                      value: 'fade',
+                      child: Text(l10n.adminTvTransitionFade),
+                    ),
                     DropdownMenuItem(
                       value: 'slideUp',
                       child: Text(l10n.adminTvTransitionSlideUp),
                     ),
-                    DropdownMenuItem(value: 'slide', child: Text(l10n.adminTvTransitionSlide)),
-                    DropdownMenuItem(value: 'crossFade', child: Text(l10n.adminTvTransitionCrossFade)),
-                    DropdownMenuItem(value: 'none', child: Text(l10n.adminTvTransitionNone)),
-                    DropdownMenuItem(value: 'scale', child: Text(l10n.adminTvTransitionScale)),
+                    DropdownMenuItem(
+                      value: 'slide',
+                      child: Text(l10n.adminTvTransitionSlide),
+                    ),
+                    DropdownMenuItem(
+                      value: 'crossFade',
+                      child: Text(l10n.adminTvTransitionCrossFade),
+                    ),
+                    DropdownMenuItem(
+                      value: 'none',
+                      child: Text(l10n.adminTvTransitionNone),
+                    ),
+                    DropdownMenuItem(
+                      value: 'scale',
+                      child: Text(l10n.adminTvTransitionScale),
+                    ),
                   ],
                   onChanged: (v) {
                     if (v != null) setState(() => _tv2PageTransition = v);
@@ -1208,7 +1480,9 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  l10n.adminTv2TransitionDurationLabel(_tv2TransitionDurationMs),
+                  l10n.adminTv2TransitionDurationLabel(
+                    _tv2TransitionDurationMs,
+                  ),
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
                 Slider(
@@ -1219,7 +1493,9 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                   label: '$_tv2TransitionDurationMs ms',
                   onChanged: _tv2PageTransition == 'none'
                       ? null
-                      : (v) => setState(() => _tv2TransitionDurationMs = v.round()),
+                      : (v) => setState(
+                          () => _tv2TransitionDurationMs = v.round(),
+                        ),
                 ),
                 SwitchListTile(
                   title: Text(l10n.adminTv2VariedTransitionsTitle),
@@ -1245,9 +1521,18 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                     border: const OutlineInputBorder(),
                   ),
                   items: [
-                    DropdownMenuItem(value: 'start', child: Text(l10n.adminTv2AlignStart)),
-                    DropdownMenuItem(value: 'center', child: Text(l10n.adminTv2AlignCenter)),
-                    DropdownMenuItem(value: 'end', child: Text(l10n.adminTv2AlignEnd)),
+                    DropdownMenuItem(
+                      value: 'start',
+                      child: Text(l10n.adminTv2AlignStart),
+                    ),
+                    DropdownMenuItem(
+                      value: 'center',
+                      child: Text(l10n.adminTv2AlignCenter),
+                    ),
+                    DropdownMenuItem(
+                      value: 'end',
+                      child: Text(l10n.adminTv2AlignEnd),
+                    ),
                   ],
                   onChanged: (v) {
                     if (v != null) setState(() => _tv2OverlayH = v);
@@ -1263,48 +1548,72 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                     border: const OutlineInputBorder(),
                   ),
                   items: [
-                    DropdownMenuItem(value: 'bottom', child: Text(l10n.adminTv2AlignBottom)),
-                    DropdownMenuItem(value: 'center', child: Text(l10n.adminTv2AlignMiddle)),
-                    DropdownMenuItem(value: 'top', child: Text(l10n.adminTv2AlignTop)),
+                    DropdownMenuItem(
+                      value: 'bottom',
+                      child: Text(l10n.adminTv2AlignBottom),
+                    ),
+                    DropdownMenuItem(
+                      value: 'center',
+                      child: Text(l10n.adminTv2AlignMiddle),
+                    ),
+                    DropdownMenuItem(
+                      value: 'top',
+                      child: Text(l10n.adminTv2AlignTop),
+                    ),
                   ],
                   onChanged: (v) {
                     if (v != null) setState(() => _tv2OverlayV = v);
                   },
                 ),
                 const SizedBox(height: 16),
-                Text(l10n.adminTv2ListAppearance, style: Theme.of(context).textTheme.titleSmall),
+                Text(
+                  l10n.adminTv2ListAppearance,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
                 SwitchListTile(
                   title: Text(l10n.adminTv2ItemImage),
                   value: _t2Show.itemImage,
-                  onChanged: (x) => setState(() => _t2Show = Tv2ListShow(
-                        itemImage: x,
-                        itemPrice: _t2Show.itemPrice,
-                        itemDescription: _t2Show.itemDescription,
-                      )),
+                  onChanged: (x) => setState(
+                    () => _t2Show = Tv2ListShow(
+                      itemImage: x,
+                      itemPrice: _t2Show.itemPrice,
+                      itemDescription: _t2Show.itemDescription,
+                    ),
+                  ),
                 ),
                 SwitchListTile(
                   title: Text(l10n.adminTvItemPrice),
                   value: _t2Show.itemPrice,
-                  onChanged: (x) => setState(() => _t2Show = Tv2ListShow(
-                        itemImage: _t2Show.itemImage,
-                        itemPrice: x,
-                        itemDescription: _t2Show.itemDescription,
-                      )),
+                  onChanged: (x) => setState(
+                    () => _t2Show = Tv2ListShow(
+                      itemImage: _t2Show.itemImage,
+                      itemPrice: x,
+                      itemDescription: _t2Show.itemDescription,
+                    ),
+                  ),
                 ),
                 SwitchListTile(
                   title: Text(l10n.adminTvItemDescription),
                   value: _t2Show.itemDescription,
-                  onChanged: (x) => setState(() => _t2Show = Tv2ListShow(
-                        itemImage: _t2Show.itemImage,
-                        itemPrice: _t2Show.itemPrice,
-                        itemDescription: x,
-                      )),
+                  onChanged: (x) => setState(
+                    () => _t2Show = Tv2ListShow(
+                      itemImage: _t2Show.itemImage,
+                      itemPrice: _t2Show.itemPrice,
+                      itemDescription: x,
+                    ),
+                  ),
                 ),
               ],
               const Divider(height: 32),
-              Text(l10n.adminTvDraftTitle, style: Theme.of(context).textTheme.titleSmall),
+              Text(
+                l10n.adminTvDraftTitle,
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
               const SizedBox(height: 8),
-              Text(l10n.adminTvDraftHint, style: Theme.of(context).textTheme.bodySmall),
+              Text(
+                l10n.adminTvDraftHint,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
               const SizedBox(height: 8),
               if (isCarousel) ...[
                 FilledButton.tonal(
@@ -1340,7 +1649,11 @@ class _AdminTvPreviewPageState extends State<AdminTvPreviewPage> {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : const Icon(Icons.save_rounded),
-                label: Text(_saving ? l10n.adminTvSlideSaving : l10n.adminTvSlideSaveToScreen),
+                label: Text(
+                  _saving
+                      ? l10n.adminTvSlideSaving
+                      : l10n.adminTvSlideSaveToScreen,
+                ),
               ),
               if (!canSave)
                 Padding(
@@ -1393,7 +1706,10 @@ class _AdminTvPreviewStage extends StatelessWidget {
         late final double w;
         late final double h;
         if (isPortraitPhone) {
-          h = min((maxW - 16).clamp(1.0, maxW), ((maxH - 16) * 9 / 16).clamp(1.0, maxW));
+          h = min(
+            (maxW - 16).clamp(1.0, maxW),
+            ((maxH - 16) * 9 / 16).clamp(1.0, maxW),
+          );
           w = h * _kTvAspect;
         } else {
           var fitW = (maxW - 16).clamp(1.0, maxW);
@@ -1425,11 +1741,7 @@ class _AdminTvPreviewStage extends StatelessWidget {
             ? Center(
                 child: RotatedBox(
                   quarterTurns: 1,
-                  child: SizedBox(
-                    width: w,
-                    height: h,
-                    child: previewChild,
-                  ),
+                  child: SizedBox(width: w, height: h, child: previewChild),
                 ),
               )
             : Center(child: previewChild);

@@ -45,6 +45,10 @@ const _kTemplateStripKeys = <String>{
   'tv1MaxSectionsPerSlide',
   'tv1_max_sections_per_slide',
   'tv1CategoriesPerSlide',
+  'tv1MaxItemsPerSection',
+  'tv1_max_items_per_section',
+  'tv1MaxItemsPerSlide',
+  'tv1_max_items_per_slide',
   'uiCenterGrid',
   'center_grid',
 };
@@ -95,6 +99,19 @@ int? _readTv1MaxPerSlide(Map<String, dynamic> c) {
     'tv1MaxSectionsPerSlide',
     'tv1_max_sections_per_slide',
     'tv1CategoriesPerSlide',
+  ]) {
+    final x = _cfgPositiveInt(c[k]);
+    if (x != null) return x;
+  }
+  return null;
+}
+
+int? _readTv1MaxItemsPerSection(Map<String, dynamic> c) {
+  for (final k in [
+    'tv1MaxItemsPerSection',
+    'tv1_max_items_per_section',
+    'tv1MaxItemsPerSlide',
+    'tv1_max_items_per_slide',
   ]) {
     final x = _cfgPositiveInt(c[k]);
     if (x != null) return x;
@@ -496,6 +513,7 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
   late final TextEditingController _sortCtrl;
   late final TextEditingController _extraConfigCtrl;
   late final TextEditingController _tv1MaxSectionsCtrl;
+  late final TextEditingController _tv1MaxItemsCtrl;
   late final TextEditingController _tv2ListMaxRowsCtrl;
   late final TextEditingController _tv2ListMaxItemsCtrl;
   late String _type;
@@ -524,6 +542,7 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
     );
     _extraConfigCtrl = TextEditingController(text: '{}');
     _tv1MaxSectionsCtrl = TextEditingController();
+    _tv1MaxItemsCtrl = TextEditingController();
     _tv2ListMaxRowsCtrl = TextEditingController();
     _tv2ListMaxItemsCtrl = TextEditingController();
     _type = e != null && _kScreenTypes.contains(e.type) ? e.type : 'carousel';
@@ -539,6 +558,7 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
     _tv2ColMode = 0;
     _tv2ListAutoSplit = true;
     _tv1MaxSectionsCtrl.clear();
+    _tv1MaxItemsCtrl.clear();
     _tv2ListMaxRowsCtrl.clear();
     _tv2ListMaxItemsCtrl.clear();
     _uiCenterGrid = true;
@@ -552,6 +572,8 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
     if (v2 != null) _tv2ColMode = v2;
     final mx = _readTv1MaxPerSlide(cfg);
     if (mx != null) _tv1MaxSectionsCtrl.text = mx.toString();
+    final mxItems = _readTv1MaxItemsPerSection(cfg);
+    if (mxItems != null) _tv1MaxItemsCtrl.text = mxItems.toString();
     final tv2Rows = _readTv2ListMaxRows(cfg);
     if (tv2Rows != null) _tv2ListMaxRowsCtrl.text = tv2Rows.toString();
     final tv2Items = _readTv2ListMaxItems(cfg);
@@ -573,6 +595,11 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
         if (t.isNotEmpty) {
           final n = int.tryParse(t);
           if (n != null && n > 0) m['tv1MaxSectionsPerSlide'] = n;
+        }
+        final items = _tv1MaxItemsCtrl.text.trim();
+        if (items.isNotEmpty) {
+          final n = int.tryParse(items);
+          if (n != null && n > 0) m['tv1MaxItemsPerSection'] = n;
         }
         if (!_uiCenterGrid) m['uiCenterGrid'] = false;
         break;
@@ -623,6 +650,7 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
     _sortCtrl.dispose();
     _extraConfigCtrl.dispose();
     _tv1MaxSectionsCtrl.dispose();
+    _tv1MaxItemsCtrl.dispose();
     _tv2ListMaxRowsCtrl.dispose();
     _tv2ListMaxItemsCtrl.dispose();
     super.dispose();
@@ -1028,6 +1056,19 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
                               ),
                               keyboardType: TextInputType.number,
                             ),
+                            const SizedBox(height: 12),
+                            TextFormField(
+                              controller: _tv1MaxItemsCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Позиций в колонке (стандарт KFC)',
+                                helperText:
+                                    'Пусто = 5. Длинная категория режется на экраны; '
+                                    'короткие категории встают рядом в свободные колонки. '
+                                    'Шрифт не сжимается.',
+                                border: OutlineInputBorder(),
+                              ),
+                              keyboardType: TextInputType.number,
+                            ),
                           ],
                           if (_type == 'tv2') ...[
                             DropdownButtonFormField<int>(
@@ -1180,6 +1221,12 @@ class _ScreenEditorDialogState extends State<_ScreenEditorDialog> {
         return l10n.adminTv2PageTypeProductGrid;
       case 'video_bg':
         return l10n.adminTv2PageTypeVideoBg;
+      case 'media_only':
+        return 'Только видео/фото';
+      case 'menu_ribbon':
+        return 'Лента меню';
+      case 'queue':
+        return 'Очередь заказов';
       default:
         return t;
     }

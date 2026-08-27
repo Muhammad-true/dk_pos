@@ -378,7 +378,7 @@ class _PreviewButtons extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              'Кнопки «Принять» и «Готово» — на весь заказ (все позиции этой кухни).',
+              'Кнопки «Принять» и «Готова/выдать» — на весь заказ (все позиции этой кухни).',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
                 height: 1.35,
@@ -417,7 +417,7 @@ class _PreviewButtons extends StatelessWidget {
                     compact: compact,
                     icon: Icons.check_circle_rounded,
                     actorLabel: 'Повар',
-                    actionLabel: 'Готово',
+                    actionLabel: 'Готова/выдать',
                     color: Colors.green.shade600,
                   ),
                 ),

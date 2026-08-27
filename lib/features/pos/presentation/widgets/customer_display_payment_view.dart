@@ -106,7 +106,7 @@ class _ReceiptPanel extends StatelessWidget {
                 ),
                 const Spacer(),
                 Text(
-                  formatSomoni(cart.total),
+                  formatSomoni(cart.displayTotal),
                   style: theme.textTheme.headlineSmall?.copyWith(
                     color: scheme.primary,
                     fontWeight: FontWeight.w900,
@@ -180,7 +180,7 @@ class _ReceiptPanel extends StatelessWidget {
                 ),
                 const Spacer(),
                 Text(
-                  formatSomoni(cart.total),
+                  formatSomoni(cart.displayTotal),
                   style: theme.textTheme.headlineSmall?.copyWith(
                     color: scheme.primary,
                     fontWeight: FontWeight.w900,

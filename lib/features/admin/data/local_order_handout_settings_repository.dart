@@ -6,10 +6,18 @@ class LocalOrderHandoutSettings {
   const LocalOrderHandoutSettings({
     required this.autoHandoutEnabled,
     required this.autoHandoutMinutes,
+    required this.kitchenReadyAutoHandoutEnabled,
+    required this.tvReadyDisplayMinutes,
   });
 
   final bool autoHandoutEnabled;
   final int autoHandoutMinutes;
+
+  /// «Готово» на кухне = сразу «Выдан» на кассе + колонка «Готово» на ТВ.
+  final bool kitchenReadyAutoHandoutEnabled;
+
+  /// Сколько минут заказ виден в «Готово» на ТВ после кухни.
+  final int tvReadyDisplayMinutes;
 }
 
 class LocalOrderHandoutSettingsRepository {
@@ -53,6 +61,8 @@ class LocalOrderHandoutSettingsRepository {
   Future<LocalOrderHandoutSettings> update({
     required bool autoHandoutEnabled,
     required int autoHandoutMinutes,
+    required bool kitchenReadyAutoHandoutEnabled,
+    required int tvReadyDisplayMinutes,
     String? branchId,
   }) async {
     final res = await _http.patch(
@@ -61,6 +71,8 @@ class LocalOrderHandoutSettingsRepository {
         'branchId': branchId ?? _defaultBranchId,
         'autoHandoutEnabled': autoHandoutEnabled,
         'autoHandoutMinutes': autoHandoutMinutes,
+        'kitchenReadyAutoHandoutEnabled': kitchenReadyAutoHandoutEnabled,
+        'tvReadyDisplayMinutes': tvReadyDisplayMinutes,
       },
     );
     if (res.statusCode != 200) {
@@ -84,17 +96,27 @@ class LocalOrderHandoutSettingsRepository {
       return const LocalOrderHandoutSettings(
         autoHandoutEnabled: true,
         autoHandoutMinutes: 20,
+        kitchenReadyAutoHandoutEnabled: false,
+        tvReadyDisplayMinutes: 10,
       );
     }
     final enabled = settings['autoHandoutEnabled'];
     final minutesRaw = settings['autoHandoutMinutes'] ??
         settings['auto_handout_minutes'];
+    final kitchenRaw = settings['kitchenReadyAutoHandoutEnabled'] ??
+        settings['kitchen_ready_auto_handout_enabled'];
+    final tvRaw = settings['tvReadyDisplayMinutes'] ??
+        settings['tv_ready_display_minutes'];
     final minutes = int.tryParse(minutesRaw?.toString() ?? '') ?? 20;
+    final tvMinutes = int.tryParse(tvRaw?.toString() ?? '') ?? 10;
     return LocalOrderHandoutSettings(
       autoHandoutEnabled: enabled == null
           ? true
           : enabled == true || enabled.toString() == '1',
       autoHandoutMinutes: minutes.clamp(1, 24 * 60),
+      kitchenReadyAutoHandoutEnabled:
+          kitchenRaw == true || kitchenRaw?.toString() == '1',
+      tvReadyDisplayMinutes: tvMinutes.clamp(1, 24 * 60),
     );
   }
 }

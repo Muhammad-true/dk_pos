@@ -6,7 +6,7 @@ import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
   if (s.isEmpty) return (zone: null, number: null);
 
   final mZ = RegExp(
-    r'^(Зал|Веранда)\s*•\s*стол\s*(\d+)\s*$',
+    r'^(Зал|Веранда)\s*[•·]\s*стол\s*(\d+)',
     caseSensitive: false,
   ).firstMatch(s);
   if (mZ != null) {
@@ -16,7 +16,7 @@ import 'package:dk_pos/features/pos/domain/pos_table_bill.dart';
     return (zone: zone, number: n);
   }
 
-  final mS = RegExp(r'^Стол\s*(\d+)\s*$', caseSensitive: false).firstMatch(s);
+  final mS = RegExp(r'^Стол\s*(\d+)', caseSensitive: false).firstMatch(s);
   if (mS != null) {
     final n = int.tryParse(mS.group(1)!);
     return (zone: PosTableZone.hall, number: n);

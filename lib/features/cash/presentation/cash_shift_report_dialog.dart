@@ -63,9 +63,9 @@ class CashShiftReportDialog extends StatelessWidget {
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        'После закрытия в ящике осталось ${formatSomoni(sum.closingActual!)}'
+                        'После закрытия в ящике по учёту ${formatSomoni(sum.closingActual!)}'
                         '${cashAbove != null && cashAbove > 0.009 ? ' (${formatSomoni(cashAbove)} сверх размена)' : ''}. '
-                        'Деньги не попали в сейф точки.',
+                        'При принятии смены в админке укажите этот факт — нал сядет на баланс.',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: scheme.onErrorContainer,
                         ),
@@ -105,9 +105,16 @@ class CashShiftReportDialog extends StatelessWidget {
                     highlight: sum.encashmentWasDone,
                     warn: noEnc,
                   ),
+                  if (sum.closingExpected != null)
+                    _SummaryChip(
+                      label: 'В ящике по учёту',
+                      value: formatSomoni(sum.closingExpected!),
+                      scheme: scheme,
+                      bold: true,
+                    ),
                   if (sum.closingActual != null)
                     _SummaryChip(
-                      label: 'В кассе после закр.',
+                      label: 'Факт в ящике',
                       value: formatSomoni(sum.closingActual!),
                       scheme: scheme,
                       bold: true,

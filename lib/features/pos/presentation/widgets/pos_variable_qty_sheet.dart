@@ -103,29 +103,38 @@ class _PosVariableQtyPickerPanelState extends State<PosVariableQtyPickerPanel> {
           'Количество (${_base.isGram ? 'граммы' : 'штуки'})',
           style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         InputDecorator(
           decoration: InputDecoration(
             labelText: 'Введите количество',
             suffixText: unitSuffix,
             border: const OutlineInputBorder(),
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           ),
           child: Text(
             _input.display,
             textAlign: TextAlign.right,
-            style: theme.textTheme.headlineSmall?.copyWith(
+            style: theme.textTheme.titleLarge?.copyWith(
               fontWeight: FontWeight.w800,
             ),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         Wrap(
-          spacing: 8,
-          runSpacing: 8,
+          spacing: 6,
+          runSpacing: 4,
           children: [
             for (final p in _presets)
               ActionChip(
-                label: Text(_base.isGram ? '$p г' : '$p шт'),
+                visualDensity: VisualDensity.compact,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+                padding: EdgeInsets.zero,
+                label: Text(
+                  _base.isGram ? '$p г' : '$p шт',
+                  style: theme.textTheme.labelMedium,
+                ),
                 onPressed: () => setState(() {
                   _input.setValue(p);
                   _notify();
@@ -133,9 +142,11 @@ class _PosVariableQtyPickerPanelState extends State<PosVariableQtyPickerPanel> {
               ),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         PosNumericKeypad(
+          compact: true,
           showDot: false,
+          clearLabel: 'Стереть',
           presetLabel: 'Базовое (${_base.defaultQty.round()} $unitSuffix)',
           onDigit: (d) => setState(() {
             _input.appendDigit(d);
@@ -240,91 +251,116 @@ class _PosVariableQtyDialogState extends State<_PosVariableQtyDialog> {
     final unitSuffix = _base.isGram ? 'г' : 'шт';
     final canAdd = _input.value > 0 || _actualQty > 0;
 
+    final maxContentH = MediaQuery.sizeOf(context).height * 0.62;
+
     return AlertDialog(
       backgroundColor: scheme.surfaceContainerLow,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      titlePadding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
+      contentPadding: const EdgeInsets.fromLTRB(20, 10, 20, 8),
       title: Text(
         widget.item.name,
-        style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w800),
+        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
       ),
       content: SizedBox(
-        width: _dialogWidth(context, 420),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(
-              'Цена за ${_base.defaultQty.round()} $unitSuffix: '
-              '${_catalogBase.toStringAsFixed(_catalogBase == _catalogBase.roundToDouble() ? 0 : 2)} сомони',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Итого: ${_unitPrice.toStringAsFixed(_unitPrice == _unitPrice.roundToDouble() ? 0 : 2)} сомони',
-              style: theme.textTheme.headlineSmall?.copyWith(
-                color: scheme.primary,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 12),
-            InputDecorator(
-              decoration: InputDecoration(
-                labelText: 'Сколько ${_base.isGram ? 'грамм' : 'штук'}?',
-                suffixText: unitSuffix,
-                border: const OutlineInputBorder(),
-              ),
-              child: Text(
-                _input.display,
-                textAlign: TextAlign.right,
-                style: theme.textTheme.headlineSmall?.copyWith(
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+        width: _dialogWidth(context, 400),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxHeight: maxContentH),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (final p in (_base.isGram ? [150, 200, 250, 300] : [4, 6, 8, 10, 12]))
-                  ActionChip(
-                    label: Text(_base.isGram ? '$p г' : '$p шт'),
-                    onPressed: () {
-                      setState(() {
-                        _input.setValue(p);
-                        _actualQty = p.toDouble();
-                      });
-                    },
+                Text(
+                  'Цена за ${_base.defaultQty.round()} $unitSuffix: '
+                  '${_catalogBase.toStringAsFixed(_catalogBase == _catalogBase.roundToDouble() ? 0 : 2)} сомони',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
                   ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Итого: ${_unitPrice.toStringAsFixed(_unitPrice == _unitPrice.roundToDouble() ? 0 : 2)} сомони',
+                  style: theme.textTheme.titleLarge?.copyWith(
+                    color: scheme.primary,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                InputDecorator(
+                  decoration: InputDecoration(
+                    labelText: 'Сколько ${_base.isGram ? 'грамм' : 'штук'}?',
+                    suffixText: unitSuffix,
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
+                  child: Text(
+                    _input.display,
+                    textAlign: TextAlign.right,
+                    style: theme.textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    for (final p in (_base.isGram
+                        ? [150, 200, 250, 300]
+                        : [4, 6, 8, 10, 12]))
+                      ActionChip(
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        labelPadding: const EdgeInsets.symmetric(horizontal: 6),
+                        padding: EdgeInsets.zero,
+                        label: Text(
+                          _base.isGram ? '$p г' : '$p шт',
+                          style: theme.textTheme.labelMedium,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _input.setValue(p);
+                            _actualQty = p.toDouble();
+                          });
+                        },
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                PosNumericKeypad(
+                  compact: true,
+                  showDot: false,
+                  clearLabel: 'Стереть',
+                  presetLabel:
+                      'Базовое (${_base.defaultQty.round()} $unitSuffix)',
+                  onDigit: (d) {
+                    setState(() => _input.appendDigit(d));
+                    _syncQtyFromInput();
+                  },
+                  onBackspace: () {
+                    setState(() => _input.backspace());
+                    _syncQtyFromInput();
+                  },
+                  onPreset: () {
+                    setState(() {
+                      _input.setValue(_base.defaultQty.round());
+                      _actualQty = _base.defaultQty;
+                    });
+                  },
+                  onClear: () {
+                    setState(() {
+                      _input.clear();
+                      _actualQty = _base.defaultQty;
+                    });
+                  },
+                ),
               ],
             ),
-            const SizedBox(height: 8),
-            PosNumericKeypad(
-              showDot: false,
-              presetLabel: 'Базовое (${_base.defaultQty.round()} $unitSuffix)',
-              onDigit: (d) {
-                setState(() => _input.appendDigit(d));
-                _syncQtyFromInput();
-              },
-              onBackspace: () {
-                setState(() => _input.backspace());
-                _syncQtyFromInput();
-              },
-              onPreset: () {
-                setState(() {
-                  _input.setValue(_base.defaultQty.round());
-                  _actualQty = _base.defaultQty;
-                });
-              },
-              onClear: () {
-                setState(() {
-                  _input.clear();
-                  _actualQty = _base.defaultQty;
-                });
-              },
-            ),
-          ],
+          ),
         ),
       ),
       actions: [

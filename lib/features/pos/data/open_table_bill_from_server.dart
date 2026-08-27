@@ -5,11 +5,15 @@ import 'package:dk_pos/features/pos/domain/pos_table_label_parse.dart';
 /// Человекочитаемый тип заказа для счёта (в БД с сайта часто `pickup` / `delivery` / `parking`).
 String openTableBillOrderTypeLabelRu(String raw) {
   final low = raw.trim().toLowerCase();
-  if (low == 'dinein' || low == 'dine_in' || low == 'dine-in') return 'На месте';
+  if (low == 'dinein' || low == 'dine_in' || low == 'dine-in') {
+    return 'На месте';
+  }
   if (low == 'on_site' || low == 'onsite') return 'На месте';
   if (low == 'delivery') return 'Доставка';
   if (low == 'pickup') return 'Самовывоз';
-  if (low == 'takeaway' || low == 'take_away' || low == 'to_go') return 'Самовывоз';
+  if (low == 'takeaway' || low == 'take_away' || low == 'to_go') {
+    return 'Самовывоз';
+  }
   if (low == 'parking') return 'Парковка';
   return raw.trim().isEmpty ? 'На месте' : raw.trim();
 }
@@ -22,8 +26,7 @@ PosTableBill posTableBillFromServerDto(LocalOpenTableBillDto d) {
       : null;
   final src = (d.orderSource ?? 'pos').toLowerCase().trim();
   final baseType = openTableBillOrderTypeLabelRu(d.orderType);
-  final typeLabel =
-      src == 'website' ? 'Онлайн · $baseType' : baseType;
+  final typeLabel = src == 'website' ? 'Онлайн · $baseType' : baseType;
   final tableLabel = d.tableLabel.trim();
   final phoneFromApi = d.customerPhone?.trim();
   final phoneFromLabel = parseDeliveryPhoneFromTableLabel(tableLabel);
@@ -32,6 +35,40 @@ PosTableBill posTableBillFromServerDto(LocalOpenTableBillDto d) {
       : phoneFromLabel;
   final isDelivery =
       d.isDelivery || typeLabel.toLowerCase().contains('доставк');
+
+  // Извлекаем доп. инфу из tableLabel для отображения на кассе
+  // Например: "Доставка · сайт №123 · способ: Яндекс · зона/радиус: 5км · курьер: Иван"
+  String? deliveryCourier;
+  String? deliveryMethod;
+  String? deliveryZone;
+  if (isDelivery && tableLabel.isNotEmpty) {
+    final parts = tableLabel.split('·').map((e) => e.trim());
+    for (final p in parts) {
+      if (p.startsWith('курьер:')) {
+        deliveryCourier = p.replaceFirst('курьер:', '').trim();
+      }
+      if (p.startsWith('способ:')) {
+        deliveryMethod = p.replaceFirst('способ:', '').trim();
+      }
+      if (p.startsWith('зона/радиус:')) {
+        deliveryZone = p.replaceFirst('зона/радиус:', '').trim();
+      }
+    }
+  }
+
+  final subtotalRaw = d.subtotal;
+  final subtotal = subtotalRaw != null && subtotalRaw > 0
+      ? subtotalRaw
+      : d.total;
+  final promoDiscount = d.promoDiscountAmount ?? 0.0;
+  final handedOut = d.handedOutAtIso != null && d.handedOutAtIso!.isNotEmpty
+      ? DateTime.tryParse(d.handedOutAtIso!)?.toLocal()
+      : null;
+  final sessionEnds =
+      d.tableSessionEndsAtIso != null && d.tableSessionEndsAtIso!.isNotEmpty
+          ? DateTime.tryParse(d.tableSessionEndsAtIso!)?.toLocal()
+          : null;
+  final isPaid = d.isPaid;
   return PosTableBill(
     id: d.id,
     lines: d.lines
@@ -45,6 +82,7 @@ PosTableBill posTableBillFromServerDto(LocalOpenTableBillDto d) {
             unitPrice: l.unitPrice,
             kitchenLineStatus: l.kitchenLineStatus,
             kitchenStationId: l.kitchenStationId,
+            modifiers: l.modifiers,
           ),
         )
         .toList(growable: false),
@@ -54,7 +92,7 @@ PosTableBill posTableBillFromServerDto(LocalOpenTableBillDto d) {
     tableNumber: parsed.number,
     tableZone: parsed.zone,
     createdAt: created ?? DateTime.now(),
-    isPaid: false,
+    isPaid: isPaid,
     paymentMethod: null,
     orderStatus: d.status,
     tableLabel: tableLabel,
@@ -66,5 +104,16 @@ PosTableBill posTableBillFromServerDto(LocalOpenTableBillDto d) {
     isWaiterOrder: d.isWaiterOrder,
     isTakeaway: d.isTakeaway,
     isCashierOrder: d.isCashierOrder,
+    isOnlineOrder: src == 'website',
+    subtotal: subtotal,
+    discountAmount: promoDiscount > 0 ? promoDiscount : 0,
+    deliveryCourier: deliveryCourier,
+    deliveryMethod: deliveryMethod,
+    deliveryZone: deliveryZone,
+    dto: d,
+    handedOutAt: handedOut,
+    tableSessionPhase: d.tableSessionPhase,
+    tableSessionEndsAt: sessionEnds,
+    tableSessionGraceMinutes: d.tableSessionGraceMinutes,
   );
 }

@@ -64,6 +64,16 @@ class PosBillChannelChips extends StatelessWidget {
 
   List<_ChannelChipStyle> _styles() {
     final out = <_ChannelChipStyle>[];
+    if (bill.isOnlineBill) {
+      out.add(
+        const _ChannelChipStyle(
+          label: 'Онлайн',
+          bg: Color(0xFFF3E5F5),
+          fg: Color(0xFF7B1FA2),
+          icon: Icons.language_rounded,
+        ),
+      );
+    }
     if (isWaiterBillChannel(bill)) {
       final name = bill.createdByUsername?.trim();
       out.add(

@@ -31,6 +31,29 @@ class InventoryTransferSummary {
   }
 }
 
+class InventoryCookableProduct {
+  const InventoryCookableProduct({
+    required this.productName,
+    required this.maxQty,
+    required this.status,
+    this.limitingIngredientName,
+  });
+
+  final String productName;
+  final int maxQty;
+  final String status;
+  final String? limitingIngredientName;
+
+  factory InventoryCookableProduct.fromJson(Map<String, dynamic> json) {
+    return InventoryCookableProduct(
+      productName: json['product_name']?.toString() ?? 'Товар',
+      maxQty: (num.tryParse(json['max_qty']?.toString() ?? '') ?? 0).floor(),
+      status: json['status']?.toString() ?? 'ok',
+      limitingIngredientName: json['limiting_ingredient_name']?.toString(),
+    );
+  }
+}
+
 class InventoryTransferLine {
   const InventoryTransferLine({
     required this.ingredientName,
@@ -142,6 +165,26 @@ class LocalInventoryRepository {
     return InventoryTransferDocument.fromJson(
       Map<String, dynamic>.from(body['document'] as Map),
     );
+  }
+
+  Future<List<InventoryCookableProduct>> fetchCookableProducts() async {
+    final res = await _http.get('api/local/inventory/stock-insights');
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Не удалось получить остатки точки',
+      );
+    }
+    final body = res.body;
+    if (body is! Map || body['enabled'] == false) return <InventoryCookableProduct>[];
+    final raw = body['yields'];
+    return raw is List
+        ? raw
+            .whereType<Map>()
+            .map((e) => InventoryCookableProduct.fromJson(Map<String, dynamic>.from(e)))
+            .toList()
+        : <InventoryCookableProduct>[];
   }
 
   Future<InventoryTransferDocument> receiveTransfer(int id) async {

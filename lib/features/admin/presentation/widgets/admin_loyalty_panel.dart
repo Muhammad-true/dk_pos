@@ -7,7 +7,6 @@ import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/features/loyalty/data/local_loyalty_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:flutter/services.dart';
 
 class AdminLoyaltyPanel extends StatefulWidget {
   const AdminLoyaltyPanel({super.key});
@@ -32,7 +31,9 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
   @override
   void initState() {
     super.initState();
-    _newPhoneCtrl.text = TjPhoneDialLockedFormatter.ensureStored(_newPhoneCtrl.text);
+    _newPhoneCtrl.text = TjPhoneDialLockedFormatter.ensureStored(
+      _newPhoneCtrl.text,
+    );
     _reload();
   }
 
@@ -55,12 +56,17 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
       final repo = context.read<LocalLoyaltyRepository>();
       final results = await Future.wait([
         repo.fetchTiers(),
-        repo.searchCustomers(query: _searchCtrl.text.trim(), includeBlacklisted: true),
+        repo.searchCustomers(
+          query: _searchCtrl.text.trim(),
+          includeBlacklisted: true,
+        ),
       ]);
       if (!mounted) return;
       final query = _searchCtrl.text.trim();
       final normalized = _normalizeScanValue(query);
-      final ranked = List<LoyaltyCustomer>.from(results[1] as List<LoyaltyCustomer>);
+      final ranked = List<LoyaltyCustomer>.from(
+        results[1] as List<LoyaltyCustomer>,
+      );
       if (query.isNotEmpty) {
         ranked.sort((a, b) {
           final ax = _isExactCustomerMatch(a, query, normalized) ? 1 : 0;
@@ -91,7 +97,11 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
     return value.replaceAll(RegExp(r'[^0-9+]'), '');
   }
 
-  bool _isExactCustomerMatch(LoyaltyCustomer c, String rawQuery, String normalizedQuery) {
+  bool _isExactCustomerMatch(
+    LoyaltyCustomer c,
+    String rawQuery,
+    String normalizedQuery,
+  ) {
     final q = rawQuery.trim().toLowerCase();
     if (q.isEmpty) return false;
     final qr = c.qrCode.trim().toLowerCase();
@@ -114,19 +124,25 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
     });
     try {
       await context.read<LocalLoyaltyRepository>().createCustomer(
-            phone: phone,
-            fullName: _newNameCtrl.text.trim().isEmpty ? null : _newNameCtrl.text.trim(),
-            cardCode: _newCardCtrl.text.trim().isEmpty ? null : _newCardCtrl.text.trim(),
-          );
+        phone: phone,
+        fullName: _newNameCtrl.text.trim().isEmpty
+            ? null
+            : _newNameCtrl.text.trim(),
+        cardCode: _newCardCtrl.text.trim().isEmpty
+            ? null
+            : _newCardCtrl.text.trim(),
+      );
       if (!mounted) return;
       _newNameCtrl.clear();
-      _newPhoneCtrl.text = TjPhoneDialLockedFormatter.ensureStored(_newPhoneCtrl.text);
+      _newPhoneCtrl.text = TjPhoneDialLockedFormatter.ensureStored(
+        _newPhoneCtrl.text,
+      );
       _newCardCtrl.clear();
       await _reload();
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Клиент создан')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Клиент создан')));
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = e.toString());
@@ -144,14 +160,16 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
       );
       if (!mounted || reason == null) return;
       await context.read<LocalLoyaltyRepository>().setBlacklist(
-            customerId: customer.id,
-            blacklisted: !customer.isBlacklisted,
-            reason: reason.trim().isEmpty ? null : reason.trim(),
-          );
+        customerId: customer.id,
+        blacklisted: !customer.isBlacklisted,
+        reason: reason.trim().isEmpty ? null : reason.trim(),
+      );
       await _reload();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
     }
   }
 
@@ -164,27 +182,30 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
     if (!mounted || value == null) return;
     final delta = double.tryParse(value.trim().replaceAll(',', '.'));
     if (delta == null || delta == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Некорректное значение')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Некорректное значение')));
       return;
     }
     try {
       await context.read<LocalLoyaltyRepository>().adjustPoints(
-            customerId: customer.id,
-            pointsDelta: delta,
-            comment: 'Из админки',
-          );
+        customerId: customer.id,
+        pointsDelta: delta,
+        comment: 'Из админки',
+      );
       await _reload();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
     }
   }
 
   Future<void> _deleteCustomer(LoyaltyCustomer customer) async {
     final repo = context.read<LocalLoyaltyRepository>();
-    final confirmed = await showDialog<bool>(
+    final confirmed =
+        await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
             title: const Text('Удалить клиента?'),
@@ -208,14 +229,20 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
       await _reload();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
     }
   }
 
   Future<void> _editTier(LoyaltyTier tier) async {
     final repo = context.read<LocalLoyaltyRepository>();
-    final percentCtrl = TextEditingController(text: tier.accrualPercent.toStringAsFixed(2));
-    final thresholdCtrl = TextEditingController(text: tier.monthlySpendThreshold.toStringAsFixed(2));
+    final percentCtrl = TextEditingController(
+      text: tier.accrualPercent.toStringAsFixed(2),
+    );
+    final thresholdCtrl = TextEditingController(
+      text: tier.monthlySpendThreshold.toStringAsFixed(2),
+    );
     final titleCtrl = TextEditingController(text: tier.title);
     bool active = tier.isActive;
     final save = await showDialog<bool>(
@@ -277,21 +304,27 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
       },
     );
     if (save != true) return;
-    final percent = double.tryParse(percentCtrl.text.trim().replaceAll(',', '.'));
-    final threshold = double.tryParse(thresholdCtrl.text.trim().replaceAll(',', '.'));
+    final percent = double.tryParse(
+      percentCtrl.text.trim().replaceAll(',', '.'),
+    );
+    final threshold = double.tryParse(
+      thresholdCtrl.text.trim().replaceAll(',', '.'),
+    );
     if (percent == null || threshold == null) return;
     try {
       await repo.updateTier(
-            tierId: tier.id,
-            title: titleCtrl.text.trim(),
-            accrualPercent: percent,
-            monthlySpendThreshold: threshold,
-            isActive: active,
-          );
+        tierId: tier.id,
+        title: titleCtrl.text.trim(),
+        accrualPercent: percent,
+        monthlySpendThreshold: threshold,
+        isActive: active,
+      );
       await _reload();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(e.toString())));
     }
   }
 
@@ -306,7 +339,9 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
           children: [
             Text(
               'Клиенты и лояльность',
-              style: textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+              style: textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 8),
             Text(
@@ -366,7 +401,9 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
             const SizedBox(height: 10),
             Text(
               'Создать клиента',
-              style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              style: textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 6),
             LayoutBuilder(
@@ -428,7 +465,9 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
             const SizedBox(height: 14),
             Text(
               'Уровни',
-              style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              style: textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 6),
             if (_loading) const LinearProgressIndicator(),
@@ -450,13 +489,16 @@ class _AdminLoyaltyPanelState extends State<AdminLoyaltyPanel> {
             const Divider(),
             Text(
               'Клиенты',
-              style: textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              style: textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 6),
             LayoutBuilder(
               builder: (context, constraints) {
-                final cols = WindowLayout(width: constraints.maxWidth)
-                    .hubGridColumns(minCellWidth: 320);
+                final cols = WindowLayout(
+                  width: constraints.maxWidth,
+                ).hubGridColumns(minCellWidth: 320);
                 if (cols <= 1) {
                   return Column(
                     children: _customers
@@ -625,10 +667,9 @@ class _CustomerHistoryDialogState extends State<_CustomerHistoryDialog> {
       _error = null;
     });
     try {
-      final rows = await context.read<LocalLoyaltyRepository>().fetchCustomerHistory(
-            customerId: widget.customer.id,
-            limit: 200,
-          );
+      final rows = await context
+          .read<LocalLoyaltyRepository>()
+          .fetchCustomerHistory(customerId: widget.customer.id, limit: 200);
       if (!mounted) return;
       setState(() => _rows = rows);
     } catch (e) {
@@ -648,35 +689,38 @@ class _CustomerHistoryDialogState extends State<_CustomerHistoryDialog> {
         child: _loading
             ? const Center(child: CircularProgressIndicator())
             : _error != null
-                ? Text(_error!)
-                : _rows.isEmpty
-                    ? const Text('История пуста')
-                    : ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: _rows.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (context, i) {
-                          final row = _rows[i];
-                          final sign = row.pointsDelta >= 0 ? '+' : '';
-                          final dt = row.createdAt?.toString() ?? '-';
-                          final details = <String>[
-                            if (row.orderNumber != null && row.orderNumber!.isNotEmpty)
-                              'Заказ: ${row.orderNumber}',
-                            if (row.paymentAmount != null)
-                              'Оплата: ${row.paymentAmount!.toStringAsFixed(2)}',
-                            if (row.paymentMethod != null && row.paymentMethod!.isNotEmpty)
-                              'Метод: ${row.paymentMethod}',
-                            if (row.comment != null && row.comment!.isNotEmpty)
-                              row.comment!,
-                          ];
-                          return ListTile(
-                            dense: true,
-                            title: Text('${row.txType} • $sign${row.pointsDelta.toStringAsFixed(2)}'),
-                            subtitle: Text(details.join(' • ')),
-                            trailing: Text(dt),
-                          );
-                        },
-                      ),
+            ? Text(_error!)
+            : _rows.isEmpty
+            ? const Text('История пуста')
+            : ListView.separated(
+                shrinkWrap: true,
+                itemCount: _rows.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, i) {
+                  final row = _rows[i];
+                  final sign = row.pointsDelta >= 0 ? '+' : '';
+                  final dt = row.createdAt?.toString() ?? '-';
+                  final details = <String>[
+                    if (row.orderNumber != null && row.orderNumber!.isNotEmpty)
+                      'Заказ: ${row.orderNumber}',
+                    if (row.paymentAmount != null)
+                      'Оплата: ${row.paymentAmount!.toStringAsFixed(2)}',
+                    if (row.paymentMethod != null &&
+                        row.paymentMethod!.isNotEmpty)
+                      'Метод: ${row.paymentMethod}',
+                    if (row.comment != null && row.comment!.isNotEmpty)
+                      row.comment!,
+                  ];
+                  return ListTile(
+                    dense: true,
+                    title: Text(
+                      '${row.txType} • $sign${row.pointsDelta.toStringAsFixed(2)}',
+                    ),
+                    subtitle: Text(details.join(' • ')),
+                    trailing: Text(dt),
+                  );
+                },
+              ),
       ),
       actions: [
         TextButton(

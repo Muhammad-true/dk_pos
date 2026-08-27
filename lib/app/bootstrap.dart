@@ -2,28 +2,19 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
-import 'package:flutter/material.dart';
-import 'package:fvp/fvp.dart' as fvp;
-import 'package:flutter/services.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:dk_digitial_menu/core/app_config.dart' as dm_app_config;
 import 'package:dk_digitial_menu/core/app_file_logger.dart';
-
 import 'package:dk_pos/app/app_update_info.dart';
-import 'package:dk_pos/core/cache/pos_local_cache_cleanup.dart';
-import 'package:dk_pos/features/license/global_license_bootstrap.dart';
-import 'package:dk_pos/features/license/license_global_api.dart';
-import 'package:dk_pos/features/license/license_runtime_config.dart';
-import 'package:dk_pos/features/license/local_server_discovery.dart';
 import 'package:dk_pos/app/dk_pos_app.dart';
 import 'package:dk_pos/app/locale/locale_bloc.dart';
 import 'package:dk_pos/app/locale/locale_event.dart';
+import 'package:dk_pos/app/pos_board_layout/pos_board_layout_cubit.dart';
 import 'package:dk_pos/app/pos_cart_panel/pos_cart_panel_cubit.dart';
+import 'package:dk_pos/app/pos_cashier_board/pos_cashier_board_cubit.dart';
 import 'package:dk_pos/app/pos_catalog_grid/pos_catalog_grid_cubit.dart';
 import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
 import 'package:dk_pos/app/router/app_router.dart' show AppRouter;
+import 'package:dk_pos/core/cache/pos_local_cache_cleanup.dart';
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/config/server_endpoint_applier.dart';
 import 'package:dk_pos/core/config/server_endpoint_store.dart';
@@ -32,6 +23,30 @@ import 'package:dk_pos/core/network/dio_factory.dart';
 import 'package:dk_pos/core/network/http_client.dart';
 import 'package:dk_pos/data/network/dio_http_client.dart';
 import 'package:dk_pos/data/storage/shared_preferences_key_value_store.dart';
+import 'package:dk_pos/features/admin/data/admin_reports_repository.dart';
+import 'package:dk_pos/features/admin/data/app_versions_remote_data_source_impl.dart';
+import 'package:dk_pos/features/admin/data/app_versions_repository.dart';
+import 'package:dk_pos/features/admin/data/catalog_admin_remote_data_source_impl.dart';
+import 'package:dk_pos/features/admin/data/catalog_admin_repository.dart';
+import 'package:dk_pos/features/admin/data/combos_admin_repository.dart';
+import 'package:dk_pos/features/admin/data/kitchen_buttons_repository.dart';
+import 'package:dk_pos/features/admin/data/kitchen_stations_repository.dart';
+import 'package:dk_pos/features/admin/data/local_audio_settings_repository.dart';
+import 'package:dk_pos/features/admin/data/local_order_handout_settings_repository.dart';
+import 'package:dk_pos/features/admin/data/local_pos_settings_repository.dart';
+import 'package:dk_pos/features/admin/data/local_receipt_settings_repository.dart';
+import 'package:dk_pos/features/admin/data/local_tv_display_settings_repository.dart';
+import 'package:dk_pos/features/admin/data/local_tv_wall_repository.dart';
+import 'package:dk_pos/features/admin/data/menu_display_preview_repository.dart';
+import 'package:dk_pos/features/admin/data/menu_items_admin_remote_data_source_impl.dart';
+import 'package:dk_pos/features/admin/data/menu_items_admin_repository.dart';
+import 'package:dk_pos/features/admin/data/menu_units_repository.dart';
+import 'package:dk_pos/features/admin/data/screens_admin_remote_data_source_impl.dart';
+import 'package:dk_pos/features/admin/data/screens_admin_repository.dart';
+import 'package:dk_pos/features/admin/data/theme_admin_repository.dart';
+import 'package:dk_pos/features/admin/data/upload_repository.dart';
+import 'package:dk_pos/features/admin/data/users_admin_remote_data_source_impl.dart';
+import 'package:dk_pos/features/admin/data/users_admin_repository.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/auth/bloc/auth_event.dart';
 import 'package:dk_pos/features/auth/data/auth_remote_data_source_impl.dart';
@@ -39,46 +54,34 @@ import 'package:dk_pos/features/auth/data/auth_repository.dart';
 import 'package:dk_pos/features/auth/data/local_shift_repository.dart';
 import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
 import 'package:dk_pos/features/cart/data/cart_repository.dart';
-import 'package:dk_pos/features/admin/data/catalog_admin_remote_data_source_impl.dart';
-import 'package:dk_pos/features/admin/data/catalog_admin_repository.dart';
-import 'package:dk_pos/features/admin/data/app_versions_remote_data_source_impl.dart';
-import 'package:dk_pos/features/admin/data/app_versions_repository.dart';
-import 'package:dk_pos/features/admin/data/menu_items_admin_remote_data_source_impl.dart';
-import 'package:dk_pos/features/admin/data/menu_items_admin_repository.dart';
-import 'package:dk_pos/features/admin/data/menu_display_preview_repository.dart';
-import 'package:dk_pos/features/admin/data/screens_admin_remote_data_source_impl.dart';
-import 'package:dk_pos/features/admin/data/screens_admin_repository.dart';
-import 'package:dk_pos/features/admin/data/theme_admin_repository.dart';
-import 'package:dk_pos/features/admin/data/menu_units_repository.dart';
-import 'package:dk_pos/features/admin/data/combos_admin_repository.dart';
-import 'package:dk_pos/features/admin/data/upload_repository.dart';
-import 'package:dk_pos/features/admin/data/admin_reports_repository.dart';
-import 'package:dk_pos/features/inventory/data/local_inventory_repository.dart';
-import 'package:dk_pos/features/admin/data/users_admin_remote_data_source_impl.dart';
-import 'package:dk_pos/features/admin/data/users_admin_repository.dart';
-import 'package:dk_pos/features/admin/data/kitchen_stations_repository.dart';
-import 'package:dk_pos/features/admin/data/kitchen_buttons_repository.dart';
-import 'package:dk_pos/features/admin/data/local_audio_settings_repository.dart';
-import 'package:dk_pos/features/admin/data/local_tv_display_settings_repository.dart';
-import 'package:dk_pos/features/admin/data/local_order_handout_settings_repository.dart';
-import 'package:dk_pos/features/admin/data/local_receipt_settings_repository.dart';
 import 'package:dk_pos/features/cash/data/local_cash_repository.dart';
-import 'package:dk_pos/features/shifts/data/shift_close_preflight.dart';
 import 'package:dk_pos/features/hardware/data/local_hardware_repository.dart';
+import 'package:dk_pos/features/inventory/data/local_inventory_repository.dart';
+import 'package:dk_pos/features/kitchen_board/background/kitchen_background_service.dart';
+import 'package:dk_pos/features/license/global_license_bootstrap.dart';
+import 'package:dk_pos/features/license/license_global_api.dart';
+import 'package:dk_pos/features/license/license_runtime_config.dart';
+import 'package:dk_pos/features/loyalty/data/local_loyalty_repository.dart';
 import 'package:dk_pos/features/menu/data/menu_remote_data_source_impl.dart';
 import 'package:dk_pos/features/menu/data/menu_repository.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
-import 'package:dk_pos/features/payments/data/local_payments_repository.dart';
 import 'package:dk_pos/features/payments/data/local_payment_methods_repository.dart';
-import 'package:dk_pos/features/loyalty/data/local_loyalty_repository.dart';
-import 'package:dk_pos/features/kitchen_board/background/kitchen_background_service.dart';
+import 'package:dk_pos/features/payments/data/local_payments_repository.dart';
+import 'package:dk_pos/features/pos/data/local_online_ordering_repository.dart';
 import 'package:dk_pos/features/pos/presentation/screens/customer_display_window.dart';
+import 'package:dk_pos/features/shifts/data/shift_close_preflight.dart';
 import 'package:dk_pos/features/update/pos_update_merged_check.dart';
 import 'package:dk_pos/features/update/silent_update_dialog.dart';
 import 'package:dk_pos/features/update/update_bottom_banner.dart';
 import 'package:dk_pos/features/update/update_coordinator.dart';
 import 'package:dk_pos/features/update/update_download_launcher.dart';
 import 'package:dk_pos/theme/app_theme.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:fvp/fvp.dart' as fvp;
+import 'package:url_launcher/url_launcher.dart';
 
 String _formatDotenvError(Object e) =>
     'Не удалось загрузить assets/.env (нужен API_BASE_URL и др.). '
@@ -128,7 +131,7 @@ Future<void> bootstrap([List<String> args = const []]) async {
   installAppFileLoggerHooks(appTag: 'dk_pos');
   ErrorWidget.builder = (FlutterErrorDetails details) {
     return Material(
-      color: Colors.white,
+      color: const Color(0xFFFFF0F0),
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -144,10 +147,32 @@ Future<void> bootstrap([List<String> args = const []]) async {
                 const SizedBox(height: 12),
                 const Text(
                   'Ошибка интерфейса',
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFFE4002B),
+                  ),
+                  textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 12),
                 SelectableText(details.exceptionAsString()),
+                const SizedBox(height: 24),
+                Builder(
+                  builder: (context) {
+                    return FilledButton.icon(
+                      onPressed: () {
+                        if (Navigator.of(context).canPop()) {
+                          Navigator.of(context).pop();
+                        }
+                      },
+                      icon: const Icon(Icons.arrow_back_rounded),
+                      label: const Text('Вернуться назад'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFE4002B),
+                      ),
+                    );
+                  },
+                ),
               ],
             ),
           ),
@@ -270,7 +295,8 @@ class _PosBootstrapGate extends StatefulWidget {
   State<_PosBootstrapGate> createState() => _PosBootstrapGateState();
 }
 
-class _PosBootstrapGateState extends State<_PosBootstrapGate> {
+class _PosBootstrapGateState extends State<_PosBootstrapGate>
+    with WidgetsBindingObserver {
   static final Uri _franchisePortalUri = Uri.parse(
     'https://franchise.donerkebab.tj',
   );
@@ -293,8 +319,30 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     unawaited(_primeIpField());
     _runStartupPipeline();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    unawaited(_checkNetworkOnResume());
+  }
+
+  Future<void> _checkNetworkOnResume() async {
+    if (_loading || _payload != null) return;
+    final bindingOk = await ServerEndpointStore.isNetworkBindingValid();
+    if (!bindingOk && mounted) {
+      final saved = await ServerEndpointStore.read();
+      _ipController.text = AppConfig.serverInputHintHost(savedOrigin: saved);
+      setState(() {
+        _error = 'Сменилась Wi‑Fi сеть. Введите IP сервера заново.';
+        _payload = null;
+        _licenseNetworkSuggestServer = true;
+        _licenseNetworkError = _error;
+      });
+    }
   }
 
   Future<void> _primeIpField() async {
@@ -305,6 +353,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _updateCoordinator.dispose();
     _ipController.dispose();
     _licenseKeyController.dispose();
@@ -383,8 +432,11 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       setState(() => _licenseFormError = 'Введите ключ лицензии');
       return;
     }
-    final serverRaw = _licenseNetworkSuggestServer ? _ipController.text.trim() : null;
-    if (_licenseNetworkSuggestServer && (serverRaw == null || serverRaw.isEmpty)) {
+    final serverRaw = _licenseNetworkSuggestServer
+        ? _ipController.text.trim()
+        : null;
+    if (_licenseNetworkSuggestServer &&
+        (serverRaw == null || serverRaw.isEmpty)) {
       setState(() => _licenseFormError = 'Укажите IP сервера кассы');
       return;
     }
@@ -472,8 +524,10 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       final uploadRepo = UploadRepository(http);
       final localAudioSettingsRepo = LocalAudioSettingsRepository(http);
       final localTvDisplaySettingsRepo = LocalTvDisplaySettingsRepository(http);
-      final localOrderHandoutSettingsRepo =
-          LocalOrderHandoutSettingsRepository(http);
+      final localTvWallRepo = LocalTvWallRepository(http);
+      final localOrderHandoutSettingsRepo = LocalOrderHandoutSettingsRepository(
+        http,
+      );
       final localReceiptSettingsRepo = LocalReceiptSettingsRepository(http);
       final localHardwareRepo = LocalHardwareRepository(http);
       final localCashRepo = LocalCashRepository(http);
@@ -482,6 +536,8 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       final localPaymentsRepo = LocalPaymentsRepository(http);
       final localPaymentMethodsRepo = LocalPaymentMethodsRepository(http);
       final localLoyaltyRepo = LocalLoyaltyRepository(http);
+      final localPosSettingsRepo = LocalPosSettingsRepository(http);
+      final localOnlineOrderingRepo = LocalOnlineOrderingRepository(http);
       final adminReportsRepo = AdminReportsRepository(http);
       final localInventoryRepo = LocalInventoryRepository(http);
       final cartRepo = CartRepository();
@@ -511,7 +567,9 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
       final localeBloc = LocaleBloc(kv)..add(const LocaleStarted());
       final posThemeCubit = PosThemeCubit(kv);
       final posCatalogGridCubit = PosCatalogGridCubit(kv);
+      final posBoardLayoutCubit = PosBoardLayoutCubit(localPosSettingsRepo);
       final posCartPanelCubit = PosCartPanelCubit(kv);
+      final posCashierBoardCubit = PosCashierBoardCubit(kv);
       final appRouter = AppRouter(authBloc: authBloc);
 
       if (!mounted) return;
@@ -536,6 +594,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           uploadRepo: uploadRepo,
           localAudioSettingsRepo: localAudioSettingsRepo,
           localTvDisplaySettingsRepo: localTvDisplaySettingsRepo,
+          localTvWallRepo: localTvWallRepo,
           localOrderHandoutSettingsRepo: localOrderHandoutSettingsRepo,
           localReceiptSettingsRepo: localReceiptSettingsRepo,
           localHardwareRepo: localHardwareRepo,
@@ -545,6 +604,8 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           localPaymentsRepo: localPaymentsRepo,
           localPaymentMethodsRepo: localPaymentMethodsRepo,
           localLoyaltyRepo: localLoyaltyRepo,
+          localPosSettingsRepo: localPosSettingsRepo,
+          localOnlineOrderingRepo: localOnlineOrderingRepo,
           adminReportsRepo: adminReportsRepo,
           localInventoryRepo: localInventoryRepo,
           cartRepo: cartRepo,
@@ -552,7 +613,9 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           localeBloc: localeBloc,
           posThemeCubit: posThemeCubit,
           posCatalogGridCubit: posCatalogGridCubit,
+          posBoardLayoutCubit: posBoardLayoutCubit,
           posCartPanelCubit: posCartPanelCubit,
+          posCashierBoardCubit: posCashierBoardCubit,
           authBloc: authBloc,
           appRouter: appRouter,
         );
@@ -576,37 +639,6 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
 
   Future<void> _ensureApiAvailable(DioHttpClient http) async {
     await http.get('api/health');
-  }
-
-  Future<void> _runAutoDiscovery({bool fromLicenseScreen = false}) async {
-    setState(() {
-      _loading = true;
-      _error = null;
-      _licenseFormError = null;
-      _loadingSubtitle = 'Автопоиск сервера в сети…';
-    });
-    final discovery = await LocalServerDiscovery.resolveAuto();
-    if (!mounted) return;
-    if (discovery.ok) {
-      await _runStartupPipeline();
-      return;
-    }
-    final saved = await ServerEndpointStore.read();
-    if (!mounted) return;
-    _ipController.text = AppConfig.serverInputHintHost(savedOrigin: saved);
-    setState(() {
-      _loading = false;
-      _loadingSubtitle = null;
-      if (fromLicenseScreen) {
-        _licenseNetworkError =
-            discovery.message ?? 'Автопоиск не нашёл сервер. Введите IP вручную.';
-        _licenseNetworkSuggestServer = true;
-        _licenseNeedsKey = false;
-      } else {
-        _error = discovery.message ?? 'Автопоиск не нашёл сервер. Введите IP вручную.';
-        _payload = null;
-      }
-    });
   }
 
   Future<void> _saveServerIp({bool fromLicenseScreen = false}) async {
@@ -785,7 +817,8 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                                 controller: _ipController,
                                 keyboardType: TextInputType.url,
                                 textInputAction: TextInputAction.done,
-                                onSubmitted: (_) => _saveServerIp(fromLicenseScreen: true),
+                                onSubmitted: (_) =>
+                                    _saveServerIp(fromLicenseScreen: true),
                                 inputFormatters: [
                                   FilteringTextInputFormatter.deny(
                                     RegExp(r'\s'),
@@ -813,7 +846,9 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                               FilledButton(
                                 onPressed: _loading
                                     ? null
-                                    : () => _saveServerIp(fromLicenseScreen: true),
+                                    : () => _saveServerIp(
+                                        fromLicenseScreen: true,
+                                      ),
                                 style: FilledButton.styleFrom(
                                   backgroundColor: const Color(0xFFE4002B),
                                   foregroundColor: Colors.white,
@@ -822,18 +857,8 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                                   ),
                                 ),
                                 child: Text(
-                                  _loading
-                                      ? 'Настройка…'
-                                      : 'Подключить сервер',
+                                  _loading ? 'Настройка…' : 'Подключить сервер',
                                 ),
-                              ),
-                              const SizedBox(height: 8),
-                              OutlinedButton.icon(
-                                onPressed: _loading
-                                    ? null
-                                    : () => _runAutoDiscovery(fromLicenseScreen: true),
-                                icon: const Icon(Icons.travel_explore_rounded),
-                                label: const Text('Автопоиск в сети'),
                               ),
                             ],
                             if (!_licenseNetworkSuggestServer)
@@ -1120,8 +1145,8 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                             ),
                             const SizedBox(height: 10),
                             const Text(
-                              'IP компьютера, где запущен backend (порт 3000). '
-                              'Можно нажать «Автопоиск в сети» — касса сама найдёт сервер.',
+                              'IP компьютера с backend (порт 3000). '
+                              'Сохраняется на этой кассе. При смене Wi‑Fi — введите заново.',
                               textAlign: TextAlign.center,
                             ),
                             const SizedBox(height: 18),
@@ -1176,12 +1201,6 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
                                 ),
                               ),
                               child: const Text('Подключиться'),
-                            ),
-                            const SizedBox(height: 8),
-                            OutlinedButton.icon(
-                              onPressed: _loading ? null : _runAutoDiscovery,
-                              icon: const Icon(Icons.travel_explore_rounded),
-                              label: const Text('Автопоиск в сети'),
                             ),
                           ],
                         ),
@@ -1251,6 +1270,9 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         RepositoryProvider<LocalTvDisplaySettingsRepository>.value(
           value: payload.localTvDisplaySettingsRepo,
         ),
+        RepositoryProvider<LocalTvWallRepository>.value(
+          value: payload.localTvWallRepo,
+        ),
         RepositoryProvider<LocalOrderHandoutSettingsRepository>.value(
           value: payload.localOrderHandoutSettingsRepo,
         ),
@@ -1278,6 +1300,18 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
         RepositoryProvider<LocalLoyaltyRepository>.value(
           value: payload.localLoyaltyRepo,
         ),
+        RepositoryProvider<LocalPosSettingsRepository>.value(
+          value: payload.localPosSettingsRepo,
+        ),
+        RepositoryProvider<LocalOnlineOrderingRepository>.value(
+          value: payload.localOnlineOrderingRepo,
+        ),
+        RepositoryProvider<AdminReportsRepository>.value(
+          value: payload.adminReportsRepo,
+        ),
+        RepositoryProvider<LocalInventoryRepository>.value(
+          value: payload.localInventoryRepo,
+        ),
         RepositoryProvider<CartRepository>.value(value: payload.cartRepo),
       ],
       child: MultiBlocProvider(
@@ -1287,8 +1321,14 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           BlocProvider<PosCatalogGridCubit>.value(
             value: payload.posCatalogGridCubit,
           ),
+          BlocProvider<PosBoardLayoutCubit>.value(
+            value: payload.posBoardLayoutCubit,
+          ),
           BlocProvider<PosCartPanelCubit>.value(
             value: payload.posCartPanelCubit,
+          ),
+          BlocProvider<PosCashierBoardCubit>.value(
+            value: payload.posCashierBoardCubit,
           ),
           BlocProvider<AuthBloc>.value(value: payload.authBloc),
           BlocProvider<CartBloc>(create: (_) => CartBloc(payload.cartRepo)),
@@ -1297,9 +1337,7 @@ class _PosBootstrapGateState extends State<_PosBootstrapGate> {
           coordinator: _updateCoordinator,
           child: UpdateBottomBanner(
             coordinator: _updateCoordinator,
-            child: DkPosApp(
-              router: payload.appRouter,
-            ),
+            child: DkPosApp(router: payload.appRouter),
           ),
         ),
       ),
@@ -1329,6 +1367,7 @@ class _BootPayload {
     required this.uploadRepo,
     required this.localAudioSettingsRepo,
     required this.localTvDisplaySettingsRepo,
+    required this.localTvWallRepo,
     required this.localOrderHandoutSettingsRepo,
     required this.localReceiptSettingsRepo,
     required this.localHardwareRepo,
@@ -1338,12 +1377,16 @@ class _BootPayload {
     required this.localPaymentsRepo,
     required this.localPaymentMethodsRepo,
     required this.localLoyaltyRepo,
+    required this.localPosSettingsRepo,
+    required this.localOnlineOrderingRepo,
     required this.cartRepo,
     required this.startupUpdate,
     required this.localeBloc,
     required this.posThemeCubit,
     required this.posCatalogGridCubit,
+    required this.posBoardLayoutCubit,
     required this.posCartPanelCubit,
+    required this.posCashierBoardCubit,
     required this.authBloc,
     required this.appRouter,
   });
@@ -1368,6 +1411,7 @@ class _BootPayload {
   final UploadRepository uploadRepo;
   final LocalAudioSettingsRepository localAudioSettingsRepo;
   final LocalTvDisplaySettingsRepository localTvDisplaySettingsRepo;
+  final LocalTvWallRepository localTvWallRepo;
   final LocalOrderHandoutSettingsRepository localOrderHandoutSettingsRepo;
   final LocalReceiptSettingsRepository localReceiptSettingsRepo;
   final LocalHardwareRepository localHardwareRepo;
@@ -1377,12 +1421,16 @@ class _BootPayload {
   final LocalPaymentsRepository localPaymentsRepo;
   final LocalPaymentMethodsRepository localPaymentMethodsRepo;
   final LocalLoyaltyRepository localLoyaltyRepo;
+  final LocalPosSettingsRepository localPosSettingsRepo;
+  final LocalOnlineOrderingRepository localOnlineOrderingRepo;
   final CartRepository cartRepo;
   final AppUpdateInfo? startupUpdate;
   final LocaleBloc localeBloc;
   final PosThemeCubit posThemeCubit;
   final PosCatalogGridCubit posCatalogGridCubit;
+  final PosBoardLayoutCubit posBoardLayoutCubit;
   final PosCartPanelCubit posCartPanelCubit;
+  final PosCashierBoardCubit posCashierBoardCubit;
   final AuthBloc authBloc;
   final AppRouter appRouter;
 }

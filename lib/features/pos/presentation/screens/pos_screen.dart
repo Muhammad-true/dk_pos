@@ -12,6 +12,9 @@ import 'package:dk_pos/l10n/context_l10n.dart';
 import 'package:dk_pos/app/locale/locale_bloc.dart';
 import 'package:dk_pos/app/locale/locale_event.dart';
 import 'package:dk_pos/app/locale/locale_state.dart';
+import 'package:dk_pos/app/pos_board_layout/pos_board_layout_cubit.dart';
+import 'package:dk_pos/app/pos_cashier_board/pos_cashier_board_cubit.dart';
+import 'package:dk_pos/app/pos_cashier_board/pos_cashier_board_settings.dart';
 import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
 import 'package:dk_pos/core/config/app_config.dart';
 import 'package:dk_pos/core/network/http_client.dart';
@@ -36,14 +39,19 @@ import 'package:dk_pos/features/menu/bloc/menu_state.dart';
 import 'package:dk_pos/features/menu/data/menu_repository.dart';
 import 'package:dk_pos/features/admin/data/screens_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/local_audio_settings_repository.dart';
+import 'package:dk_pos/features/inventory/presentation/admin_inventory_receive_screen.dart';
 import 'package:dk_pos/features/kitchen_board/audio/kitchen_order_alert.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_catalog_grid_settings_editor.dart';
+import 'package:dk_pos/features/pos/presentation/widgets/pos_cashier_board_settings_editor.dart';
+import 'package:dk_pos/features/pos/presentation/widgets/pos_cart_panel_settings_editor.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_server_endpoint_editor.dart';
+import 'package:dk_pos/features/pos/presentation/utils/cashier_table_headline.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_modifier_sheet.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_variable_qty_sheet.dart';
 import 'package:dk_pos/features/expeditor/presentation/widgets/expeditor_queue_panel.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
 import 'package:dk_pos/features/orders/data/local_orders_realtime.dart';
+import 'package:dk_pos/features/orders/data/local_cashier_board_ws_patch.dart';
 import 'package:dk_pos/features/payments/data/local_payments_repository.dart';
 import 'package:dk_pos/features/hardware/data/local_hardware_repository.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_content_config.dart';
@@ -56,8 +64,16 @@ import 'package:dk_pos/theme/pos_workspace_theme.dart';
 import '../widgets/pos_cart_panel.dart';
 import '../utils/website_order_delivery_meta.dart';
 import '../widgets/pos_catalog_body.dart';
+import '../widgets/pos_board_layout_settings_editor.dart';
+import '../widgets/pos_cashier_order_visual_style.dart';
+import '../widgets/pos_online_ordering_badge.dart';
+import '../widgets/pos_change_order_table.dart';
+import '../widgets/pos_change_order_type.dart';
 import '../widgets/pos_checkout_flow.dart';
+import '../widgets/pos_numeric_keypad.dart';
 import '../widgets/pos_online_order_edit_flow.dart';
+import '../widgets/pos_order_history_dialog.dart';
+import '../widgets/pos_sold_out_today_dialog.dart';
 import '../widgets/pos_table_bills_dialog.dart';
 
 String _cashierOrderStatusRu(String status) {
@@ -293,8 +309,10 @@ class _PosView extends StatefulWidget {
 class _PosViewState extends State<_PosView> {
   Timer? _expeditorQueueTimer;
   Timer? _openTableBillsTimer;
+  Timer? _tableSessionPruneTimer;
   Timer? _cashierSessionRefreshDebounce;
-  final LocalOrdersRealtime _posOrdersRealtime = LocalOrdersRealtime();
+  final LocalOrdersRealtime _posOrdersRealtime = LocalOrdersRealtime.instance;
+  bool _posRealtimeAcquired = false;
   StreamSubscription<LocalOrdersRealtimeEvent>? _posOrdersRealtimeSub;
   int _expeditorBundlingCount = 0;
   int _expeditorPickupCount = 0;
@@ -362,11 +380,16 @@ class _PosViewState extends State<_PosView> {
     if (!_canUseCashierBoard(role)) {
       _openTableBillsTimer?.cancel();
       _openTableBillsTimer = null;
+      _tableSessionPruneTimer?.cancel();
+      _tableSessionPruneTimer = null;
       _cashierSessionRefreshDebounce?.cancel();
       _cashierSessionRefreshDebounce = null;
       _posOrdersRealtimeSub?.cancel();
       _posOrdersRealtimeSub = null;
-      unawaited(_posOrdersRealtime.disconnect());
+      if (_posRealtimeAcquired) {
+        _posRealtimeAcquired = false;
+        unawaited(_posOrdersRealtime.release());
+      }
       _cashierSessionRefreshInFlight = false;
       _lastCashierSessionRefreshAt = null;
       _cashierAlertInitialized = false;
@@ -387,26 +410,61 @@ class _PosViewState extends State<_PosView> {
       Duration(seconds: AppConfig.cashierRefreshIntervalSec),
       (_) => _requestCashierSessionRefresh(),
     );
+    _tableSessionPruneTimer?.cancel();
+    _tableSessionPruneTimer = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (!mounted) return;
+      try {
+        context.read<PosHallOrdersCubit>().pruneExpiredTableSessions();
+      } catch (_) {}
+    });
     _requestCashierSessionRefresh(immediate: true);
     unawaited(_ensurePosOrdersRealtime());
   }
 
   Future<void> _ensurePosOrdersRealtime() async {
-    await _posOrdersRealtime.disconnect();
     await _posOrdersRealtimeSub?.cancel();
     _posOrdersRealtimeSub = null;
     try {
-      await _posOrdersRealtime.connect(branchId: _branchId, clientType: 'pos');
+      if (!_posRealtimeAcquired) {
+        await _posOrdersRealtime.acquire(branchId: _branchId, clientType: 'pos');
+        _posRealtimeAcquired = true;
+      } else {
+        await _posOrdersRealtime.connect(branchId: _branchId, clientType: 'pos');
+      }
     } catch (_) {
       return;
     }
     _posOrdersRealtimeSub = _posOrdersRealtime.events.listen((e) {
       final t = e.type;
+      if (t == 'cashier.board_changed') {
+        final patches = parseCashierBoardPatches(e.payload['patches']);
+        if (patches.isNotEmpty) {
+          final cubit = context.read<PosHallOrdersCubit>();
+          final nextBills = applyCashierOpenTableBillPatches(
+            cubit.state.bills,
+            patches,
+          );
+          // Патч уже полный снимок затронутых id — без merge «оплаченных навсегда».
+          cubit.replaceBillsFromPatchedList(nextBills);
+          cubit.pruneExpiredTableSessions();
+
+          setState(() {
+            _incomingBoard = applyCashierIncomingPatches(_incomingBoard, patches);
+            _activeBoard = applyCashierActivePatches(_activeBoard, patches);
+          });
+          return;
+        }
+        // Патчей нет (старый сервер / сбой сборки) — редкий full refresh с minGap.
+        _requestCashierSessionRefresh();
+        return;
+      }
       if (t == 'order.created' ||
           t == 'order.updated' ||
           t == 'payment.accepted' ||
           t == 'order.status_changed') {
-        _requestCashierSessionRefresh();
+        // Источник правды — cashier.board_changed с патчами.
+        // Full refresh оставляем таймеру и случаю, когда патчей нет (старый сервер).
+        return;
       }
     });
   }
@@ -473,12 +531,16 @@ class _PosViewState extends State<_PosView> {
             branchId: _branchId,
           );
       if (!mounted) return false;
-      final serverIds = dtos.map((d) => d.id).where((id) => id.isNotEmpty).toSet();
+      // Алерт только по неоплаченным (оплаченная сессия стола — не «новый счёт»).
+      final unpaidIds = dtos
+          .where((d) => d.id.isNotEmpty && !d.isPaid)
+          .map((d) => d.id)
+          .toSet();
       final hasNew = _cashierAlertInitialized &&
-          serverIds.difference(_knownOpenTableBillIds).isNotEmpty;
+          unpaidIds.difference(_knownOpenTableBillIds).isNotEmpty;
       _knownOpenTableBillIds
         ..clear()
-        ..addAll(serverIds);
+        ..addAll(unpaidIds);
 
       final bills = dtos
           .where(
@@ -653,10 +715,16 @@ class _PosViewState extends State<_PosView> {
             branchId: _branchId,
           );
       if (!mounted) return;
-      await Future.wait([
-        _refreshCashierBoard(),
-        _refreshOpenTableBills(),
-      ]);
+      // Оптимистично убираем из входящих; полный снимок придёт по cashier.board_changed.
+      setState(() {
+        _incomingBoard = _incomingBoard
+            .where((e) => e.order.id != row.order.id)
+            .toList(growable: false);
+      });
+      // Без double HTTP: WS-патч обновит board/счета. Fallback — только если WS мёртв.
+      if (!LocalOrdersRealtime.instance.isConnected) {
+        _requestCashierSessionRefresh();
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -701,7 +769,12 @@ class _PosViewState extends State<_PosView> {
     }
     _expeditorQueueTimer = Timer.periodic(
       Duration(seconds: AppConfig.expeditorRefreshIntervalSec),
-      (_) => _refreshExpeditorQueueCounts(),
+      (_) {
+        // При живом shared WS бейдж обновляется из panel/событий реже — HTTP как fallback.
+        if (!LocalOrdersRealtime.instance.isConnected) {
+          _refreshExpeditorQueueCounts();
+        }
+      },
     );
     unawaited(_refreshExpeditorQueueCounts());
   }
@@ -747,9 +820,13 @@ class _PosViewState extends State<_PosView> {
   void dispose() {
     _expeditorQueueTimer?.cancel();
     _openTableBillsTimer?.cancel();
+    _tableSessionPruneTimer?.cancel();
     _cashierSessionRefreshDebounce?.cancel();
     _posOrdersRealtimeSub?.cancel();
-    unawaited(_posOrdersRealtime.dispose());
+    if (_posRealtimeAcquired) {
+      _posRealtimeAcquired = false;
+      unawaited(_posOrdersRealtime.release());
+    }
     _cashierAlertPlayer.dispose();
     super.dispose();
   }
@@ -781,6 +858,66 @@ class _PosViewState extends State<_PosView> {
       return;
     }
     context.read<CartBloc>().add(CartItemAdded(item));
+  }
+
+  Future<void> _changeOrderTable(LocalCashierBoardOrder row) async {
+    final result = await changePosOrderTable(
+      context,
+      orderId: row.order.id,
+      currentTableLabel: row.tableLabel,
+      orderType: row.orderType,
+    );
+    if (!mounted || result == null) return;
+    setState(() {
+      LocalCashierBoardOrder patch(LocalCashierBoardOrder o) {
+        if (o.order.id != row.order.id) return o;
+        return o.copyWith(
+          tableLabel: result.cleared ? '' : result.tableLabel,
+          orderType: result.orderTypeLabel ?? o.orderType,
+          clearTableLabel: result.cleared,
+        );
+      }
+
+      _activeBoard = [for (final o in _activeBoard) patch(o)];
+      _incomingBoard = [for (final o in _incomingBoard) patch(o)];
+    });
+  }
+
+  Future<void> _changeOrderType(LocalCashierBoardOrder row) async {
+    final result = await changePosOrderType(
+      context,
+      orderId: row.order.id,
+      currentOrderType: row.orderType,
+      currentTableLabel: row.tableLabel,
+    );
+    if (!mounted || result == null) return;
+    setState(() {
+      LocalCashierBoardOrder patch(LocalCashierBoardOrder o) {
+        if (o.order.id != row.order.id) return o;
+        return o.copyWith(
+          orderType: result.orderTypeLabel,
+          tableLabel: result.tableLabel,
+          clearTableLabel: result.tableCleared,
+        );
+      }
+
+      _activeBoard = [for (final o in _activeBoard) patch(o)];
+      _incomingBoard = [for (final o in _incomingBoard) patch(o)];
+    });
+  }
+
+  Future<void> _freeOrderTable(LocalCashierBoardOrder row) async {
+    final result = await clearPosOrderTable(context, orderId: row.order.id);
+    if (!mounted || result == null) return;
+    setState(() {
+      LocalCashierBoardOrder patch(LocalCashierBoardOrder o) {
+        if (o.order.id != row.order.id) return o;
+        return o.copyWith(tableLabel: '', clearTableLabel: true);
+      }
+
+      _activeBoard = [for (final o in _activeBoard) patch(o)];
+      _incomingBoard = [for (final o in _incomingBoard) patch(o)];
+    });
   }
 
   Future<void> _showOrdersDialog() async {
@@ -822,6 +959,27 @@ class _PosViewState extends State<_PosView> {
           final label = order.tableLabel?.trim() ?? '';
           final meta = parseWebsiteOrderDeliveryMeta(label);
           callWebsiteOrderCustomer(context, meta.phone);
+        },
+        onChangeTable: (order) async {
+          await _changeOrderTable(order);
+          if (mounted) {
+            Navigator.of(dialogContext).pop();
+            await _showOrdersDialog();
+          }
+        },
+        onChangeOrderType: (order) async {
+          await _changeOrderType(order);
+          if (mounted) {
+            Navigator.of(dialogContext).pop();
+            await _showOrdersDialog();
+          }
+        },
+        onFreeTable: (order) async {
+          await _freeOrderTable(order);
+          if (mounted) {
+            Navigator.of(dialogContext).pop();
+            await _showOrdersDialog();
+          }
         },
       ),
     ).then((_) => _refreshExpeditorQueueCounts());
@@ -876,7 +1034,10 @@ class _PosViewState extends State<_PosView> {
     final allowed = await showCashierPasswordGate(
       context,
       title: 'Оплаты за сегодня',
-      subtitle: 'Введите пароль кассира для просмотра',
+      subtitle: role == 'admin'
+          ? 'Введите пароль администратора'
+          : 'Введите пароль кассира для просмотра чеков',
+      withKeypad: true,
     );
     if (!allowed || !mounted) return;
     await showDialog<void>(
@@ -884,6 +1045,7 @@ class _PosViewState extends State<_PosView> {
       builder: (dialogContext) => _TodayPaymentsDialogLoader(
         branchId: _branchId,
         lang: context.appUiLocale.languageCode,
+        showTotals: role == 'admin',
       ),
     );
   }
@@ -1101,17 +1263,18 @@ class _PosViewState extends State<_PosView> {
   }
 
   Future<String?> _pickCancelReason(BuildContext context) async {
-    const predefined = <String>[
-      'ошибка_кассира',
-      'гость_отказался',
-      'нет_товара',
-      'другое',
+    // value → текст для клиента (уходит в cancel_reason).
+    const predefined = <({String id, String label})>[
+      (id: 'ошибка_кассира', label: 'Ошибка кассира'),
+      (id: 'гость_отказался', label: 'Гость отказался'),
+      (id: 'нет_товара', label: 'Нет товара'),
+      (id: 'другое', label: 'Другое'),
     ];
     return showDialog<String>(
       context: context,
       builder: (ctx) {
         final customCtrl = TextEditingController();
-        var selected = predefined.first;
+        var selected = predefined.first.id;
         return StatefulBuilder(
           builder: (context, setState) {
             final needsCustom = selected == 'другое';
@@ -1131,9 +1294,10 @@ class _PosViewState extends State<_PosView> {
                       children: [
                         for (final reason in predefined)
                           ChoiceChip(
-                            label: Text(reason.replaceAll('_', ' ')),
-                            selected: selected == reason,
-                            onSelected: (_) => setState(() => selected = reason),
+                            label: Text(reason.label),
+                            selected: selected == reason.id,
+                            onSelected: (_) =>
+                                setState(() => selected = reason.id),
                           ),
                       ],
                     ),
@@ -1159,11 +1323,16 @@ class _PosViewState extends State<_PosView> {
                 ),
                 FilledButton(
                   onPressed: canSubmit
-                      ? () => Navigator.of(ctx).pop(
-                            needsCustom
-                                ? 'другое:${customCtrl.text.trim()}'
-                                : selected,
-                          )
+                      ? () {
+                          if (needsCustom) {
+                            Navigator.of(ctx).pop(customCtrl.text.trim());
+                            return;
+                          }
+                          final label = predefined
+                              .firstWhere((r) => r.id == selected)
+                              .label;
+                          Navigator.of(ctx).pop(label);
+                        }
                       : null,
                   child: const Text('Далее'),
                 ),
@@ -1378,6 +1547,7 @@ class _PosViewState extends State<_PosView> {
   }
 
   Future<void> _showSettingsDialog() {
+    final screenContext = context;
     final localeBloc = context.read<LocaleBloc>();
     var selectedLocaleCode = localeBloc.state.locale.languageCode;
     final role = context.read<AuthBloc>().state.user?.role;
@@ -1490,6 +1660,35 @@ class _PosViewState extends State<_PosView> {
                       allowSaveOnServer: isAdmin,
                       httpClient: dioClient,
                     ),
+                    if (role == 'cashier') ...[
+                      const SizedBox(height: 18),
+                      const Divider(),
+                      const SizedBox(height: 16),
+                      FilledButton.tonalIcon(
+                        onPressed: () {
+                          Navigator.of(dialogContext).pop();
+                          Navigator.of(screenContext).push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (_) => const AdminInventoryReceiveScreen(),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.local_shipping_outlined),
+                        label: const Text('Принять накладную со склада'),
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    const Divider(),
+                    const SizedBox(height: 16),
+                    const PosBoardLayoutSettingsEditor(),
+                    const SizedBox(height: 18),
+                    const Divider(),
+                    const SizedBox(height: 16),
+                    const PosCashierBoardSettingsEditor(),
+                    const SizedBox(height: 18),
+                    const Divider(),
+                    const SizedBox(height: 16),
+                    const PosCartPanelSettingsEditor(),
                     const SizedBox(height: 18),
                     const Divider(),
                     const SizedBox(height: 16),
@@ -1580,6 +1779,8 @@ class _PosViewState extends State<_PosView> {
                               _refreshCustomerDisplayConfigByClick,
                           onOpenTableBills: () =>
                               showOpenTableBillsDialog(rootContext),
+                          onOpenSoldOutToday: () =>
+                              showPosSoldOutTodayDialog(rootContext),
                           onOpenSettings: _showSettingsDialog,
                           onOpenCash: () =>
                               showPosCashManagementDialog(rootContext),
@@ -1643,6 +1844,11 @@ class _PosViewState extends State<_PosView> {
                                 ),
                                 if (user?.role == 'cashier' ||
                                     user?.role == 'admin') ...[
+                                  const SizedBox(width: 4),
+                                  const PosOnlineOrderingBadge(),
+                                ],
+                                if (user?.role == 'cashier' ||
+                                    user?.role == 'admin') ...[
                                   const SizedBox(width: 8),
                                   const _PrinterStatusBadge(iconOnly: true),
                                 ],
@@ -1685,8 +1891,15 @@ class _PosViewState extends State<_PosView> {
                                   ),
                                 if (user?.role == 'cashier' || user?.role == 'admin')
                                   IconButton(
+                                    icon: const Icon(Icons.block_rounded),
+                                    tooltip: 'Закончилось сегодня',
+                                    onPressed: () =>
+                                        showPosSoldOutTodayDialog(context),
+                                  ),
+                                if (user?.role == 'cashier' || user?.role == 'admin')
+                                  IconButton(
                                     icon: const Icon(Icons.account_balance_wallet_outlined),
-                                    tooltip: 'Касса: смена, внесение и выемка',
+                                    tooltip: 'Касса: смена, инкассация',
                                     onPressed: () => showPosCashManagementDialog(context),
                                   ),
                                 TextButton.icon(
@@ -1725,8 +1938,14 @@ class _PosViewState extends State<_PosView> {
                             ),
                             if (user?.role == 'cashier' || user?.role == 'admin') ...[
                               IconButton(
+                                icon: const Icon(Icons.block_rounded),
+                                tooltip: 'Закончилось сегодня',
+                                onPressed: () =>
+                                    showPosSoldOutTodayDialog(context),
+                              ),
+                              IconButton(
                                 icon: const Icon(Icons.account_balance_wallet_outlined),
-                                tooltip: 'Касса: смена, внесение и выемка',
+                                tooltip: 'Касса: смена, инкассация',
                                 onPressed: () => showPosCashManagementDialog(context),
                               ),
                               IconButton(
@@ -1767,8 +1986,15 @@ class _PosViewState extends State<_PosView> {
                                 ),
                               if (user?.role == 'cashier' || user?.role == 'admin')
                                 IconButton(
+                                  icon: const Icon(Icons.block_rounded),
+                                  tooltip: 'Закончилось сегодня',
+                                  onPressed: () =>
+                                      showPosSoldOutTodayDialog(context),
+                                ),
+                              if (user?.role == 'cashier' || user?.role == 'admin')
+                                IconButton(
                                   icon: const Icon(Icons.account_balance_wallet_outlined),
-                                  tooltip: 'Касса: смена, внесение и выемка',
+                                  tooltip: 'Касса: смена, инкассация',
                                   onPressed: () => showPosCashManagementDialog(context),
                                 ),
                               TextButton.icon(
@@ -2076,11 +2302,25 @@ class _PosViewState extends State<_PosView> {
                                                           user?.role == 'admin')
                                                         IconButton(
                                                           icon: const Icon(
+                                                            Icons.block_rounded,
+                                                          ),
+                                                          tooltip:
+                                                              'Закончилось сегодня',
+                                                          onPressed: () =>
+                                                              showPosSoldOutTodayDialog(
+                                                            context,
+                                                          ),
+                                                        ),
+                                                      if (user?.role ==
+                                                              'cashier' ||
+                                                          user?.role == 'admin')
+                                                        IconButton(
+                                                          icon: const Icon(
                                                             Icons
                                                                 .account_balance_wallet_outlined,
                                                           ),
                                                           tooltip:
-                                                              'Касса: смена, внесение и выемка',
+                                                              'Касса: смена, инкассация',
                                                           onPressed: () =>
                                                               showPosCashManagementDialog(
                                                                 context,
@@ -2214,110 +2454,52 @@ Future<double?> _showCustomPriceDialog(BuildContext context, PosMenuItem item) {
   return showDialog<double>(
     context: context,
     builder: (ctx) {
-      String rawInput = item.price == item.price.roundToDouble()
-          ? item.price.toStringAsFixed(0)
-          : item.price.toStringAsFixed(2);
+      final menuPrice = item.price.round().clamp(0, 999999999).toInt();
+      final input = PosIntegerInputController(initial: menuPrice);
       return StatefulBuilder(
         builder: (ctx, setModal) {
-          final intPrice = int.tryParse(rawInput.trim());
-          final canSubmit = intPrice != null && intPrice > 0;
-
-          void appendDigit(String digit) {
-            if (!RegExp(r'^[0-9]$').hasMatch(digit)) return;
-            if (rawInput == '0') {
-              rawInput = digit;
-            } else {
-              rawInput += digit;
-            }
-            setModal(() {});
-          }
-
-          void backspace() {
-            if (rawInput.isEmpty) return;
-            rawInput = rawInput.substring(0, rawInput.length - 1);
-            setModal(() {});
-          }
-
-          void clearAll() {
-            rawInput = '';
-            setModal(() {});
-          }
+          final intPrice = input.value;
+          final canSubmit = intPrice > 0;
 
           return AlertDialog(
             title: Text('Цена для "${item.name}"'),
-            content: SizedBox(
-              width: 420,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  InputDecorator(
-                    decoration: const InputDecoration(
-                      labelText: 'Цена',
-                      border: OutlineInputBorder(),
+            content: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: 420,
+                maxHeight: MediaQuery.sizeOf(ctx).height * 0.72,
+              ),
+              child: SingleChildScrollView(
+                primary: false,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    InputDecorator(
+                      decoration: const InputDecoration(
+                        labelText: 'Цена',
+                        border: OutlineInputBorder(),
+                      ),
+                      child: Text(
+                        input.display,
+                        textAlign: TextAlign.right,
+                        style: Theme.of(ctx).textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
+                      ),
                     ),
-                    child: Text(
-                      rawInput.isEmpty ? '0' : rawInput,
-                      textAlign: TextAlign.right,
-                      style: Theme.of(ctx).textTheme.headlineSmall?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
+                    const SizedBox(height: 10),
+                    PosNumericKeypad(
+                      showDot: false,
+                      onDigit: (d) => setModal(() => input.appendDigit(d)),
+                      onBackspace: () => setModal(() => input.backspace()),
+                      onClear: () => setModal(() => input.clear()),
+                      onPreset: menuPrice > 0
+                          ? () => setModal(() => input.setValue(menuPrice))
+                          : null,
+                      presetLabel: 'Из меню',
                     ),
-                  ),
-                  const SizedBox(height: 10),
-                  GridView.count(
-                    crossAxisCount: 3,
-                    shrinkWrap: true,
-                    mainAxisSpacing: 8,
-                    crossAxisSpacing: 8,
-                    childAspectRatio: 1.8,
-                    children: [
-                      for (final d in ['1', '2', '3', '4', '5', '6', '7', '8', '9'])
-                        FilledButton.tonal(
-                          onPressed: () => appendDigit(d),
-                          child: Text(d),
-                        ),
-                      FilledButton.tonal(
-                        onPressed: () => appendDigit('0'),
-                        child: const Text('0'),
-                      ),
-                      FilledButton.tonal(
-                        onPressed: () {
-                          appendDigit('0');
-                          appendDigit('0');
-                        },
-                        child: const Text('00'),
-                      ),
-                      FilledButton.tonal(
-                        onPressed: backspace,
-                        child: const Icon(Icons.backspace_outlined),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton.tonal(
-                          onPressed: clearAll,
-                          child: const Text('Очистить'),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: FilledButton.tonal(
-                          onPressed: () {
-                            rawInput = item.price == item.price.roundToDouble()
-                                ? item.price.toStringAsFixed(0)
-                                : item.price.toStringAsFixed(2);
-                            setModal(() {});
-                          },
-                          child: const Text('Базовая цена'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
             actions: [
@@ -2329,7 +2511,7 @@ Future<double?> _showCustomPriceDialog(BuildContext context, PosMenuItem item) {
                 onPressed: canSubmit
                     ? () => Navigator.of(ctx).pop(intPrice.toDouble())
                     : null,
-                child: const Text('Добавить'),
+                child: const Text('OK'),
               ),
             ],
           );
@@ -2353,6 +2535,7 @@ class _PosMobileDrawer extends StatelessWidget {
     required this.onOpenCustomerDisplay,
     required this.onRefreshCustomerDisplay,
     required this.onOpenTableBills,
+    required this.onOpenSoldOutToday,
     required this.onOpenSettings,
     required this.onOpenCash,
     required this.onLogout,
@@ -2369,6 +2552,7 @@ class _PosMobileDrawer extends StatelessWidget {
   final Future<void> Function() onOpenCustomerDisplay;
   final Future<void> Function() onRefreshCustomerDisplay;
   final VoidCallback onOpenTableBills;
+  final VoidCallback onOpenSoldOutToday;
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenCash;
   final VoidCallback onLogout;
@@ -2408,7 +2592,7 @@ class _PosMobileDrawer extends StatelessWidget {
                   if (user != null) ...[
                     const SizedBox(height: 4),
                     Text(
-                      '${user!.username} • ${user!.roleLabelRu}',
+                      '${user?.username ?? ''} • ${user?.roleLabelRu ?? ''}',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: scheme.onSurfaceVariant,
                       ),
@@ -2443,6 +2627,16 @@ class _PosMobileDrawer extends StatelessWidget {
                 onOpenTableBills();
               },
             ),
+            if (isCashierOrAdmin)
+              ListTile(
+                leading: Icon(Icons.block_rounded, color: scheme.error),
+                title: const Text('Закончилось сегодня'),
+                subtitle: const Text('Блюда, которых нет в наличии'),
+                onTap: () {
+                  Navigator.pop(context);
+                  onOpenSoldOutToday();
+                },
+              ),
             if (isCashierOrAdmin)
               ListTile(
                 leading: const Icon(Icons.cloud_download_outlined),
@@ -2905,6 +3099,9 @@ class _PosOrdersDialog extends StatelessWidget {
     required this.onCloseOrder,
     required this.onCancelOrder,
     required this.onCallCustomer,
+    required this.onChangeTable,
+    required this.onChangeOrderType,
+    required this.onFreeTable,
   });
 
   final List<LocalCashierBoardOrder> orders;
@@ -2915,6 +3112,9 @@ class _PosOrdersDialog extends StatelessWidget {
   final Future<void> Function(LocalCashierBoardOrder) onCloseOrder;
   final Future<void> Function(LocalCashierBoardOrder) onCancelOrder;
   final void Function(LocalCashierBoardOrder) onCallCustomer;
+  final Future<void> Function(LocalCashierBoardOrder) onChangeTable;
+  final Future<void> Function(LocalCashierBoardOrder) onChangeOrderType;
+  final Future<void> Function(LocalCashierBoardOrder) onFreeTable;
 
   @override
   Widget build(BuildContext context) {
@@ -2931,8 +3131,8 @@ class _PosOrdersDialog extends StatelessWidget {
         backgroundColor: scheme.surfaceContainerLow,
         title: Text(l10n.posOrdersDialogTitle, style: titleStyle),
         content: SizedBox(
-          width: _dialogWidth(context, 920),
-          height: _dialogHeight(context, 680),
+          width: _dialogWidth(context, 1360),
+          height: _dialogHeight(context, 880),
           child: _HallOrdersList(
             orders: orders,
             canManageOnlineOrders: canManageOnlineOrders,
@@ -2941,6 +3141,9 @@ class _PosOrdersDialog extends StatelessWidget {
             onCloseOrder: onCloseOrder,
             onCancelOrder: onCancelOrder,
             onCallCustomer: onCallCustomer,
+            onChangeTable: onChangeTable,
+            onChangeOrderType: onChangeOrderType,
+            onFreeTable: onFreeTable,
           ),
         ),
         actions: [
@@ -2957,8 +3160,8 @@ class _PosOrdersDialog extends StatelessWidget {
       child: DefaultTabController(
         length: 2,
         child: SizedBox(
-          width: _dialogWidth(context, 1040),
-          height: _dialogHeight(context, 680),
+          width: _dialogWidth(context, 1400),
+          height: _dialogHeight(context, 880),
           child: Material(
             color: scheme.surfaceContainerLow,
             clipBehavior: Clip.antiAlias,
@@ -2987,6 +3190,9 @@ class _PosOrdersDialog extends StatelessWidget {
                         onCloseOrder: onCloseOrder,
                         onCancelOrder: onCancelOrder,
                         onCallCustomer: onCallCustomer,
+                        onChangeTable: onChangeTable,
+                        onChangeOrderType: onChangeOrderType,
+                        onFreeTable: onFreeTable,
                       ),
                       const ExpeditorQueuePanel(embedded: true),
                     ],
@@ -3034,6 +3240,9 @@ class _HallOrdersList extends StatefulWidget {
     required this.onCloseOrder,
     required this.onCancelOrder,
     required this.onCallCustomer,
+    required this.onChangeTable,
+    required this.onChangeOrderType,
+    required this.onFreeTable,
   });
 
   final List<LocalCashierBoardOrder> orders;
@@ -3043,6 +3252,9 @@ class _HallOrdersList extends StatefulWidget {
   final Future<void> Function(LocalCashierBoardOrder) onCloseOrder;
   final Future<void> Function(LocalCashierBoardOrder) onCancelOrder;
   final void Function(LocalCashierBoardOrder) onCallCustomer;
+  final Future<void> Function(LocalCashierBoardOrder) onChangeTable;
+  final Future<void> Function(LocalCashierBoardOrder) onChangeOrderType;
+  final Future<void> Function(LocalCashierBoardOrder) onFreeTable;
 
   @override
   State<_HallOrdersList> createState() => _HallOrdersListState();
@@ -3228,19 +3440,122 @@ class _HallOrdersListState extends State<_HallOrdersList> {
           const Padding(
             padding: EdgeInsets.all(12),
             child: Text('По выбранным фильтрам заказов нет'),
+          )
+        else
+          BlocBuilder<PosBoardLayoutCubit, PosBoardLayoutState>(
+            buildWhen: (p, c) => p.ordersLayout != c.ordersLayout,
+            builder: (context, layoutState) {
+              final layout = layoutState.ordersLayout;
+              if (layout == PosBoardLayout.cards) {
+                return BlocBuilder<PosCashierBoardCubit, PosCashierBoardSettings>(
+                  builder: (context, cardUi) {
+                    return LayoutBuilder(
+                      builder: (context, constraints) {
+                        Widget orderColumn() => Column(
+                              children: [
+                                for (var i = 0; i < filtered.length; i++) ...[
+                                  _OrderBoardCard(
+                                    order: filtered[i],
+                                    canManageOnlineOrders:
+                                        widget.canManageOnlineOrders,
+                                    canHandoffOrders: widget.canHandoffOrders,
+                                    onCashierAck: () =>
+                                        widget.onCashierAck(filtered[i]),
+                                    onCloseOrder: () =>
+                                        widget.onCloseOrder(filtered[i]),
+                                    onCancelOrder: () =>
+                                        widget.onCancelOrder(filtered[i]),
+                                    onCallCustomer: () =>
+                                        widget.onCallCustomer(filtered[i]),
+                                    onChangeTable: () =>
+                                        widget.onChangeTable(filtered[i]),
+                                    onChangeOrderType: () =>
+                                        widget.onChangeOrderType(filtered[i]),
+                                    onFreeTable: () =>
+                                        widget.onFreeTable(filtered[i]),
+                                  ),
+                                  if (i != filtered.length - 1)
+                                    const SizedBox(height: 12),
+                                ],
+                              ],
+                            );
+
+                        final maxW = constraints.maxWidth;
+                        if (!maxW.isFinite || maxW < 80) return orderColumn();
+
+                        final cols = WindowLayout(width: maxW)
+                            .cardGridColumns(minCellWidth: 320);
+                        if (cols <= 1) return orderColumn();
+
+                        const spacing = 12.0;
+                        final aspect =
+                            cardUi.gridAspectRatio(columns: cols);
+                        final cellW =
+                            (maxW - spacing * (cols - 1)) / cols;
+                        final cellH = cellW / aspect;
+                        if (!cellW.isFinite ||
+                            !cellH.isFinite ||
+                            cellH < 140) {
+                          return orderColumn();
+                        }
+
+                        return GridView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: cols,
+                            mainAxisSpacing: spacing,
+                            crossAxisSpacing: spacing,
+                            childAspectRatio: aspect,
+                          ),
+                          itemCount: filtered.length,
+                          itemBuilder: (_, i) {
+                            final o = filtered[i];
+                            return _OrderBoardCard(
+                              order: o,
+                              compact: true,
+                              canManageOnlineOrders:
+                                  widget.canManageOnlineOrders,
+                              canHandoffOrders: widget.canHandoffOrders,
+                              onCashierAck: () => widget.onCashierAck(o),
+                              onCloseOrder: () => widget.onCloseOrder(o),
+                              onCancelOrder: () => widget.onCancelOrder(o),
+                              onCallCustomer: () => widget.onCallCustomer(o),
+                              onChangeTable: () => widget.onChangeTable(o),
+                              onChangeOrderType: () =>
+                                  widget.onChangeOrderType(o),
+                              onFreeTable: () => widget.onFreeTable(o),
+                            );
+                          },
+                        );
+                      },
+                    );
+                  },
+                );
+              }
+              return Column(
+                children: [
+                  for (var i = 0; i < filtered.length; i++) ...[
+                    _OrderListTile(
+                      order: filtered[i],
+                      canManageOnlineOrders: widget.canManageOnlineOrders,
+                      canHandoffOrders: widget.canHandoffOrders,
+                      onCashierAck: () => widget.onCashierAck(filtered[i]),
+                      onCloseOrder: () => widget.onCloseOrder(filtered[i]),
+                      onCancelOrder: () => widget.onCancelOrder(filtered[i]),
+                      onCallCustomer: () => widget.onCallCustomer(filtered[i]),
+                      onChangeTable: () => widget.onChangeTable(filtered[i]),
+                      onChangeOrderType: () =>
+                          widget.onChangeOrderType(filtered[i]),
+                      onFreeTable: () => widget.onFreeTable(filtered[i]),
+                    ),
+                    if (i != filtered.length - 1) const SizedBox(height: 10),
+                  ],
+                ],
+              );
+            },
           ),
-        for (var i = 0; i < filtered.length; i++) ...[
-          _OrderListTile(
-            order: filtered[i],
-            canManageOnlineOrders: widget.canManageOnlineOrders,
-            canHandoffOrders: widget.canHandoffOrders,
-            onCashierAck: () => widget.onCashierAck(filtered[i]),
-            onCloseOrder: () => widget.onCloseOrder(filtered[i]),
-            onCancelOrder: () => widget.onCancelOrder(filtered[i]),
-            onCallCustomer: () => widget.onCallCustomer(filtered[i]),
-          ),
-          if (i != filtered.length - 1) const SizedBox(height: 10),
-        ],
       ],
     );
   }
@@ -3278,8 +3593,8 @@ class _OnlineOrdersDialog extends StatelessWidget {
         ),
       ),
       content: SizedBox(
-        width: _dialogWidth(context, 1120),
-        height: _dialogHeight(context, 660),
+        width: _dialogWidth(context, 1360),
+        height: _dialogHeight(context, 880),
         child: orders.isEmpty
             ? const Padding(
                 padding: EdgeInsets.all(24),
@@ -3318,10 +3633,12 @@ class _TodayPaymentsDialogLoader extends StatefulWidget {
   const _TodayPaymentsDialogLoader({
     required this.branchId,
     required this.lang,
+    required this.showTotals,
   });
 
   final String branchId;
   final String lang;
+  final bool showTotals;
 
   @override
   State<_TodayPaymentsDialogLoader> createState() =>
@@ -3416,6 +3733,21 @@ class _TodayPaymentsDialogLoaderState extends State<_TodayPaymentsDialogLoader> 
     }
   }
 
+  Future<void> _reloadAll() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _loadingMore = false;
+      _payments = const [];
+      _refunds = const [];
+      _summary = null;
+      _hasMorePayments = false;
+      _hasMoreRefunds = false;
+      _error = null;
+    });
+    await _loadInitial();
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -3461,6 +3793,8 @@ class _TodayPaymentsDialogLoaderState extends State<_TodayPaymentsDialogLoader> 
       hasMorePayments: _hasMorePayments,
       hasMoreRefunds: _hasMoreRefunds,
       loadingMore: _loadingMore,
+      showTotals: widget.showTotals,
+      onReload: _reloadAll,
       onLoadMore:
           (_hasMorePayments || _hasMoreRefunds) ? _loadMore : null,
     );
@@ -3476,6 +3810,8 @@ class _TodayPaymentsDialog extends StatelessWidget {
     required this.hasMorePayments,
     required this.hasMoreRefunds,
     required this.loadingMore,
+    required this.showTotals,
+    required this.onReload,
     this.summary,
     this.onLoadMore,
   });
@@ -3488,28 +3824,37 @@ class _TodayPaymentsDialog extends StatelessWidget {
   final bool hasMorePayments;
   final bool hasMoreRefunds;
   final bool loadingMore;
+  final bool showTotals;
+  final Future<void> Function() onReload;
   final Future<void> Function()? onLoadMore;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final totalPayments = summary?.totalPayments ??
-        entries.fold<double>(0, (sum, e) => sum + e.amount);
-    final totalRefunds = summary?.totalRefunds ??
-        refunds.fold<double>(0, (sum, e) => sum + e.amount);
-    final netTotal = summary?.netTotal ?? (totalPayments - totalRefunds);
-    final methodRows = summary != null
-        ? summary!.byMethod
-            .map(
-              (row) => _PaymentMethodTotalsRow(
-                method: row.method,
-                payments: row.payments,
-                refunds: row.refunds,
-              ),
-            )
-            .toList(growable: false)
-        : _buildMethodTotals(entries, refunds);
+    final totalPayments = showTotals
+        ? (summary?.totalPayments ??
+            entries.fold<double>(0, (sum, e) => sum + e.amount))
+        : 0.0;
+    final totalRefunds = showTotals
+        ? (summary?.totalRefunds ??
+            refunds.fold<double>(0, (sum, e) => sum + e.amount))
+        : 0.0;
+    final netTotal = showTotals ? (summary?.netTotal ?? (totalPayments - totalRefunds)) : 0.0;
+    final todaySummary = summary;
+    final methodRows = showTotals
+        ? (todaySummary != null
+            ? todaySummary.byMethod
+                .map(
+                  (row) => _PaymentMethodTotalsRow(
+                    method: row.method,
+                    payments: row.payments,
+                    refunds: row.refunds,
+                  ),
+                )
+                .toList(growable: false)
+            : _buildMethodTotals(entries, refunds))
+        : const <_PaymentMethodTotalsRow>[];
     final dialogWidth =
         math.min(820.0, MediaQuery.sizeOf(context).width * 0.94).toDouble();
     final dialogHeight =
@@ -3553,100 +3898,102 @@ class _TodayPaymentsDialog extends StatelessWidget {
     Widget scrollBody() {
       return CustomScrollView(
         slivers: [
-          SliverToBoxAdapter(
-            child: Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                SizedBox(
-                  width: 240,
-                  child: topMetric(
-                    title: 'Итого оплат',
-                    value: formatSomoni(totalPayments),
-                    color: const Color(0xFF1565C0),
-                  ),
-                ),
-                SizedBox(
-                  width: 240,
-                  child: topMetric(
-                    title: 'Итого возвратов',
-                    value: '- ${formatSomoni(totalRefunds)}',
-                    color: const Color(0xFFD32F2F),
-                  ),
-                ),
-                SizedBox(
-                  width: 240,
-                  child: topMetric(
-                    title: 'Чистый итог',
-                    value: formatSomoni(netTotal),
-                    color: const Color(0xFF2E7D32),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (summary != null &&
-              (summary!.paymentCount > entries.length ||
-                  summary!.refundCount > refunds.length))
+          if (showTotals) ...[
             SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Text(
-                  'Итоги за сегодня по кассе $terminalId '
-                  '(${summary!.paymentCount} оплат, ${summary!.refundCount} возвратов). '
-                  'Другая касса в этот список не попадает.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
+              child: Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  SizedBox(
+                    width: 240,
+                    child: topMetric(
+                      title: 'Итого оплат',
+                      value: formatSomoni(totalPayments),
+                      color: const Color(0xFF1565C0),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 240,
+                    child: topMetric(
+                      title: 'Итого возвратов',
+                      value: '- ${formatSomoni(totalRefunds)}',
+                      color: const Color(0xFFD32F2F),
+                    ),
+                  ),
+                  SizedBox(
+                    width: 240,
+                    child: topMetric(
+                      title: 'Чистый итог',
+                      value: formatSomoni(netTotal),
+                      color: const Color(0xFF2E7D32),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (todaySummary != null &&
+                (todaySummary.paymentCount > entries.length ||
+                    todaySummary.refundCount > refunds.length))
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Text(
+                    'Итоги за сегодня по кассе $terminalId '
+                    '(${todaySummary.paymentCount} оплат, ${todaySummary.refundCount} возвратов). '
+                    'Другая касса в этот список не попадает.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
               ),
-            ),
-          const SliverToBoxAdapter(child: SizedBox(height: 12)),
-          SliverToBoxAdapter(
-            child: Text(
-              'Итог по способу оплаты',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
+            const SliverToBoxAdapter(child: SizedBox(height: 12)),
+            SliverToBoxAdapter(
+              child: Text(
+                'Итог по способу оплаты',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
               ),
             ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 8)),
-          SliverToBoxAdapter(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                headingRowColor: WidgetStatePropertyAll(
-                  scheme.surfaceContainerHighest.withValues(alpha: 0.65),
-                ),
-                columns: const [
-                  DataColumn(label: Text('Способ')),
-                  DataColumn(label: Text('Оплаты'), numeric: true),
-                  DataColumn(label: Text('Возвраты'), numeric: true),
-                  DataColumn(label: Text('Итого'), numeric: true),
-                ],
-                rows: methodRows
-                    .map(
-                      (row) => DataRow(
-                        cells: [
-                          DataCell(Text(_paymentMethodRu(row.method))),
-                          DataCell(Text(formatSomoni(row.payments))),
-                          DataCell(Text('- ${formatSomoni(row.refunds)}')),
-                          DataCell(
-                            Text(
-                              formatSomoni(row.net),
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                fontWeight: FontWeight.w800,
+            const SliverToBoxAdapter(child: SizedBox(height: 8)),
+            SliverToBoxAdapter(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  headingRowColor: WidgetStatePropertyAll(
+                    scheme.surfaceContainerHighest.withValues(alpha: 0.65),
+                  ),
+                  columns: const [
+                    DataColumn(label: Text('Способ')),
+                    DataColumn(label: Text('Оплаты'), numeric: true),
+                    DataColumn(label: Text('Возвраты'), numeric: true),
+                    DataColumn(label: Text('Итого'), numeric: true),
+                  ],
+                  rows: methodRows
+                      .map(
+                        (row) => DataRow(
+                          cells: [
+                            DataCell(Text(_paymentMethodRu(row.method))),
+                            DataCell(Text(formatSomoni(row.payments))),
+                            DataCell(Text('- ${formatSomoni(row.refunds)}')),
+                            DataCell(
+                              Text(
+                                formatSomoni(row.net),
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    )
-                    .toList(growable: false),
+                          ],
+                        ),
+                      )
+                      .toList(growable: false),
+                ),
               ),
             ),
-          ),
-          const SliverToBoxAdapter(child: SizedBox(height: 18)),
+            const SliverToBoxAdapter(child: SizedBox(height: 18)),
+          ],
           SliverToBoxAdapter(
             child: Text(
               'Оплаты',
@@ -3671,7 +4018,21 @@ class _TodayPaymentsDialog extends StatelessWidget {
                     padding: EdgeInsets.only(
                       bottom: index < entries.length - 1 ? 10 : 0,
                     ),
-                    child: _PaymentHistoryTile(entry: entries[index]),
+                    child: _PaymentHistoryTile(
+                      entry: entries[index],
+                      onRefund: () async {
+                        final ok = await showDialog<bool>(
+                          context: context,
+                          barrierDismissible: false,
+                          builder: (_) => _RefundPaymentDialog(
+                            entry: entries[index],
+                          ),
+                        );
+                        if (ok == true) {
+                          await onReload();
+                        }
+                      },
+                    ),
                   );
                 },
                 childCount: entries.length,
@@ -3774,20 +4135,20 @@ class _PaymentMethodTotalsRow {
 double _dialogWidth(BuildContext context, double preferred) {
   final w = MediaQuery.sizeOf(context).width;
   if (WindowLayout.of(context).isCompact) return w - 8;
-  return math.min(preferred, w * 0.96);
+  return math.min(preferred, w * 0.98);
 }
 
 double _dialogHeight(BuildContext context, double preferred) {
   final h = MediaQuery.sizeOf(context).height;
-  if (WindowLayout.of(context).isCompact) return h * 0.92;
-  return math.min(preferred, h * 0.92);
+  if (WindowLayout.of(context).isCompact) return h * 0.94;
+  return math.min(preferred, h * 0.94);
 }
 
 EdgeInsets _dialogInsetPadding(BuildContext context) {
   if (WindowLayout.of(context).isCompact) {
     return const EdgeInsets.symmetric(horizontal: 4, vertical: 6);
   }
-  return const EdgeInsets.symmetric(horizontal: 24, vertical: 24);
+  return const EdgeInsets.symmetric(horizontal: 10, vertical: 10);
 }
 
 List<_PaymentMethodTotalsRow> _buildMethodTotals(
@@ -3919,9 +4280,13 @@ class _RefundHistoryTile extends StatelessWidget {
 }
 
 class _PaymentHistoryTile extends StatelessWidget {
-  const _PaymentHistoryTile({required this.entry});
+  const _PaymentHistoryTile({
+    required this.entry,
+    this.onRefund,
+  });
 
   final LocalPaymentHistoryEntry entry;
+  final Future<void> Function()? onRefund;
 
   @override
   Widget build(BuildContext context) {
@@ -3948,6 +4313,7 @@ class _PaymentHistoryTile extends StatelessWidget {
 
     final orderId = entry.orderId.trim();
     final canPrint = orderId.isNotEmpty;
+    final canRefund = canPrint && onRefund != null;
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -4103,10 +4469,341 @@ class _PaymentHistoryTile extends StatelessWidget {
                       },
                 icon: const Icon(Icons.print_outlined),
               ),
+              if (canRefund) ...[
+                const SizedBox(height: 6),
+                IconButton.filledTonal(
+                  tooltip: 'Возврат',
+                  onPressed: () => unawaited(onRefund!()),
+                  icon: const Icon(Icons.assignment_return_outlined),
+                ),
+              ],
             ],
           ),
         ],
       ),
+    );
+  }
+}
+
+class _RefundPaymentDialog extends StatefulWidget {
+  const _RefundPaymentDialog({
+    required this.entry,
+  });
+
+  final LocalPaymentHistoryEntry entry;
+
+  @override
+  State<_RefundPaymentDialog> createState() => _RefundPaymentDialogState();
+}
+
+class _RefundPaymentDialogState extends State<_RefundPaymentDialog> {
+  LocalRefundablePaymentCheck? _check;
+  bool _loading = true;
+  bool _busy = false;
+  String? _error;
+
+  final _reasonCtrl = TextEditingController();
+  final _qtyByLineKey = <String, int>{};
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+  }
+
+  @override
+  void dispose() {
+    _reasonCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    try {
+      final repo = context.read<LocalPaymentsRepository>();
+      final check = await repo.fetchRefundablePaymentCheck(
+        paymentUuid: widget.entry.paymentUuid,
+      );
+      if (!mounted) return;
+      setState(() {
+        _check = check;
+        _loading = false;
+      });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Не удалось загрузить чек: $e';
+        _loading = false;
+      });
+    }
+  }
+
+  int _selectedQty(LocalRefundablePaymentLine line) =>
+      _qtyByLineKey[line.lineKey] ?? 0;
+
+  void _setQty(LocalRefundablePaymentLine line, int qty) {
+    final safe = qty.clamp(0, line.availableQty);
+    setState(() {
+      _error = null;
+      if (safe <= 0) {
+        _qtyByLineKey.remove(line.lineKey);
+      } else {
+        _qtyByLineKey[line.lineKey] = safe;
+      }
+    });
+  }
+
+  double _refundTotal(LocalRefundablePaymentCheck check) {
+    var sum = 0.0;
+    for (final line in check.items) {
+      final qty = _qtyByLineKey[line.lineKey] ?? 0;
+      if (qty > 0) sum += qty * line.unitPrice;
+    }
+    return sum;
+  }
+
+  bool _isFullRefund(LocalRefundablePaymentCheck check) {
+    for (final line in check.items) {
+      if (line.availableQty <= 0) continue;
+      if ((_qtyByLineKey[line.lineKey] ?? 0) != line.availableQty) return false;
+    }
+    return check.items.any((l) => l.availableQty > 0);
+  }
+
+  void _selectAll(LocalRefundablePaymentCheck check) {
+    setState(() {
+      _error = null;
+      _qtyByLineKey.clear();
+      for (final line in check.items) {
+        if (line.availableQty > 0) _qtyByLineKey[line.lineKey] = line.availableQty;
+      }
+    });
+  }
+
+  void _clearSelection() {
+    setState(() {
+      _error = null;
+      _qtyByLineKey.clear();
+    });
+  }
+
+  Future<void> _submit() async {
+    final check = _check;
+    if (check == null) return;
+    final lines = <Map<String, dynamic>>[];
+    for (final line in check.items) {
+      final qty = _qtyByLineKey[line.lineKey] ?? 0;
+      if (qty > 0) {
+        lines.add({'lineKey': line.lineKey, 'quantity': qty});
+      }
+    }
+    if (lines.isEmpty) {
+      setState(() => _error = 'Выберите хотя бы одну позицию');
+      return;
+    }
+    final fullRefund = _isFullRefund(check);
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final repo = context.read<LocalPaymentsRepository>();
+      final refund = await repo.refundPaymentLines(
+        orderId: check.orderId.isNotEmpty ? check.orderId : widget.entry.orderId,
+        paymentUuid: check.paymentUuid,
+        refundLines: lines,
+        reason: _reasonCtrl.text,
+        cancelOrder: fullRefund,
+      );
+      if (!mounted) return;
+      final hint = refund.hardware?.buildHint();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            hint == null || hint.isEmpty ? 'Возврат выполнен' : 'Возврат выполнен. $hint',
+          ),
+        ),
+      );
+      Navigator.of(context).pop(true);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.message;
+        _busy = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Ошибка возврата: $e';
+        _busy = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final check = _check;
+
+    final titleNoRaw = widget.entry.orderNumber.trim().isNotEmpty
+        ? widget.entry.orderNumber.trim()
+        : widget.entry.orderId.trim();
+    final titleNo = _cashierOrderDisplayNumber(
+      number: titleNoRaw,
+      orderTypeRaw: widget.entry.orderType,
+    );
+
+    return AlertDialog(
+      title: Text('Возврат · № $titleNo'),
+      content: SizedBox(
+        width: _dialogWidth(context, 620),
+        height: _dialogHeight(context, 560),
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : (_error != null && check == null)
+                ? Center(
+                    child: Text(
+                      _error!,
+                      style: TextStyle(color: theme.colorScheme.error),
+                      textAlign: TextAlign.center,
+                    ),
+                  )
+                : (check == null)
+                    ? const SizedBox.shrink()
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Text(
+                            'Выберите позиции для возврата. Чек возврата будет распечатан.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              TextButton(
+                                onPressed: _busy ? null : () => _selectAll(check),
+                                child: const Text('Вернуть всё'),
+                              ),
+                              const SizedBox(width: 8),
+                              TextButton(
+                                onPressed: _busy ? null : _clearSelection,
+                                child: const Text('Сброс'),
+                              ),
+                              const Spacer(),
+                              Text(
+                                'Итого: ${formatSomoni(_refundTotal(check))}',
+                                style: theme.textTheme.titleSmall?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          Expanded(
+                            child: ListView.separated(
+                              itemCount: check.items.length,
+                              separatorBuilder: (_, __) => const SizedBox(height: 8),
+                              itemBuilder: (_, i) {
+                                final line = check.items[i];
+                                final avail = line.availableQty;
+                                final selected = _selectedQty(line);
+                                final disabled = avail <= 0;
+                                return Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.55),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: theme.colorScheme.outlineVariant),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                                    children: [
+                                      Text(
+                                        line.name.isNotEmpty ? line.name : 'Позиция',
+                                        style: theme.textTheme.titleSmall?.copyWith(
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Row(
+                                        children: [
+                                          Expanded(
+                                            child: Text(
+                                              'Доступно: $avail · Цена: ${formatSomoni(line.unitPrice)}',
+                                              style: theme.textTheme.bodySmall?.copyWith(
+                                                color: theme.colorScheme.onSurfaceVariant,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                          IconButton(
+                                            onPressed: _busy || disabled || selected <= 0
+                                                ? null
+                                                : () => _setQty(line, selected - 1),
+                                            icon: const Icon(Icons.remove_circle_outline),
+                                          ),
+                                          Text(
+                                            '$selected',
+                                            style: theme.textTheme.titleMedium?.copyWith(
+                                              fontWeight: FontWeight.w900,
+                                            ),
+                                          ),
+                                          IconButton(
+                                            onPressed: _busy || disabled || selected >= avail
+                                                ? null
+                                                : () => _setQty(line, selected + 1),
+                                            icon: const Icon(Icons.add_circle_outline),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: _reasonCtrl,
+                            enabled: !_busy,
+                            decoration: const InputDecoration(
+                              labelText: 'Причина (необязательно)',
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          if (_error != null) ...[
+                            const SizedBox(height: 8),
+                            Text(
+                              _error!,
+                              style: TextStyle(color: theme.colorScheme.error),
+                            ),
+                          ],
+                        ],
+                      ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.of(context).pop(false),
+          child: const Text('Отмена'),
+        ),
+        FilledButton(
+          onPressed: _busy || check == null ? null : _submit,
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Сделать возврат'),
+        ),
+      ],
     );
   }
 }
@@ -4151,6 +4848,422 @@ Future<void> _copyDeliveryCoords(BuildContext context, String coordsRaw) async {
   }
 }
 
+class _OrderBoardCard extends StatelessWidget {
+  const _OrderBoardCard({
+    required this.order,
+    required this.canManageOnlineOrders,
+    required this.canHandoffOrders,
+    required this.onCashierAck,
+    required this.onCloseOrder,
+    required this.onCancelOrder,
+    required this.onCallCustomer,
+    required this.onChangeTable,
+    required this.onChangeOrderType,
+    required this.onFreeTable,
+    this.compact = false,
+  });
+
+  final LocalCashierBoardOrder order;
+  final bool canManageOnlineOrders;
+  final bool canHandoffOrders;
+  final Future<void> Function() onCashierAck;
+  final Future<void> Function() onCloseOrder;
+  final Future<void> Function() onCancelOrder;
+  final VoidCallback onCallCustomer;
+  final Future<void> Function() onChangeTable;
+  final Future<void> Function() onChangeOrderType;
+  final Future<void> Function() onFreeTable;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final ui = context.watch<PosCashierBoardCubit>().state;
+    final style = posCashierOrderVisualStyle(order, scheme);
+    final o = order.order;
+    final status = o.status.toLowerCase();
+    final completed = status == 'done' || status == 'cancelled';
+    final hasTable = order.tableLabel?.trim().isNotEmpty == true;
+    final tableLabel = hasTable ? order.tableLabel?.trim() ?? '' : 'Без стола';
+    final tableHeadline = cashierTableHeadline(order.tableLabel);
+    final tableAssigned = cashierHasAssignedTable(order.tableLabel);
+    final tableColor = cashierTableHeadlineColor(
+      scheme,
+      assigned: tableAssigned,
+    );
+    final isWebsite = (order.orderSource ?? 'pos').toLowerCase() == 'website';
+    final allowActions = !completed &&
+        (isWebsite ? canManageOnlineOrders : canHandoffOrders);
+    final canPickTable = allowActions &&
+        !posOrderLooksLikeDeliveryForTableChange(
+          orderType: order.orderType,
+          tableLabel: order.tableLabel ?? '',
+        );
+    final statusRu = switch (status) {
+      'new' => 'Новый',
+      'cooking' => 'Готовится',
+      'ready' => 'Готов',
+      'awaiting_expeditor' => 'Сборка',
+      'done' => 'Выдан',
+      'cancelled' => 'Отменён',
+      _ => status,
+    };
+    final displayItems = ['ready', 'awaiting_expeditor'].contains(status)
+        ? filterAssemblyRoundItems(
+            o.items,
+            handedOutAtIso: o.handedOutAtIso,
+          )
+        : o.items;
+    final maxLines =
+        compact ? ui.maxItemLinesCompact : ui.maxItemLinesExpanded;
+    final visibleItems =
+        displayItems.take(maxLines).toList(growable: false);
+    final hiddenItems = displayItems.length - visibleItems.length;
+    final titleBase = theme.textTheme.titleMedium?.fontSize ?? 16;
+    final bodyBase = theme.textTheme.bodyMedium?.fontSize ?? 14;
+    final pad = compact ? ui.cardPadding * 0.9 : ui.cardPadding;
+    final gap = ui.sectionGap;
+
+    return Material(
+      color: style.surfaceTint,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () => _openActionsDialog(context),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: style.accent.withValues(alpha: 0.38)),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(width: 6, color: style.accent),
+                  Expanded(
+                    child: Padding(
+                      padding: EdgeInsets.all(pad),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize:
+                            compact ? MainAxisSize.max : MainAxisSize.min,
+                        children: [
+                          if (ui.showTableOnTop) ...[
+                            Text(
+                              tableHeadline,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.headlineSmall?.copyWith(
+                                fontWeight: FontWeight.w900,
+                                fontSize:
+                                    (titleBase + 8) * ui.tableHeadlineScale,
+                                height: 1.05,
+                                color: tableColor,
+                              ),
+                            ),
+                            SizedBox(height: gap * 0.7),
+                          ],
+                          Row(
+                            children: [
+                              Container(
+                                width: compact ? 40 : 44,
+                                height: compact ? 40 : 44,
+                                decoration: BoxDecoration(
+                                  color: style.accent.withValues(alpha: 0.16),
+                                  borderRadius: BorderRadius.circular(12),
+                                  border: Border.all(
+                                    color: style.accent.withValues(alpha: 0.45),
+                                  ),
+                                ),
+                                alignment: Alignment.center,
+                                child: Icon(
+                                  style.icon,
+                                  color: style.accent,
+                                  size: 22,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: style.accent.withValues(alpha: 0.14),
+                                  borderRadius: BorderRadius.circular(999),
+                                  border: Border.all(
+                                    color: style.accent.withValues(alpha: 0.42),
+                                  ),
+                                ),
+                                child: Text(
+                                  style.categoryLabel,
+                                  style: theme.textTheme.labelSmall?.copyWith(
+                                    color: style.accent,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                              const Spacer(),
+                              Text(
+                                formatSomoni(o.totalPrice),
+                                style: theme.textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.w800,
+                                  color: style.accent,
+                                  fontSize: titleBase * ui.titleScale,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: gap),
+                          Text(
+                            '№ ${_cashierOrderDisplayNumber(number: o.number, orderTypeRaw: order.orderType)}',
+                            style: theme.textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.w800,
+                              fontSize: titleBase * ui.titleScale,
+                            ),
+                          ),
+                          SizedBox(height: gap * 0.75),
+                          Material(
+                            color: scheme.surface.withValues(alpha: 0.55),
+                            borderRadius: BorderRadius.circular(10),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(10),
+                              onTap: canPickTable
+                                  ? () async {
+                                      await onChangeTable();
+                                    }
+                                  : null,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 7,
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(
+                                      Icons.table_restaurant_rounded,
+                                      size: 18,
+                                      color: canPickTable
+                                          ? scheme.primary
+                                          : scheme.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        tableLabel,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style:
+                                            theme.textTheme.bodyMedium?.copyWith(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: bodyBase * ui.itemTextScale,
+                                          color: tableAssigned
+                                              ? tableColor
+                                              : scheme.onSurfaceVariant,
+                                        ),
+                                      ),
+                                    ),
+                                    if (canPickTable)
+                                      Text(
+                                        hasTable ? 'Сменить' : 'Указать',
+                                        style:
+                                            theme.textTheme.labelMedium?.copyWith(
+                                          color: scheme.primary,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          SizedBox(height: gap * 0.75),
+                          Text(
+                            '$statusRu · ${displayItems.length} поз.',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: scheme.onSurfaceVariant,
+                              fontWeight: FontWeight.w700,
+                              fontSize: (bodyBase - 1) * ui.itemTextScale,
+                            ),
+                          ),
+                          if (order.requiresPayment) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Нужна оплата',
+                              style: theme.textTheme.labelSmall?.copyWith(
+                                color: scheme.error,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                          SizedBox(height: gap),
+                          if (compact)
+                            Expanded(
+                              child: _boardCardItems(
+                                context,
+                                theme,
+                                scheme,
+                                visibleItems,
+                                hiddenItems,
+                                displayItems.isEmpty,
+                                itemTextScale: ui.itemTextScale,
+                              ),
+                            )
+                          else
+                            _boardCardItems(
+                              context,
+                              theme,
+                              scheme,
+                              visibleItems,
+                              hiddenItems,
+                              displayItems.isEmpty,
+                              itemTextScale: ui.itemTextScale,
+                            ),
+                          if (allowActions) ...[
+                            if (!compact) SizedBox(height: gap),
+                            Align(
+                              alignment: Alignment.centerRight,
+                              child: Text(
+                                'Открыть заказ',
+                                style: theme.textTheme.labelMedium?.copyWith(
+                                  color: style.accent,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _boardCardItems(
+    BuildContext context,
+    ThemeData theme,
+    ColorScheme scheme,
+    List<LocalKitchenQueueItem> visibleItems,
+    int hiddenItems,
+    bool empty, {
+    double itemTextScale = 1,
+  }) {
+    final bodyBase = theme.textTheme.bodyMedium?.fontSize ?? 14;
+    if (empty) {
+      return Text(
+        'Позиций нет',
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: scheme.onSurfaceVariant,
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final it in visibleItems)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 3),
+            child: Text(
+              '• ${it.quantity > 1 ? '${it.quantity}× ' : ''}${it.name}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: _cashierItemStatusColor(context, it.kitchenLineStatus),
+                height: 1.2,
+                fontWeight: FontWeight.w600,
+                fontSize: bodyBase * itemTextScale,
+              ),
+            ),
+          ),
+        if (hiddenItems > 0)
+          Text(
+            '+$hiddenItems ещё',
+            style: theme.textTheme.labelMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _openActionsDialog(BuildContext context) async {
+    final o = order.order;
+    await showDialog<void>(
+      context: context,
+      useRootNavigator: true,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        final scheme = theme.colorScheme;
+        return AlertDialog(
+          insetPadding: _dialogInsetPadding(ctx),
+          backgroundColor: scheme.surfaceContainerLow,
+          title: Text(
+            'Заказ № ${_cashierOrderDisplayNumber(number: o.number, orderTypeRaw: order.orderType)}',
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          content: SizedBox(
+            width: _dialogWidth(ctx, 760),
+            child: SingleChildScrollView(
+              child: _OrderListTile(
+                order: order,
+                canManageOnlineOrders: canManageOnlineOrders,
+                canHandoffOrders: canHandoffOrders,
+                onCashierAck: () async {
+                  Navigator.of(ctx).pop();
+                  await onCashierAck();
+                },
+                onCloseOrder: () async {
+                  Navigator.of(ctx).pop();
+                  await onCloseOrder();
+                },
+                onCancelOrder: () async {
+                  Navigator.of(ctx).pop();
+                  await onCancelOrder();
+                },
+                onCallCustomer: () {
+                  Navigator.of(ctx).pop();
+                  onCallCustomer();
+                },
+                onChangeTable: () async {
+                  Navigator.of(ctx).pop();
+                  await onChangeTable();
+                },
+                onChangeOrderType: () async {
+                  Navigator.of(ctx).pop();
+                  await onChangeOrderType();
+                },
+                onFreeTable: () async {
+                  Navigator.of(ctx).pop();
+                  await onFreeTable();
+                },
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Назад'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _OrderListTile extends StatelessWidget {
   const _OrderListTile({
     required this.order,
@@ -4161,6 +5274,9 @@ class _OrderListTile extends StatelessWidget {
     required this.onCancelOrder,
     this.onCallCustomer,
     this.onEditOrder,
+    this.onChangeTable,
+    this.onChangeOrderType,
+    this.onFreeTable,
   });
 
   final LocalCashierBoardOrder order;
@@ -4171,6 +5287,9 @@ class _OrderListTile extends StatelessWidget {
   final Future<void> Function() onCancelOrder;
   final VoidCallback? onCallCustomer;
   final Future<void> Function()? onEditOrder;
+  final Future<void> Function()? onChangeTable;
+  final Future<void> Function()? onChangeOrderType;
+  final Future<void> Function()? onFreeTable;
 
   @override
   Widget build(BuildContext context) {
@@ -4182,7 +5301,7 @@ class _OrderListTile extends StatelessWidget {
     final status = o.status.toLowerCase();
     final completed = status == 'done' || status == 'cancelled';
     final tableLabel = order.tableLabel?.trim().isNotEmpty == true
-        ? order.tableLabel!.trim()
+        ? order.tableLabel?.trim() ?? ''
         : 'Без стола';
     final websiteMeta = parseWebsiteOrderDeliveryMeta(tableLabel);
     final actorHint = _cashierKitchenActorHint(o);
@@ -4208,6 +5327,19 @@ class _OrderListTile extends StatelessWidget {
       crossAxisAlignment:
           stacked ? CrossAxisAlignment.stretch : CrossAxisAlignment.end,
       children: [
+        OutlinedButton.icon(
+          onPressed: () => showPosOrderHistoryDialog(
+            context,
+            orderId: o.id,
+            orderNumber: _cashierOrderDisplayNumber(
+              number: o.number,
+              orderTypeRaw: order.orderType,
+            ),
+          ),
+          icon: const Icon(Icons.history_rounded, size: 18),
+          label: const Text('История'),
+        ),
+        const SizedBox(height: 6),
         if (!allowActions && !completed)
           Text(
             isWebsite ? 'Только касса' : 'Только просмотр',
@@ -4233,6 +5365,38 @@ class _OrderListTile extends StatelessWidget {
               label: const Text('Изменить'),
             ),
             const SizedBox(height: 6),
+          ],
+          if (onChangeOrderType != null) ...[
+            OutlinedButton.icon(
+              onPressed: () => onChangeOrderType!(),
+              icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+              label: const Text('Тип заказа'),
+            ),
+            const SizedBox(height: 6),
+          ],
+          if (onChangeTable != null &&
+              !posOrderLooksLikeDeliveryForTableChange(
+                orderType: order.orderType,
+                tableLabel: tableLabel,
+              )) ...[
+            OutlinedButton.icon(
+              onPressed: () => onChangeTable!(),
+              icon: const Icon(Icons.table_restaurant_rounded, size: 18),
+              label: Text(
+                (order.tableLabel ?? '').trim().isEmpty ? 'Указать стол' : 'Сменить стол',
+              ),
+            ),
+            const SizedBox(height: 6),
+            if (onFreeTable != null &&
+                (order.tableLabel ?? '').trim().isNotEmpty)
+              OutlinedButton.icon(
+                onPressed: () => onFreeTable!(),
+                icon: const Icon(Icons.event_available_rounded, size: 18),
+                label: const Text('Освободить стол'),
+              ),
+            if (onFreeTable != null &&
+                (order.tableLabel ?? '').trim().isNotEmpty)
+              const SizedBox(height: 6),
           ],
           if (order.needsCashierAck)
             FilledButton(
@@ -4274,6 +5438,19 @@ class _OrderListTile extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
+          cashierTableHeadline(order.tableLabel),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w900,
+            color: cashierTableHeadlineColor(
+              scheme,
+              assigned: cashierHasAssignedTable(order.tableLabel),
+            ),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
           '№ ${_cashierOrderDisplayNumber(number: o.number, orderTypeRaw: order.orderType)}',
           style: theme.textTheme.titleMedium?.copyWith(
             fontWeight: FontWeight.w800,
@@ -4292,7 +5469,16 @@ class _OrderListTile extends StatelessWidget {
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(color: scheme.outlineVariant),
                   ),
-                  child: Row(
+                  child: InkWell(
+                    onTap: onChangeTable == null ||
+                            posOrderLooksLikeDeliveryForTableChange(
+                              orderType: order.orderType,
+                              tableLabel: tableLabel,
+                            )
+                        ? null
+                        : () => onChangeTable!(),
+                    borderRadius: BorderRadius.circular(10),
+                    child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
@@ -4309,9 +5495,77 @@ class _OrderListTile extends StatelessWidget {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
+                      if (onChangeTable != null &&
+                          !posOrderLooksLikeDeliveryForTableChange(
+                            orderType: order.orderType,
+                            tableLabel: tableLabel,
+                          )) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.edit_rounded,
+                          size: 14,
+                          color: scheme.primary,
+                        ),
+                      ],
                     ],
                   ),
+                  ),
                 ),
+                if (isWebsite &&
+                    (websiteMeta.phone != null ||
+                        websiteMeta.deliveryDate != null ||
+                        websiteMeta.deliveryWhen != null)) ...[
+                  const SizedBox(height: 6),
+                  if (websiteMeta.phone != null)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Тел: ${websiteMeta.phone}',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: scheme.primary,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        if (onCallCustomer != null)
+                          IconButton(
+                            tooltip: 'Позвонить',
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 36,
+                              minHeight: 36,
+                            ),
+                            onPressed: onCallCustomer,
+                            icon: Icon(
+                              Icons.phone_rounded,
+                              size: 20,
+                              color: scheme.primary,
+                            ),
+                          ),
+                      ],
+                    ),
+                  if (websiteMeta.deliveryDate != null ||
+                      websiteMeta.deliveryWhen != null) ...[
+                    if (websiteMeta.phone != null) const SizedBox(height: 2),
+                    Text(
+                      [
+                        if (websiteMeta.deliveryDate != null)
+                          'Дата: ${websiteMeta.deliveryDate}',
+                        if (websiteMeta.deliveryWhen != null)
+                          websiteMeta.deliveryWhen!
+                                  .toLowerCase()
+                                  .contains('скорее')
+                              ? 'Время: ${websiteMeta.deliveryWhen}'
+                              : 'Окно: ${websiteMeta.deliveryWhen}',
+                      ].join(' · '),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                ],
                 if (websiteMeta.address != null) ...[
                   const SizedBox(height: 6),
                   Text(

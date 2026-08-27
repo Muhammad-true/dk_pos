@@ -1,33 +1,32 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'dart:ui' show lerpDouble;
 
-import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:reorderable_grid_view/reorderable_grid_view.dart';
-import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/app/pos_catalog_grid/pos_catalog_grid_cubit.dart';
+import 'package:dk_pos/core/layout/window_layout.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/cart/bloc/cart_bloc.dart';
 import 'package:dk_pos/features/menu/bloc/menu_bloc.dart';
-import 'package:dk_pos/features/pos/bloc/pos_hall_orders_cubit.dart';
 import 'package:dk_pos/features/menu/bloc/menu_event.dart';
 import 'package:dk_pos/features/menu/bloc/menu_state.dart';
+import 'package:dk_pos/features/pos/bloc/pos_hall_orders_cubit.dart';
 import 'package:dk_pos/features/pos/data/pos_catalog_local_order_store.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_window_service.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/pos_product_image.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
 import 'package:dk_pos/shared/shared.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:reorderable_grid_view/reorderable_grid_view.dart';
 
 import 'pos_catalog_category_style.dart';
 import 'pos_menu_item_card.dart';
 import 'pos_modifier_sheet.dart';
+import 'pos_size_group.dart';
+import 'pos_size_group_dialog.dart';
 
 /// Иерархия категорий: назад, крошки, дочерние узлы, товары текущего уровня.
-typedef PosCatalogAddItemCallback = Future<void> Function(
-  PosMenuItem item,
-  Rect sourceGlobalRect,
-);
+typedef PosCatalogAddItemCallback =
+    Future<void> Function(PosMenuItem item, Rect sourceGlobalRect);
 
 /// Порядок корневых категорий и товаров в выбранной категории можно менять
 /// удержанием и перетаскиванием; сохраняется на устройстве отдельно по роли
@@ -62,6 +61,12 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
   final ScrollController _horizCatScroll = ScrollController();
   final ScrollController _itemsScroll = ScrollController();
 
+  /// Параметры сетки для оценки индекса при скролле → экран клиента.
+  int _gridCrossCount = 3;
+  double _gridAspect = 0.85;
+  double _gridPaneWidth = 0;
+  int _gridTileCount = 0;
+
   /// Суффикс ключа SharedPreferences; меняется при смене пользователя/роли.
   String? _orderPrefsScope;
 
@@ -69,22 +74,72 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
   void initState() {
     super.initState();
     _itemsScroll.addListener(_onItemsScroll);
+    _rootCatScroll.addListener(_onRootCategoryScroll);
+    _horizCatScroll.addListener(_onHorizontalCategoryScroll);
+  }
+
+  void _onRootCategoryScroll() => _syncCategoryScroll(_rootCatScroll);
+
+  void _onHorizontalCategoryScroll() => _syncCategoryScroll(_horizCatScroll);
+
+  void _syncCategoryScroll(ScrollController controller) {
+    if (!CustomerDisplayWindowService.instance.isMenuMode) return;
+    if (!controller.hasClients) return;
+    final position = controller.position;
+    final max = position.maxScrollExtent;
+    CustomerDisplayWindowService.instance.noteCategoryScroll(
+      progress: max <= 0 ? 0 : (position.pixels / max).clamp(0.0, 1.0),
+    );
   }
 
   void _onItemsScroll() {
     if (!CustomerDisplayWindowService.instance.isMenuMode) return;
     if (!_itemsScroll.hasClients) return;
-    CustomerDisplayWindowService.instance.noteCatalogScrollOffset(
-      _itemsScroll.offset,
+    final position = _itemsScroll.position;
+    final offset = position.pixels;
+    final max = position.maxScrollExtent;
+    final progress = max <= 0 ? 0.0 : (offset / max).clamp(0.0, 1.0);
+    final index = _estimateFirstVisibleIndex(offset, progress);
+    CustomerDisplayWindowService.instance.noteCatalogScroll(
+      offset: offset,
+      progress: progress,
+      firstVisibleIndex: index,
     );
+  }
+
+  int _estimateFirstVisibleIndex(double offset, double progress) {
+    final cross = _gridCrossCount;
+    final width = _gridPaneWidth;
+    final count = _gridTileCount;
+    if (count <= 0) return 0;
+    if (cross >= 1 && width > 0 && _gridAspect > 0) {
+      const spacing = 12.0;
+      const padding = 12.0;
+      final inner = (width - padding * 2).clamp(1.0, double.infinity);
+      final cellW = (inner - spacing * (cross - 1)) / cross;
+      if (cellW > 0) {
+        final cellH = cellW / _gridAspect;
+        final rowH = cellH + spacing;
+        if (rowH > 0) {
+          final row = (offset / rowH).floor();
+          return (row * cross).clamp(0, count - 1);
+        }
+      }
+    }
+    return (progress * (count - 1)).round().clamp(0, count - 1);
   }
 
   @override
   void didUpdateWidget(PosCatalogBody oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.menu.pathIds != widget.menu.pathIds && _itemsScroll.hasClients) {
+    if (oldWidget.menu.pathIds != widget.menu.pathIds &&
+        _itemsScroll.hasClients) {
       _itemsScroll.jumpTo(0);
-      CustomerDisplayWindowService.instance.noteCatalogScrollOffset(0);
+      CustomerDisplayWindowService.instance.noteCatalogScroll(
+        offset: 0,
+        progress: 0,
+        firstVisibleIndex: 0,
+      );
     }
   }
 
@@ -112,7 +167,10 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
   }
 
   List<PosCategory> _orderedRootCategories(MenuState menu) {
-    return mergePosRootCategoryOrder(menu.categoryRoots, _order.rootCategoryIds);
+    return mergePosRootCategoryOrder(
+      menu.categoryRoots,
+      _order.rootCategoryIds,
+    );
   }
 
   List<PosMenuItem> _orderedItems(MenuState menu) {
@@ -120,6 +178,10 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
     final catId = menu.pathIds.last;
     final saved = _order.itemIdsByCategory[catId];
     return mergePosItemOrder(menu.currentItems, saved);
+  }
+
+  List<PosCatalogTile> _orderedTiles(MenuState menu) {
+    return groupPosMenuItems(_orderedItems(menu));
   }
 
   Future<void> _persistOrder() async {
@@ -130,7 +192,9 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
   }
 
   void _onRootCategoriesReorder(int oldIndex, int newIndex) {
-    final ordered = _orderedRootCategories(widget.menu).map((c) => c.id).toList();
+    final ordered = _orderedRootCategories(
+      widget.menu,
+    ).map((c) => c.id).toList();
     if (oldIndex < 0 || oldIndex >= ordered.length) return;
     // [newIndex] может быть равен длине списка (вставка в конец), как у ReorderableListView.
     if (newIndex < 0 || newIndex > ordered.length) return;
@@ -146,18 +210,18 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
     if (menu.pathIds.isEmpty) return;
     final catId = menu.pathIds.last;
     if (dragIndex == dropIndex) return;
-    final list = List<PosMenuItem>.from(_orderedItems(menu));
-    if (dragIndex < 0 || dragIndex >= list.length) return;
-    if (dropIndex < 0 || dropIndex > list.length) return;
-    final moved = list.removeAt(dragIndex);
+    final tiles = List<PosCatalogTile>.from(_orderedTiles(menu));
+    if (dragIndex < 0 || dragIndex >= tiles.length) return;
+    if (dropIndex < 0 || dropIndex > tiles.length) return;
+    final moved = tiles.removeAt(dragIndex);
     var insert = dropIndex;
     if (dropIndex > dragIndex) insert -= 1;
-    insert = insert.clamp(0, list.length);
-    list.insert(insert, moved);
+    insert = insert.clamp(0, tiles.length);
+    tiles.insert(insert, moved);
     setState(
       () => _order = _order.withItemOrderForCategory(
         catId,
-        list.map((e) => e.id).toList(),
+        tiles.map((e) => e.representative.id).toList(),
       ),
     );
     _persistOrder();
@@ -203,11 +267,13 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final layout = WindowLayout(width: widget.catalogPaneWidth);
-    final wideCat = layout.posSideCategoryNavForCatalogPane(widget.catalogPaneWidth);
+    final wideCat = layout.posSideCategoryNavForCatalogPane(
+      widget.catalogPaneWidth,
+    );
     final activeRootId = menu.pathIds.isEmpty ? null : menu.pathIds.first;
     final sideCats = _orderedRootCategories(menu);
     final cats = menu.currentChildCategories;
-    final itemsOrdered = _orderedItems(menu);
+    final tilesOrdered = _orderedTiles(menu);
     final gridSettings = context.watch<PosCatalogGridCubit>().state;
     final crossCount = gridSettings.columnsFor(
       catalogPaneWidth: widget.catalogPaneWidth,
@@ -217,8 +283,18 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
       catalogPaneWidth: widget.catalogPaneWidth,
       orderAppendMode: widget.orderAppendMode,
     );
-    final appendDraft =
-        widget.orderAppendMode ? context.watch<PosHallOrdersCubit>().state.openBillAppendDraft : null;
+    final appendDraft = widget.orderAppendMode
+        ? context.watch<PosHallOrdersCubit>().state.openBillAppendDraft
+        : null;
+
+    // Для синхронизации скролла с экраном клиента.
+    _gridCrossCount = crossCount;
+    _gridAspect = aspect;
+    _gridTileCount = tilesOrdered.length;
+    _gridPaneWidth = wideCat
+        ? (widget.catalogPaneWidth - WindowLayout.posCategoryRailWidth)
+              .clamp(0.0, double.infinity)
+        : widget.catalogPaneWidth;
 
     final navHeader = wideCat
         ? Padding(
@@ -292,22 +368,38 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
         gridDelegate: gridDelegate,
         dragStartDelay: _kDragHoldDelay,
         scrollSpeedController: _gridEdgeScrollSpeed,
-        onReorder: (dragIndex, dropIndex) => _onItemsReorder(menu, dragIndex, dropIndex),
-        itemCount: itemsOrdered.length,
+        onReorder: (dragIndex, dropIndex) =>
+            _onItemsReorder(menu, dragIndex, dropIndex),
+        itemCount: tilesOrdered.length,
         itemBuilder: (context, i) {
-          final item = itemsOrdered[i];
+          final tile = tilesOrdered[i];
+          final display = tile.displayItem;
           return PosMenuItemCard(
-            key: ValueKey('pos_item_${item.id}'),
-            item: item,
-            onAdd: (sourceRect) => widget.onAddItem(item, sourceRect),
-            onConfigure: () => _showItemConfigDialog(context, item),
+            key: ValueKey('pos_item_${tile.representative.id}'),
+            item: display,
+            onAdd: (sourceRect) async {
+              if (tile.isGroup) {
+                final picked = await showPosSizeGroupDialog(
+                  context,
+                  tile: tile,
+                );
+                if (picked == null || !context.mounted) return;
+                await widget.onAddItem(picked, sourceRect);
+                return;
+              }
+              await widget.onAddItem(tile.representative, sourceRect);
+            },
+            onConfigure: () =>
+                _showItemConfigDialog(context, tile.representative),
+            // «Закончилось сегодня» — отдельный экран в меню кассы (не long-press).
+            onToggleSoldOut: null,
           );
         },
       );
     }
 
     Widget rightPane() {
-      if (itemsOrdered.isNotEmpty) {
+      if (tilesOrdered.isNotEmpty) {
         return productGrid();
       }
       if (menu.pathIds.isNotEmpty) {
@@ -318,8 +410,8 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
               l10n.posCatalogNoItemsHere,
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.outline,
-                  ),
+                color: Theme.of(context).colorScheme.outline,
+              ),
             ),
           ),
         );
@@ -332,8 +424,8 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
               l10n.posCatalogPickCategory,
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.outline,
-                  ),
+                color: Theme.of(context).colorScheme.outline,
+              ),
             ),
           ),
         );
@@ -341,10 +433,7 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: Text(
-            l10n.menuEmpty,
-            textAlign: TextAlign.center,
-          ),
+          child: Text(l10n.menuEmpty, textAlign: TextAlign.center),
         ),
       );
     }
@@ -359,13 +448,13 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
                 l10n.menuEmpty,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: Theme.of(context).colorScheme.outline,
-                    ),
+                  color: Theme.of(context).colorScheme.outline,
+                ),
               ),
             ),
           );
         }
-        if (itemsOrdered.isNotEmpty) {
+        if (tilesOrdered.isNotEmpty) {
           return const SizedBox.shrink();
         }
         return Center(
@@ -375,8 +464,8 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
               l10n.posCatalogNoSubcategories,
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: Theme.of(context).colorScheme.outline,
-                  ),
+                color: Theme.of(context).colorScheme.outline,
+              ),
             ),
           ),
         );
@@ -448,7 +537,10 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
                             )
                           : null,
                       trailing: hasKids
-                          ? const Icon(Icons.chevron_right_rounded, color: Colors.white)
+                          ? const Icon(
+                              Icons.chevron_right_rounded,
+                              color: Colors.white,
+                            )
                           : null,
                     ),
                   ),
@@ -481,7 +573,10 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
                 borderRadius: BorderRadius.circular(16),
                 onTap: () => _selectRootCategory(context, c.id),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.topLeft,
@@ -501,7 +596,9 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: cardColors.first.withValues(alpha: selected ? 0.22 : 0.12),
+                        color: cardColors.first.withValues(
+                          alpha: selected ? 0.22 : 0.12,
+                        ),
                         blurRadius: selected ? 14 : 8,
                         offset: const Offset(0, 4),
                       ),
@@ -564,7 +661,11 @@ class _PosCatalogBodyState extends State<PosCatalogBody> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           child: Row(
             children: [
-              Icon(Icons.add_shopping_cart_rounded, color: scheme.primary, size: 20),
+              Icon(
+                Icons.add_shopping_cart_rounded,
+                color: scheme.primary,
+                size: 20,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -714,11 +815,7 @@ class _CategoryAvatarFallback extends StatelessWidget {
           colors: colors,
         ),
       ),
-      child: Icon(
-        icon,
-        color: Colors.white,
-        size: compact ? 16 : 22,
-      ),
+      child: Icon(icon, color: Colors.white, size: compact ? 16 : 22),
     );
   }
 }

@@ -1,7 +1,5 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
-
 import 'package:dk_pos/core/formatting/money_format.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_content_config.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_sync_state.dart';
@@ -9,6 +7,7 @@ import 'package:dk_pos/features/pos/presentation/widgets/customer_display_idle_r
 import 'package:dk_pos/features/pos/presentation/widgets/customer_display_menu_view.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/customer_display_payment_view.dart';
 import 'package:dk_pos/theme/pos_workspace_theme.dart';
+import 'package:flutter/material.dart';
 
 class PosCustomerDisplayPanel extends StatelessWidget {
   const PosCustomerDisplayPanel({
@@ -32,8 +31,7 @@ class PosCustomerDisplayPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    final config =
-        idleContentConfig ?? CustomerDisplayContentConfig.fallback();
+    final config = idleContentConfig ?? CustomerDisplayContentConfig.fallback();
 
     Widget body;
     Key bodyKey;
@@ -49,20 +47,12 @@ class PosCustomerDisplayPanel extends StatelessWidget {
         );
       case CustomerDisplayViewMode.payment:
         bodyKey = const ValueKey('payment');
-        body = CustomerDisplayPaymentView(
-          cart: cart,
-          promoConfig: config,
-        );
+        body = CustomerDisplayPaymentView(cart: cart, promoConfig: config);
       case CustomerDisplayViewMode.idle:
         bodyKey = ValueKey(cart.isEmpty ? 'idle' : 'receipt_legacy');
         body = cart.isEmpty
-            ? _CustomerIdleView(
-                config: config,
-              )
-            : _CustomerReceiptView(
-                cart: cart,
-                promoConfig: config,
-              );
+            ? _CustomerIdleView(config: config)
+            : _CustomerReceiptView(cart: cart, promoConfig: config);
     }
 
     return DecoratedBox(
@@ -74,10 +64,7 @@ class PosCustomerDisplayPanel extends StatelessWidget {
         ),
       ),
       // Мгновенное переключение режимов: crossfade оставлял idle поверх меню.
-      child: KeyedSubtree(
-        key: bodyKey,
-        child: body,
-      ),
+      child: KeyedSubtree(key: bodyKey, child: body),
     );
   }
 }
@@ -112,15 +99,15 @@ class CustomerDisplayCartData {
       .join('|');
 
   Map<String, dynamic> toJson() => {
-        'lines': lines.map((line) => line.toJson()).toList(),
-        'itemCount': itemCount,
-        'total': total,
-        'payableTotal': payableTotal,
-        'discountTotal': discountTotal,
-        'hasDiscount': hasDiscount,
-        'orderTypeSelected': orderTypeSelected,
-        'activeOrderTypeIndex': activeOrderTypeIndex,
-      };
+    'lines': lines.map((line) => line.toJson()).toList(),
+    'itemCount': itemCount,
+    'total': total,
+    'payableTotal': payableTotal,
+    'discountTotal': discountTotal,
+    'hasDiscount': hasDiscount,
+    'orderTypeSelected': orderTypeSelected,
+    'activeOrderTypeIndex': activeOrderTypeIndex,
+  };
 
   factory CustomerDisplayCartData.fromJson(Map<String, dynamic> json) {
     final rawLines = json['lines'];
@@ -129,9 +116,7 @@ class CustomerDisplayCartData {
       for (final entry in rawLines) {
         if (entry is Map) {
           lines.add(
-            CustomerDisplayLineData.fromJson(
-              Map<String, dynamic>.from(entry),
-            ),
+            CustomerDisplayLineData.fromJson(Map<String, dynamic>.from(entry)),
           );
         }
       }
@@ -140,11 +125,13 @@ class CustomerDisplayCartData {
     final payable = (json['payableTotal'] as num?)?.toDouble() ?? total;
     final discount = (json['discountTotal'] as num?)?.toDouble() ?? 0;
     final hasDiscount = json['hasDiscount'] == true || discount > 0.009;
-    final orderTypeIndex = (json['activeOrderTypeIndex'] as num?)?.toInt() ??
+    final orderTypeIndex =
+        (json['activeOrderTypeIndex'] as num?)?.toInt() ??
         (json['orderTypeSelected'] == true ? 0 : -1);
     return CustomerDisplayCartData(
       lines: lines,
-      itemCount: (json['itemCount'] as num?)?.toInt() ??
+      itemCount:
+          (json['itemCount'] as num?)?.toInt() ??
           lines.fold<int>(0, (sum, line) => sum + line.quantity),
       total: total,
       payableTotal: payable,
@@ -171,11 +158,11 @@ class CustomerDisplayLineData {
   final double lineTotal;
 
   Map<String, dynamic> toJson() => {
-        'lineKey': lineKey,
-        'name': name,
-        'quantity': quantity,
-        'lineTotal': lineTotal,
-      };
+    'lineKey': lineKey,
+    'name': name,
+    'quantity': quantity,
+    'lineTotal': lineTotal,
+  };
 
   factory CustomerDisplayLineData.fromJson(Map<String, dynamic> json) {
     final name = json['name']?.toString() ?? '';
@@ -194,7 +181,7 @@ class CustomerDisplayLineData {
 }
 
 class _CustomerIdleView extends StatelessWidget {
-  const _CustomerIdleView({super.key, required this.config});
+  const _CustomerIdleView({required this.config});
 
   final CustomerDisplayContentConfig config;
 
@@ -302,11 +289,7 @@ class _AnimatedLogoHaloState extends State<_AnimatedLogoHalo>
 }
 
 class _CustomerReceiptView extends StatelessWidget {
-  const _CustomerReceiptView({
-    super.key,
-    required this.cart,
-    required this.promoConfig,
-  });
+  const _CustomerReceiptView({required this.cart, required this.promoConfig});
 
   final CustomerDisplayCartData cart;
   final CustomerDisplayContentConfig promoConfig;
@@ -391,7 +374,9 @@ class _CustomerReceiptView extends StatelessWidget {
                         decoration: BoxDecoration(
                           color: customerDisplayCardSurface(theme),
                           borderRadius: BorderRadius.circular(28),
-                          border: Border.all(color: customerDisplayCardBorder(theme)),
+                          border: Border.all(
+                            color: customerDisplayCardBorder(theme),
+                          ),
                         ),
                         child: Column(
                           children: [
@@ -399,8 +384,10 @@ class _CustomerReceiptView extends StatelessWidget {
                               child: ListView.separated(
                                 padding: const EdgeInsets.all(18),
                                 itemCount: cart.lines.length,
-                                separatorBuilder: (_, _) =>
-                                    Divider(height: 18, color: scheme.outlineVariant),
+                                separatorBuilder: (_, _) => Divider(
+                                  height: 18,
+                                  color: scheme.outlineVariant,
+                                ),
                                 itemBuilder: (context, index) {
                                   final line = cart.lines[index];
                                   return Row(
@@ -618,17 +605,15 @@ class _AmbientSteamBackdropState extends State<_AmbientSteamBackdrop>
                   height: size,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Theme.of(context)
-                        .colorScheme
-                        .secondary
-                        .withValues(alpha: alpha),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.secondary.withValues(alpha: alpha),
                     boxShadow: isDark
                         ? [
                             BoxShadow(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .secondary
-                                  .withValues(alpha: alpha),
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.secondary.withValues(alpha: alpha),
                               blurRadius: 14,
                               spreadRadius: 2,
                             ),

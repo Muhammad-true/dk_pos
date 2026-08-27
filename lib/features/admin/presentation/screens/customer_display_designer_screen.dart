@@ -1,13 +1,12 @@
-import 'package:file_picker/file_picker.dart';
-import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
-
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/features/admin/data/admin_screen_row.dart';
 import 'package:dk_pos/features/admin/data/screens_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/upload_repository.dart';
 import 'package:dk_pos/features/pos/presentation/customer_display_content_config.dart';
 import 'package:dk_pos/features/pos/presentation/widgets/customer_display_idle_renderer.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 class CustomerDisplayDesignerScreen extends StatefulWidget {
   const CustomerDisplayDesignerScreen({
@@ -614,8 +613,9 @@ class _CardEditorTile extends StatelessWidget {
               onChanged: readOnly
                   ? null
                   : (value) {
-                      if (value != null)
+                      if (value != null) {
                         onChanged(card.copyWith(qrMode: value));
+                      }
                     },
               items: const [
                 DropdownMenuItem(
@@ -675,8 +675,9 @@ class _CardEditorTile extends StatelessWidget {
               onChanged: readOnly
                   ? null
                   : (value) {
-                      if (value != null)
+                      if (value != null) {
                         onChanged(card.copyWith(animation: value));
+                      }
                     },
               items: const [
                 DropdownMenuItem(

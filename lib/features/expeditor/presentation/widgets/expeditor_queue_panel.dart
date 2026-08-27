@@ -1,16 +1,16 @@
 import 'dart:async';
 
-import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-
 import 'package:dk_pos/core/config/app_config.dart';
+import 'package:dk_pos/core/utils/order_assembly_items.dart';
 import 'package:dk_pos/features/kitchen_board/presentation/widgets/kitchen_order_number_badge.dart';
 import 'package:dk_pos/features/orders/data/local_orders_realtime.dart';
 import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
 import 'package:dk_pos/features/orders/presentation/pos_queue_layout.dart';
 import 'package:dk_pos/features/orders/presentation/widgets/pos_queue_section_label.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 
 /// Тона как у плиток рабочего места кассы (_WorkspaceActionCard).
 const _kTonePickup = Color(0xFF5B8DEF);
@@ -51,17 +51,16 @@ LocalExpeditorQueueSnapshot _optimisticAfterHandoff({
   required String action,
 }) {
   return LocalExpeditorQueueSnapshot(
-    bundling: snap.bundling.where((o) => o.id != orderId).toList(growable: false),
+    bundling: snap.bundling
+        .where((o) => o.id != orderId)
+        .toList(growable: false),
     pickup: snap.pickup.where((o) => o.id != orderId).toList(growable: false),
   );
 }
 
 /// Очередь сборки/выдачи: одна кнопка на карточке, без дополнительных шагов.
 class ExpeditorQueuePanel extends StatefulWidget {
-  const ExpeditorQueuePanel({
-    super.key,
-    this.embedded = false,
-  });
+  const ExpeditorQueuePanel({super.key, this.embedded = false});
 
   final bool embedded;
 
@@ -70,7 +69,8 @@ class ExpeditorQueuePanel extends StatefulWidget {
 }
 
 class ExpeditorQueuePanelState extends State<ExpeditorQueuePanel> {
-  final _realtime = LocalOrdersRealtime();
+  final _realtime = LocalOrdersRealtime.instance;
+  bool _realtimeAcquired = false;
   StreamSubscription<LocalOrdersRealtimeEvent>? _realtimeSub;
   LocalExpeditorQueueSnapshot _snapshot = const LocalExpeditorQueueSnapshot(
     bundling: [],
@@ -91,38 +91,87 @@ class ExpeditorQueuePanelState extends State<ExpeditorQueuePanel> {
 
   @override
   void dispose() {
+    _reconnectTimer?.cancel();
     _realtimeSub?.cancel();
-    _realtime.dispose();
+    _reloadDebounce?.cancel();
+    if (_realtimeAcquired) {
+      _realtimeAcquired = false;
+      unawaited(_realtime.release());
+    }
     super.dispose();
   }
+
+  void _verifyQueueRevision(Map<String, dynamic> payload) {
+    final rev = payload['queueRevision'] ?? payload['queue_revision'];
+    if (rev is int && rev > 0) {}
+  }
+
+  int _reconnectAttempts = 0;
 
   Future<void> _connectRealtime() async {
     await _realtimeSub?.cancel();
     try {
-      await _realtime.connect(branchId: _branchId, clientType: 'expeditor');
+      if (!_realtimeAcquired) {
+        await _realtime.acquire(branchId: _branchId, clientType: 'expeditor');
+        _realtimeAcquired = true;
+      } else {
+        await _realtime.connect(branchId: _branchId, clientType: 'expeditor');
+      }
       _realtimeSub = _realtime.events.listen((event) async {
         if (!mounted) return;
         final type = event.type;
-        if (type == 'socket.done') {
-          await Future<void>.delayed(const Duration(seconds: 2));
-          if (!mounted) return;
-          await _connectRealtime();
+        if (type == 'hello') {
+          _reconnectAttempts = 0;
+          _verifyQueueRevision(event.payload);
           return;
         }
-        if (type == 'order.created' ||
-            type == 'order.updated' ||
-            type == 'order.status_changed') {
-          await _reload(silent: true);
+        if (type == 'socket.done') {
+          _scheduleRealtimeReconnect();
+          return;
+        }
+        if (type == 'pong') {
+          _verifyQueueRevision(event.payload);
+          return;
+        }
+        // Патчи кассы/кухни / импорт сайта — один coalesced HTTP, не на каждый order.*.
+        if (type == 'cashier.board_changed' ||
+            type == 'kitchen.queue_changed' ||
+            type == 'site_orders.imported') {
+          _verifyQueueRevision(event.payload);
+          _scheduleReload();
         }
       });
     } catch (_) {
-      await Future<void>.delayed(const Duration(seconds: 3));
-      if (mounted) await _connectRealtime();
+      _scheduleRealtimeReconnect();
     }
   }
 
+  Timer? _reconnectTimer;
+
+  void _scheduleRealtimeReconnect() {
+    _reconnectTimer?.cancel();
+    final attempt = _reconnectAttempts < 6 ? _reconnectAttempts : 6;
+    final baseMs = 2500;
+    final delayMs =
+        (baseMs * (1 << attempt)) + (DateTime.now().millisecond % 1500);
+    _reconnectAttempts++;
+
+    _reconnectTimer = Timer(Duration(milliseconds: delayMs), () {
+      if (mounted) unawaited(_connectRealtime());
+    });
+  }
+
+  Timer? _reloadDebounce;
+
   /// Обновить список (кнопка «Обновить» на полном экране сборщика).
   Future<void> reloadFromAppBar() => _reload();
+
+  void _scheduleReload() {
+    _reloadDebounce?.cancel();
+    _reloadDebounce = Timer(const Duration(milliseconds: 2000), () {
+      if (mounted) unawaited(_reload(silent: true));
+    });
+  }
 
   Future<void> _reload({bool silent = false}) async {
     if (!mounted) return;
@@ -133,8 +182,11 @@ class ExpeditorQueuePanelState extends State<ExpeditorQueuePanel> {
       });
     }
     try {
-      final snap = await context.read<LocalOrdersRepository>().fetchExpeditorQueue();
+      final snap = await context
+          .read<LocalOrdersRepository>()
+          .fetchExpeditorQueue();
       if (!mounted) return;
+      if (snap.queueRevision != null) {}
       setState(() {
         _snapshot = snap;
         _loading = false;
@@ -258,7 +310,9 @@ class ExpeditorQueuePanelState extends State<ExpeditorQueuePanel> {
               ),
               SliverPadding(
                 padding: EdgeInsets.fromLTRB(pad, 0, pad, pad),
-                sliver: PosQueueLayout.kitchenGridColumns(context) <= 1
+                sliver:
+                    widget.embedded ||
+                        PosQueueLayout.kitchenGridColumns(context) <= 1
                     ? SliverList.separated(
                         itemCount: handoutQueue.length,
                         separatorBuilder: (_, __) => SizedBox(height: gap),
@@ -278,28 +332,26 @@ class ExpeditorQueuePanelState extends State<ExpeditorQueuePanel> {
                       )
                     : SliverGrid(
                         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount:
-                              PosQueueLayout.kitchenGridColumns(context),
+                          crossAxisCount: PosQueueLayout.kitchenGridColumns(
+                            context,
+                          ),
                           mainAxisSpacing: gap,
                           crossAxisSpacing: gap,
                           childAspectRatio: 0.58,
                         ),
-                        delegate: SliverChildBuilderDelegate(
-                          (context, index) {
-                            final o = handoutQueue[index];
-                            return _ExpeditorOrderCard(
-                              key: ValueKey('handout-${o.id}'),
-                              order: o,
-                              tone: _kTonePickup,
-                              icon: Icons.takeout_dining_rounded,
-                              actionLabel: l10n.expeditorHandOut,
-                              requireAllItemsReadyForAction: true,
-                              busy: _busyOrderId == o.id,
-                              onAction: () => _handoff(o.id, 'hand_out'),
-                            );
-                          },
-                          childCount: handoutQueue.length,
-                        ),
+                        delegate: SliverChildBuilderDelegate((context, index) {
+                          final o = handoutQueue[index];
+                          return _ExpeditorOrderCard(
+                            key: ValueKey('handout-${o.id}'),
+                            order: o,
+                            tone: _kTonePickup,
+                            icon: Icons.takeout_dining_rounded,
+                            actionLabel: l10n.expeditorHandOut,
+                            requireAllItemsReadyForAction: true,
+                            busy: _busyOrderId == o.id,
+                            onAction: () => _handoff(o.id, 'hand_out'),
+                          );
+                        }, childCount: handoutQueue.length),
                       ),
               ),
             ],
@@ -435,13 +487,24 @@ class _ExpeditorOrderCardState extends State<_ExpeditorOrderCard> {
     final scheme = theme.colorScheme;
     final l10n = context.appL10n;
     final isPhone = PosQueueLayout.isPhone(context);
-    const maxItemLines = 14;
-    final items = widget.order.items;
+    const maxItemLines = 8;
+    final allItems = widget.order.items;
+    final items = filterAssemblyRoundItems(
+      allItems,
+      handedOutAtIso: widget.order.handedOutAtIso,
+    );
+    final isFollowUp = shouldShowFollowUpAssemblyLabel(
+      items: allItems,
+      handedOutAtIso: widget.order.handedOutAtIso,
+    );
     final shown = items.take(maxItemLines).toList(growable: false);
     final hidden = items.length - shown.length;
     final readyCount = items.where((it) => it.isAssemblyLineReady).length;
     final allReady = items.isNotEmpty && readyCount == items.length;
     final canRunAction = !widget.requireAllItemsReadyForAction || allReady;
+    final collapseItems = items.length > 4;
+    final showItemsList =
+        items.isNotEmpty && (!collapseItems || _itemsExpanded);
     final progress = items.isEmpty ? 0.0 : readyCount / items.length;
     final progressText = items.isEmpty ? '0/0' : '$readyCount/${items.length}';
     final typeBadge = _expeditorOrderTypeBadge(widget.order);
@@ -490,9 +553,20 @@ class _ExpeditorOrderCardState extends State<_ExpeditorOrderCard> {
                       if (typeBadge != null)
                         Align(
                           alignment: Alignment.centerLeft,
-                          child: _TypeBadge(label: typeBadge, tone: widget.tone),
+                          child: _TypeBadge(
+                            label: typeBadge,
+                            tone: widget.tone,
+                          ),
                         ),
                       if (typeBadge != null) const SizedBox(height: 8),
+                      if (isFollowUp)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: _TypeBadge(
+                            label: 'Дозаказ',
+                            tone: scheme.tertiary,
+                          ),
+                        ),
                       _ReadyProgressRow(
                         allReady: allReady,
                         progressText: progressText,
@@ -507,32 +581,26 @@ class _ExpeditorOrderCardState extends State<_ExpeditorOrderCard> {
               ],
             ),
             SizedBox(height: isPhone ? 12 : 14),
-            if (isPhone) ...[
-              actionButton,
-              if (items.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                _ItemsToggle(
-                  expanded: _itemsExpanded,
-                  itemCount: items.length,
-                  onTap: () => setState(() => _itemsExpanded = !_itemsExpanded),
+            actionButton,
+            if (widget.requireAllItemsReadyForAction && !allReady) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Ждём готовность всех кухонь ($progressText)',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
                 ),
-              ],
-            ] else ...[
-              if (items.isNotEmpty) _buildItemsList(context, shown, hidden, itemSp, gutter),
-              if (widget.requireAllItemsReadyForAction && !allReady) ...[
-                const SizedBox(height: 8),
-                Text(
-                  'Ждём готовность всех кухонь ($progressText)',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-              const SizedBox(height: 14),
-              actionButton,
+              ),
             ],
-            if (isPhone && _itemsExpanded && items.isNotEmpty) ...[
+            if (collapseItems) ...[
+              const SizedBox(height: 10),
+              _ItemsToggle(
+                expanded: _itemsExpanded,
+                itemCount: items.length,
+                onTap: () => setState(() => _itemsExpanded = !_itemsExpanded),
+              ),
+            ],
+            if (showItemsList) ...[
               const SizedBox(height: 10),
               _buildItemsList(context, shown, hidden, itemSp, gutter),
             ],
@@ -562,19 +630,21 @@ class _ExpeditorOrderCardState extends State<_ExpeditorOrderCard> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Padding(
-                  padding: EdgeInsets.only(top: PosQueueLayout.bulletTopPad(context) - 1),
+                  padding: EdgeInsets.only(
+                    top: PosQueueLayout.bulletTopPad(context) - 1,
+                  ),
                   child: Icon(
                     it.isAssemblyLineReady
                         ? Icons.check_circle_rounded
                         : (it.kitchenLineStatus.toLowerCase() == 'accepted'
-                            ? Icons.autorenew_rounded
-                            : Icons.schedule_rounded),
+                              ? Icons.autorenew_rounded
+                              : Icons.schedule_rounded),
                     size: bullet + 9,
                     color: it.isAssemblyLineReady
                         ? Colors.green.shade700
                         : (it.kitchenLineStatus.toLowerCase() == 'accepted'
-                            ? scheme.tertiary
-                            : scheme.primary),
+                              ? scheme.tertiary
+                              : scheme.primary),
                   ),
                 ),
                 SizedBox(width: gutter),
@@ -593,9 +663,10 @@ class _ExpeditorOrderCardState extends State<_ExpeditorOrderCard> {
                           style: TextStyle(
                             color: it.isAssemblyLineReady
                                 ? Colors.green.shade700
-                                : (it.kitchenLineStatus.toLowerCase() == 'accepted'
-                                    ? scheme.tertiary
-                                    : scheme.primary),
+                                : (it.kitchenLineStatus.toLowerCase() ==
+                                          'accepted'
+                                      ? scheme.tertiary
+                                      : scheme.primary),
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -641,7 +712,9 @@ class _TypeBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            label == 'Доставка' ? Icons.delivery_dining_rounded : Icons.shopping_bag_outlined,
+            label == 'Доставка'
+                ? Icons.delivery_dining_rounded
+                : Icons.shopping_bag_outlined,
             size: 15,
             color: tone,
           ),
@@ -649,9 +722,9 @@ class _TypeBadge extends StatelessWidget {
           Text(
             label,
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w800,
-                  color: tone,
-                ),
+              fontWeight: FontWeight.w800,
+              color: tone,
+            ),
           ),
         ],
       ),
@@ -688,7 +761,9 @@ class _ReadyProgressRow extends StatelessWidget {
         Row(
           children: [
             Icon(
-              allReady ? Icons.check_circle_rounded : Icons.hourglass_bottom_rounded,
+              allReady
+                  ? Icons.check_circle_rounded
+                  : Icons.hourglass_bottom_rounded,
               size: PosQueueLayout.metaIcon(context) + (isPhone ? 1 : 0),
               color: allReady ? Colors.green.shade600 : scheme.tertiary,
             ),
@@ -748,7 +823,9 @@ class _ItemsToggle extends StatelessWidget {
           child: Row(
             children: [
               Icon(
-                expanded ? Icons.expand_less_rounded : Icons.expand_more_rounded,
+                expanded
+                    ? Icons.expand_less_rounded
+                    : Icons.expand_more_rounded,
                 color: scheme.onSurfaceVariant,
               ),
               const SizedBox(width: 6),
@@ -801,9 +878,7 @@ class _ExpeditorPrimaryAction extends StatelessWidget {
           disabledBackgroundColor: tone.withValues(alpha: 0.35),
           foregroundColor: Colors.white,
           disabledForegroundColor: Colors.white.withValues(alpha: 0.72),
-          padding: EdgeInsets.symmetric(
-            horizontal: isPhone ? 16 : 20,
-          ),
+          padding: EdgeInsets.symmetric(horizontal: isPhone ? 16 : 20),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),

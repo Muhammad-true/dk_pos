@@ -2,37 +2,6 @@
 cmake_minimum_required(VERSION 3.14)
 project(dk_pos LANGUAGES CXX)
 
-# #region agent log
-set(_DBG_RUN_ID "dk_pos-pre")
-find_program(_DEBUG_NUGET_EXE NAMES nuget)
-if(_DEBUG_NUGET_EXE)
-  set(_DBG_NUGET_FOUND "true")
-  string(REPLACE "\\" "/" _DBG_NUGET_PATH "${_DEBUG_NUGET_EXE}")
-else()
-  set(_DBG_NUGET_FOUND "false")
-  set(_DBG_NUGET_PATH "")
-endif()
-string(FIND "$ENV{PATH}" "Microsoft\\WinGet\\Packages\\Microsoft.NuGet" _DBG_PATH_HAS_WINGET_NUGET)
-if(_DBG_PATH_HAS_WINGET_NUGET GREATER -1)
-  set(_DBG_PATH_HINT "true")
-else()
-  set(_DBG_PATH_HINT "false")
-endif()
-set(_DBG_WINGET_NUGET "C:/Users/Muhammad/AppData/Local/Microsoft/WinGet/Packages/Microsoft.NuGet_Microsoft.Winget.Source_8wekyb3d8bbwe/nuget.exe")
-if(EXISTS "${_DBG_WINGET_NUGET}")
-  set(_DBG_WINGET_NUGET_EXISTS "true")
-else()
-  set(_DBG_WINGET_NUGET_EXISTS "false")
-endif()
-string(TIMESTAMP _DBG_TS UTC)
-file(APPEND "D:/doner_kebab/debug-bafdbf.log"
-  "{\"sessionId\":\"bafdbf\",\"runId\":\"${_DBG_RUN_ID}\",\"hypothesisId\":\"H1\",\"location\":\"dk_pos/windows/CMakeLists.txt\",\"message\":\"nuget program discovery\",\"data\":{\"found\":${_DBG_NUGET_FOUND},\"nugetPath\":\"${_DBG_NUGET_PATH}\"},\"timestamp\":\"${_DBG_TS}\"}\n")
-file(APPEND "D:/doner_kebab/debug-bafdbf.log"
-  "{\"sessionId\":\"bafdbf\",\"runId\":\"${_DBG_RUN_ID}\",\"hypothesisId\":\"H2\",\"location\":\"dk_pos/windows/CMakeLists.txt\",\"message\":\"PATH has winget NuGet hint\",\"data\":{\"pathContainsWingetNuget\":${_DBG_PATH_HINT}},\"timestamp\":\"${_DBG_TS}\"}\n")
-file(APPEND "D:/doner_kebab/debug-bafdbf.log"
-  "{\"sessionId\":\"bafdbf\",\"runId\":\"${_DBG_RUN_ID}\",\"hypothesisId\":\"H3\",\"location\":\"dk_pos/windows/CMakeLists.txt\",\"message\":\"winget NuGet binary exists on disk\",\"data\":{\"wingetNugetExists\":${_DBG_WINGET_NUGET_EXISTS},\"wingetNugetPath\":\"${_DBG_WINGET_NUGET}\"},\"timestamp\":\"${_DBG_TS}\"}\n")
-# #endregion
-
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 set(BINARY_NAME "dk_pos")

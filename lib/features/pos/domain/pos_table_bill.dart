@@ -1,4 +1,6 @@
 import 'package:equatable/equatable.dart';
+import 'package:dk_pos/shared/models/pos_menu_models.dart';
+import 'package:dk_pos/features/orders/data/local_orders_repository.dart';
 
 /// Зона обслуживания (зал / веранда) — номера столов могут совпадать в разных зонах.
 enum PosTableZone {
@@ -13,10 +15,17 @@ extension PosTableZoneLabel on PosTableZone {
       };
 }
 
-/// Ключ для проверки «стол занят» (открытый неоплаченный счёт).
+/// Ключ для проверки «стол занят» (активная сессия / неоплаченный счёт).
 extension PosTableZoneOccupiedKey on PosTableZone {
   String occupiedKey(int tableNumber) => '$name-$tableNumber';
 }
+
+const _activeTableStatuses = {
+  'new',
+  'cooking',
+  'awaiting_expeditor',
+  'ready',
+};
 
 /// Строка счёта (снимок на момент оформления).
 class PosTableBillLine extends Equatable {
@@ -29,6 +38,7 @@ class PosTableBillLine extends Equatable {
     this.unitPrice,
     this.kitchenLineStatus,
     this.kitchenStationId,
+    this.modifiers = const [],
   });
 
   final String name;
@@ -45,6 +55,8 @@ class PosTableBillLine extends Equatable {
 
   /// С сервера: станция кухни; `null` — позиция без очереди кухни (напитки, витрина).
   final int? kitchenStationId;
+
+  final List<PosCartModifier> modifiers;
 
   bool get isKitchenLine =>
       kitchenStationId != null && kitchenStationId! > 0;
@@ -66,6 +78,7 @@ class PosTableBillLine extends Equatable {
         unitPrice,
         kitchenLineStatus,
         kitchenStationId,
+        modifiers,
       ];
 }
 
@@ -92,6 +105,17 @@ class PosTableBill extends Equatable {
     this.isWaiterOrder = false,
     this.isTakeaway = false,
     this.isCashierOrder = false,
+    this.isOnlineOrder = false,
+    this.subtotal = 0,
+    this.discountAmount = 0,
+    this.deliveryCourier,
+    this.deliveryMethod,
+    this.deliveryZone,
+    this.dto,
+    this.handedOutAt,
+    this.tableSessionPhase,
+    this.tableSessionEndsAt,
+    this.tableSessionGraceMinutes,
   });
 
   final String id;
@@ -129,8 +153,78 @@ class PosTableBill extends Equatable {
   final bool isTakeaway;
   final bool isCashierOrder;
 
+  /// Заказ с сайта / Telegram (после «Принять» на кассе).
+  final bool isOnlineOrder;
+
+  /// Сумма позиций до скидки (если с сервера нет — равна [total]).
+  final double subtotal;
+
+  final double discountAmount;
+
+  final String? deliveryCourier;
+  final String? deliveryMethod;
+  final String? deliveryZone;
+  final LocalOpenTableBillDto? dto;
+
+  final DateTime? handedOutAt;
+
+  /// `active` | `handed_out` | null
+  final String? tableSessionPhase;
+
+  final DateTime? tableSessionEndsAt;
+  final int? tableSessionGraceMinutes;
+
+  bool get hasDiscount => discountAmount > 0.009;
+
+  /// Промокод с сервера (если скидка применена через промо).
+  String? get promoCode => dto?.promoCode;
+
+  bool get hasPromoDiscount => hasDiscount;
+
+  double get promoDiscountAmount => discountAmount;
+
+  double get subtotalBeforeDiscount =>
+      subtotal > 0.009 ? subtotal : total + discountAmount;
+
   bool get isHandedOutUnpaid =>
       !isPaid && orderStatus.trim().toLowerCase() == 'done';
+
+  bool get isOnlineBill =>
+      isOnlineOrder || orderTypeLabel.toLowerCase().contains('онлайн');
+
+  bool get hasTableAssignment =>
+      (tableNumber != null && tableZone != null) || tableLabel.trim().isNotEmpty;
+
+  /// Стол занят этим заказом на карте кассы — только неоплаченные.
+  /// Оплаченный заказ сохраняет [tableLabel] для кухни и истории, но стол свободен.
+  bool get occupiesTable {
+    if (isPaid) return false;
+    if (!hasTableAssignment) return false;
+    final st = orderStatus.trim().toLowerCase();
+    if (st == 'cancelled') return false;
+    if (_activeTableStatuses.contains(st)) return true;
+    if (st.isEmpty) {
+      // Локальный счёт сразу после оформления — ещё без статуса с сервера.
+      return true;
+    }
+    final phase = (tableSessionPhase ?? '').trim().toLowerCase();
+    if (phase == 'active') return true;
+    if (st == 'done' || phase == 'handed_out') {
+      final ends = tableSessionEndsAt;
+      if (ends != null) return DateTime.now().isBefore(ends);
+      final ho = handedOutAt;
+      if (ho == null) return false;
+      final grace = tableSessionGraceMinutes ?? 8;
+      return DateTime.now().isBefore(ho.add(Duration(minutes: grace)));
+    }
+    return false;
+  }
+
+  bool get isHandedOutSession {
+    final phase = (tableSessionPhase ?? '').trim().toLowerCase();
+    if (phase == 'handed_out') return true;
+    return orderStatus.trim().toLowerCase() == 'done' && occupiesTable;
+  }
 
   /// Номер для UI: префикс Д-/С- для доставки и самовывоза (как на доске кассы).
   String get displayOrderNumber {
@@ -163,35 +257,67 @@ class PosTableBill extends Equatable {
       }
       return 'Доставка';
     }
-    if (orderTypeLabel == 'На месте') return 'Стол не указан';
+    if (orderTypeLabel == 'На месте') return 'Без стола';
     return orderTypeLabel;
   }
 
   PosTableBill copyWith({
     bool? isPaid,
     String? paymentMethod,
+    int? tableNumber,
+    PosTableZone? tableZone,
+    String? tableLabel,
+    String? orderTypeLabel,
+    String? orderStatus,
+    String? tableSessionPhase,
+    DateTime? handedOutAt,
+    DateTime? tableSessionEndsAt,
+    int? tableSessionGraceMinutes,
+    bool clearTable = false,
   }) {
+    final nextType = orderTypeLabel ?? this.orderTypeLabel;
+    final typeLow = nextType.toLowerCase();
+    final nextDelivery = typeLow.contains('доставк') || typeLow.contains('delivery');
+    final nextTakeaway = typeLow.contains('самовывоз') ||
+        typeLow.contains('с собой') ||
+        typeLow.contains('pickup') ||
+        typeLow.contains('takeaway') ||
+        typeLow.contains('to_go');
     return PosTableBill(
       id: id,
       lines: lines,
       total: total,
-      orderTypeLabel: orderTypeLabel,
+      orderTypeLabel: nextType,
       orderNumber: orderNumber,
-      tableNumber: tableNumber,
-      tableZone: tableZone,
+      tableNumber: clearTable ? null : (tableNumber ?? this.tableNumber),
+      tableZone: clearTable ? null : (tableZone ?? this.tableZone),
       createdAt: createdAt,
       isPaid: isPaid ?? this.isPaid,
       paymentMethod: paymentMethod ?? this.paymentMethod,
-      orderStatus: orderStatus,
-      tableLabel: tableLabel,
+      orderStatus: orderStatus ?? this.orderStatus,
+      tableLabel: clearTable ? '' : (tableLabel ?? this.tableLabel),
       customerPhone: customerPhone,
-      isDelivery: isDelivery,
+      isDelivery: orderTypeLabel != null ? nextDelivery : isDelivery,
       createdByUsername: createdByUsername,
       createdByRole: createdByRole,
       terminalId: terminalId,
       isWaiterOrder: isWaiterOrder,
-      isTakeaway: isTakeaway,
+      isTakeaway: orderTypeLabel != null ? nextTakeaway : isTakeaway,
       isCashierOrder: isCashierOrder,
+      isOnlineOrder: isOnlineOrder,
+      subtotal: subtotal,
+      discountAmount: discountAmount,
+      deliveryCourier: deliveryCourier,
+      deliveryMethod: deliveryMethod,
+      deliveryZone: deliveryZone,
+      dto: dto,
+      handedOutAt: handedOutAt ?? this.handedOutAt,
+      tableSessionPhase:
+          clearTable ? null : (tableSessionPhase ?? this.tableSessionPhase),
+      tableSessionEndsAt:
+          clearTable ? null : (tableSessionEndsAt ?? this.tableSessionEndsAt),
+      tableSessionGraceMinutes:
+          tableSessionGraceMinutes ?? this.tableSessionGraceMinutes,
     );
   }
 
@@ -217,5 +343,15 @@ class PosTableBill extends Equatable {
         isWaiterOrder,
         isTakeaway,
         isCashierOrder,
+        isOnlineOrder,
+        subtotal,
+        discountAmount,
+        deliveryCourier,
+        deliveryMethod,
+        deliveryZone,
+        handedOutAt,
+        tableSessionPhase,
+        tableSessionEndsAt,
+        tableSessionGraceMinutes,
       ];
 }

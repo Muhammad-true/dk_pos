@@ -32,6 +32,7 @@ migrate_working_dir/
 .pub/
 /build/
 /coverage/
+/android/build/
 
 # Environment and local secrets
 .env
@@ -60,3 +61,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Android heap dumps (never commit)
+*.hprof
+android/*.hprof

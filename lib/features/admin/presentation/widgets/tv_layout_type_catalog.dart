@@ -9,7 +9,16 @@ const _kTv2PageTypes = [
   'carousel',
   'list',
   'product_grid',
+  'four_showcase',
+  'editorial_showcase',
+  'two_product_equal',
+  'two_product_diagonal',
+  'pizza_show',
+  'pizza_grid',
   'video_bg',
+  'media_only',
+  'menu_ribbon',
+  'queue',
 ];
 
 const _kScreenTypes = [
@@ -65,11 +74,79 @@ List<TvLayoutTypeOption> tv2PageTypeOptions(AppLocalizations l10n) {
       accentColor: Colors.orange.shade800,
     ),
     TvLayoutTypeOption(
+      id: 'four_showcase',
+      title: 'Витрина 4 товара',
+      description:
+          'Четыре PNG-товара; лишние позиции плавно сменяют друг друга.',
+      icon: Icons.view_week_rounded,
+      accentColor: const Color(0xFFE4002B),
+    ),
+    TvLayoutTypeOption(
+      id: 'editorial_showcase',
+      title: 'Красная витрина',
+      description:
+          'Большой товар и пять акцентных позиций; лишние товары плавно сменяются.',
+      icon: Icons.auto_awesome_mosaic_rounded,
+      accentColor: const Color(0xFFE4002B),
+    ),
+    TvLayoutTypeOption(
+      id: 'two_product_equal',
+      title: 'Два товара — поровну',
+      description:
+          'Два крупных товара: отдельные фон, текст и цена слева и справа.',
+      icon: Icons.compare_rounded,
+      accentColor: const Color(0xFFE4002B),
+    ),
+    TvLayoutTypeOption(
+      id: 'two_product_diagonal',
+      title: 'Два товара — акция',
+      description:
+          'Два товара на диагональном красном фоне с плавным появлением.',
+      icon: Icons.change_history_rounded,
+      accentColor: const Color(0xFFE4002B),
+    ),
+    TvLayoutTypeOption(
+      id: 'pizza_show',
+      title: 'Пицца — шоу',
+      description:
+          'Крупная пицца: въезд слева, увеличение, цены 25/30/35 внизу.',
+      icon: Icons.local_pizza_rounded,
+      accentColor: const Color(0xFFE4002B),
+    ),
+    TvLayoutTypeOption(
+      id: 'pizza_grid',
+      title: 'Пицца — витрина',
+      description: 'Сетка 4–6 пицц с размерами и ценами для быстрого обзора.',
+      icon: Icons.grid_on_rounded,
+      accentColor: Colors.deepOrange.shade800,
+    ),
+    TvLayoutTypeOption(
       id: 'video_bg',
       title: l10n.adminTv2PageTypeVideoBg,
       description: l10n.adminTv2PageTypeVideoBgDesc,
       icon: Icons.movie_rounded,
       accentColor: Colors.indigo.shade700,
+    ),
+    TvLayoutTypeOption(
+      id: 'media_only',
+      title: 'Только видео/фото',
+      description: 'Фон на весь экран без надписей и карточки товара.',
+      icon: Icons.wallpaper_rounded,
+      accentColor: Colors.blueGrey.shade700,
+    ),
+    TvLayoutTypeOption(
+      id: 'menu_ribbon',
+      title: 'Лента меню',
+      description: 'Горизонтальные карточки с анимацией появления.',
+      icon: Icons.view_carousel_outlined,
+      accentColor: Colors.deepOrange.shade700,
+    ),
+    TvLayoutTypeOption(
+      id: 'queue',
+      title: 'Очередь заказов',
+      description: 'Экран «Готовится / Готово» в ротации с меню и видео.',
+      icon: Icons.receipt_long_rounded,
+      accentColor: Colors.green.shade700,
     ),
   ];
 }

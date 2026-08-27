@@ -89,13 +89,16 @@ class LocalHardwareRepository {
   Future<HardwareReceiptResult> printReceipt({
     required String orderId,
     required double totalAmount,
-    required String paymentMethod,
+    String? paymentMethod,
     String? receiptTitle,
     String? customerName,
     String? customerPhone,
     String? deliveryAddress,
     String? deliveryNote,
     bool? isDeliveryOrder,
+    bool isUnpaidBill = false,
+    String? promoCode,
+    double? promoDiscountAmount,
     String? branchId,
     String? terminalId,
   }) async {
@@ -103,19 +106,24 @@ class LocalHardwareRepository {
       'orderId': orderId,
       'branchId': branchId ?? _defaultBranchId,
       'terminalId': terminalId ?? _defaultTerminalId,
-      'paymentMethod': paymentMethod,
       'totalAmount': totalAmount,
     };
     void putIfNotEmpty(String key, String? value) {
       final v = value?.trim();
       if (v != null && v.isNotEmpty) body[key] = v;
     }
+    putIfNotEmpty('paymentMethod', paymentMethod);
     putIfNotEmpty('receiptTitle', receiptTitle);
     putIfNotEmpty('customerName', customerName);
     putIfNotEmpty('customerPhone', customerPhone);
     putIfNotEmpty('deliveryAddress', deliveryAddress);
     putIfNotEmpty('deliveryNote', deliveryNote);
+    putIfNotEmpty('promoCode', promoCode);
     if (isDeliveryOrder == true) body['isDeliveryOrder'] = true;
+    if (isUnpaidBill) body['isUnpaidBill'] = true;
+    if (promoDiscountAmount != null && promoDiscountAmount > 0) {
+      body['promoDiscountAmount'] = promoDiscountAmount;
+    }
 
     final res = await _http.post(
       'api/local/hardware/receipts/print',

@@ -1,13 +1,17 @@
+import 'dart:math' as math;
+
 import 'package:dk_pos/core/error/api_exception.dart';
 
 /// Повторяет запрос при кратковременных сбоях сети (пик заказов, Wi‑Fi).
+/// Экспоненциальный backoff + jitter — клиенты на одном роутере не бьют сервер синхронно.
 Future<T> withNetworkRetry<T>(
   Future<T> Function() action, {
   int attempts = 3,
-  Duration initialDelay = const Duration(milliseconds: 350),
+  Duration initialDelay = const Duration(milliseconds: 400),
 }) async {
   Object? last;
   StackTrace? lastStack;
+  final rnd = math.Random();
   for (var attempt = 0; attempt < attempts; attempt++) {
     try {
       return await action();
@@ -18,7 +22,10 @@ Future<T> withNetworkRetry<T>(
       if (isLast || !isRetryableNetworkError(e)) {
         Error.throwWithStackTrace(e, st);
       }
-      await Future<void>.delayed(initialDelay * (attempt + 1));
+      final expMs = initialDelay.inMilliseconds * (1 << attempt);
+      final jitterMs = rnd.nextInt(250);
+      final cappedMs = math.min(expMs + jitterMs, 8000);
+      await Future<void>.delayed(Duration(milliseconds: cappedMs));
     }
   }
   Error.throwWithStackTrace(last!, lastStack ?? StackTrace.empty);
@@ -26,7 +33,10 @@ Future<T> withNetworkRetry<T>(
 
 bool isRetryableNetworkError(Object error) {
   if (error is ApiException) {
+    // Конфликт состояния — повтор только усугубит (двойной kitchen-progress).
+    if (error.statusCode == 409) return false;
     if (error.statusCode == 401 || error.statusCode == 403) return false;
+    if (error.statusCode == 400 || error.statusCode == 404) return false;
     if (error.statusCode == 0) return true;
     if (error.statusCode >= 500) return true;
     final msg = error.message.toLowerCase();

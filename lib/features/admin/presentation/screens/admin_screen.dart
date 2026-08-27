@@ -2,54 +2,55 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:auto_route/auto_route.dart';
+import 'package:dk_pos/app/app_update_info.dart';
 import 'package:dk_pos/app/locale/locale_bloc.dart';
 import 'package:dk_pos/app/locale/locale_event.dart';
 import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
 import 'package:dk_pos/core/config/app_config.dart';
-import 'package:dk_pos/core/network/http_client.dart';
-import 'package:dk_pos/app/app_update_info.dart';
-import 'package:dk_pos/features/update/pos_update_merged_check.dart';
-import 'package:dk_pos/features/update/silent_update_dialog.dart';
-import 'package:dk_pos/features/update/update_download_launcher.dart';
-import 'package:flutter/foundation.dart'
-    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:dk_pos/core/constants/phone_defaults.dart';
 import 'package:dk_pos/core/input/tj_phone_dial_locked_formatter.dart';
 import 'package:dk_pos/core/layout/window_layout.dart';
+import 'package:dk_pos/core/network/http_client.dart';
 import 'package:dk_pos/features/admin/bloc/catalog_admin_bloc.dart';
 import 'package:dk_pos/features/admin/bloc/catalog_admin_event.dart';
 import 'package:dk_pos/features/admin/bloc/menu_items_admin_bloc.dart';
 import 'package:dk_pos/features/admin/bloc/menu_items_admin_event.dart';
 import 'package:dk_pos/features/admin/bloc/users_admin_bloc.dart';
 import 'package:dk_pos/features/admin/bloc/users_admin_event.dart';
+import 'package:dk_pos/features/admin/data/admin_reports_repository.dart';
 import 'package:dk_pos/features/admin/data/app_version_row.dart';
 import 'package:dk_pos/features/admin/data/app_versions_repository.dart';
-import 'package:dk_pos/features/admin/data/admin_reports_repository.dart';
 import 'package:dk_pos/features/admin/data/catalog_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/local_audio_settings_repository.dart';
-import 'package:dk_pos/features/admin/presentation/widgets/admin_auto_handout_section.dart';
 import 'package:dk_pos/features/admin/data/local_receipt_settings_repository.dart';
-import 'package:dk_pos/features/hardware/data/local_hardware_repository.dart';
 import 'package:dk_pos/features/admin/data/menu_items_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/upload_repository.dart';
 import 'package:dk_pos/features/admin/data/users_admin_repository.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_auto_handout_section.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_catalog_hub.dart';
-import 'package:dk_pos/features/admin/presentation/widgets/admin_kitchen_sound_guide.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_kitchen_ops_panel.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_kitchen_sound_guide.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_loyalty_panel.dart';
-import 'package:dk_pos/features/admin/presentation/widgets/admin_payment_methods_panel.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_orders_hub.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_payment_methods_panel.dart';
+import 'package:dk_pos/features/admin/presentation/widgets/admin_pos_settings_section.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_section_card.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_users_panel.dart';
-import 'package:dk_pos/features/inventory/presentation/admin_inventory_receive_screen.dart';
 import 'package:dk_pos/features/auth/bloc/auth_bloc.dart';
 import 'package:dk_pos/features/auth/bloc/auth_event.dart';
+import 'package:dk_pos/features/hardware/data/local_hardware_repository.dart';
+import 'package:dk_pos/features/inventory/presentation/admin_inventory_receive_screen.dart';
 import 'package:dk_pos/features/shifts/presentation/shift_close_guard.dart';
+import 'package:dk_pos/features/update/pos_update_merged_check.dart';
+import 'package:dk_pos/features/update/silent_update_dialog.dart';
+import 'package:dk_pos/features/update/update_download_launcher.dart';
 import 'package:dk_pos/l10n/app_localizations.dart';
 import 'package:dk_pos/l10n/context_l10n.dart';
 import 'package:dk_pos/shared/shared.dart';
 import 'package:dk_pos/theme/theme.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart'
+    show TargetPlatform, defaultTargetPlatform, kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -578,8 +579,8 @@ class _AdminNavigationRail extends StatelessWidget {
                   Text(
                     l10n.adminTitle,
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ],
               ),
@@ -884,7 +885,9 @@ class _AdminNavDrawer extends StatelessWidget {
                     iconFilled: Icons.schedule_rounded,
                     label: 'Смены и кухня',
                     hint: 'Смены пользователей и эффективность кухни',
-                    badgeCount: syncIncidentCount > 0 ? syncIncidentCount : null,
+                    badgeCount: syncIncidentCount > 0
+                        ? syncIncidentCount
+                        : null,
                   ),
                   navDestination(
                     i: 5,
@@ -1027,8 +1030,9 @@ class _AdminTabBody extends StatelessWidget {
         constraints: BoxConstraints(maxWidth: maxBodyWidth),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final cols = WindowLayout(width: constraints.maxWidth)
-                .hubGridColumns(minCellWidth: 320);
+            final cols = WindowLayout(
+              width: constraints.maxWidth,
+            ).hubGridColumns(minCellWidth: 320);
             final overviewCards = <Widget>[
               AdminSectionCard(
                 icon: Icons.insights_rounded,
@@ -1047,7 +1051,8 @@ class _AdminTabBody extends StatelessWidget {
                   children: [
                     for (var i = 0; i < overviewCards.length; i++) ...[
                       overviewCards[i],
-                      if (i != overviewCards.length - 1) const SizedBox(height: 12),
+                      if (i != overviewCards.length - 1)
+                        const SizedBox(height: 12),
                     ],
                   ],
                 ),
@@ -1087,14 +1092,18 @@ class _AdminInventoryReceiveCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.local_shipping_outlined, color: scheme.tertiary, size: 28),
+                Icon(
+                  Icons.local_shipping_outlined,
+                  color: scheme.tertiary,
+                  size: 28,
+                ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
                     'Приём со склада',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
@@ -1103,9 +1112,9 @@ class _AdminInventoryReceiveCard extends StatelessWidget {
             Text(
               'Подтвердите накладные, отправленные из центральной админки на эту точку.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                    height: 1.35,
-                  ),
+                color: scheme.onSurfaceVariant,
+                height: 1.35,
+              ),
             ),
             const SizedBox(height: 14),
             FilledButton.tonalIcon(
@@ -1491,8 +1500,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
       if (!mounted) return;
 
       if (merged == null) {
-        final globalOff =
-            (AppConfig.globalReleasesBaseUrl ?? '').trim().isEmpty;
+        final globalOff = (AppConfig.globalReleasesBaseUrl ?? '')
+            .trim()
+            .isEmpty;
         await showDialog<void>(
           context: context,
           builder: (ctx) => AlertDialog(
@@ -1647,7 +1657,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
     final key = row.appKey.trim().toLowerCase();
     if (key == 'pos_android' || key == 'pos') {
       if (kIsWeb) return false;
-      if (key == 'pos_android') return defaultTargetPlatform == TargetPlatform.android;
+      if (key == 'pos_android') {
+        return defaultTargetPlatform == TargetPlatform.android;
+      }
       if (key == 'pos') {
         return defaultTargetPlatform == TargetPlatform.windows;
       }
@@ -1662,8 +1674,13 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
     setState(() => _silentUpdateAllBusy = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final versions = await context.read<AppVersionsRepository>().fetchVersions();
-      final pending = versions.where(_versionRowHasPendingUpdate).where(_canSilentInstallRow).toList();
+      final versions = await context
+          .read<AppVersionsRepository>()
+          .fetchVersions();
+      final pending = versions
+          .where(_versionRowHasPendingUpdate)
+          .where(_canSilentInstallRow)
+          .toList();
       pending.sort((a, b) {
         int rank(String k) {
           if (k == 'server') return 0;
@@ -1671,6 +1688,7 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
           if (k == 'pos_android') return 2;
           return 9;
         }
+
         return rank(a.appKey).compareTo(rank(b.appKey));
       });
       if (pending.isEmpty) {
@@ -1723,8 +1741,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
     setState(() => _syncFromGlobalBusy = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final data =
-          await context.read<AppVersionsRepository>().syncVersionsFromGlobal();
+      final data = await context
+          .read<AppVersionsRepository>()
+          .syncVersionsFromGlobal();
       await _reload();
       if (!mounted) return;
       final results = data['results'];
@@ -1734,7 +1753,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
           if (r is Map) {
             final key = r['appKey']?.toString() ?? '?';
             if (r['synced'] == true) {
-              lines.add('$key: целевая версия и ссылка записаны в локальную БД');
+              lines.add(
+                '$key: целевая версия и ссылка записаны в локальную БД',
+              );
             } else {
               lines.add('$key: ${r['reason'] ?? "—"}');
             }
@@ -1769,9 +1790,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
   Future<void> _loadAudioSettings() async {
     setState(() => _audioLoading = true);
     try {
-      final settings = await context
-          .read<LocalAudioSettingsRepository>()
-          .fetch(forceRefresh: true);
+      final settings = await context.read<LocalAudioSettingsRepository>().fetch(
+        forceRefresh: true,
+      );
       if (!mounted) return;
       _readySoundCtrl.text = settings.readySoundPath ?? '';
       _kitchenSoundCtrl.text = settings.kitchenSoundPath ?? '';
@@ -1882,7 +1903,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
       _receiptCompanyNameCtrl.text = settings.companyName ?? '';
       _receiptCompanyAddressCtrl.text = settings.companyAddress ?? '';
       final cp = (settings.companyPhone ?? '').trim();
-      _receiptCompanyPhoneCtrl.text = TjPhoneDialLockedFormatter.ensureStored(cp);
+      _receiptCompanyPhoneCtrl.text = TjPhoneDialLockedFormatter.ensureStored(
+        cp,
+      );
       _receiptCompanyInnCtrl.text = settings.companyInn ?? '';
       _receiptFiscalKkmCtrl.text = settings.fiscalKkm ?? '';
       _receiptFiscalRnmCtrl.text = settings.fiscalRnm ?? '';
@@ -1963,7 +1986,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
             : _receiptCompanyAddressCtrl.text.trim(),
         companyPhone: _receiptCompanyPhoneCtrl.text.trim().isEmpty
             ? null
-            : TjPhoneDialLockedFormatter.ensureStored(_receiptCompanyPhoneCtrl.text),
+            : TjPhoneDialLockedFormatter.ensureStored(
+                _receiptCompanyPhoneCtrl.text,
+              ),
         companyInn: _receiptCompanyInnCtrl.text.trim().isEmpty
             ? null
             : _receiptCompanyInnCtrl.text.trim(),
@@ -2044,7 +2069,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
     setState(() => _loadingPrinters = true);
     final messenger = ScaffoldMessenger.of(context);
     try {
-      final list = await context.read<LocalHardwareRepository>().fetchAvailablePrinters();
+      final list = await context
+          .read<LocalHardwareRepository>()
+          .fetchAvailablePrinters();
       if (!mounted) return;
       setState(() {
         _availablePrinters = list;
@@ -2405,7 +2432,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
               runSpacing: 8,
               children: [
                 OutlinedButton.icon(
-                  onPressed: _syncFromGlobalBusy ? null : _syncVersionsFromGlobal,
+                  onPressed: _syncFromGlobalBusy
+                      ? null
+                      : _syncVersionsFromGlobal,
                   icon: _syncFromGlobalBusy
                       ? SizedBox(
                           width: 18,
@@ -2441,7 +2470,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                   ),
                 ),
                 OutlinedButton.icon(
-                  onPressed: _posUpdateCheckBusy ? null : _checkPosUpdatesManually,
+                  onPressed: _posUpdateCheckBusy
+                      ? null
+                      : _checkPosUpdatesManually,
                   icon: _posUpdateCheckBusy
                       ? SizedBox(
                           width: 18,
@@ -2530,12 +2561,16 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                   children: [
                     Text(
                       '1. Кухня — новый заказ',
-                      style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Text(
                       'Планшет кухни, колонка «Готовят». Сначала звук (встроенный или ваш файл), затем TTS — если включён.',
-                      style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                      style: textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     TextField(
@@ -2559,7 +2594,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                     const SizedBox(height: 10),
                     Text(
                       'Озвучка TTS на кухне',
-                      style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                     const SizedBox(height: 8),
                     SwitchListTile(
@@ -2567,7 +2604,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                       onChanged: (_audioLoading || _audioSaving)
                           ? null
                           : (v) => setState(() => _kitchenTtsEnabled = v),
-                      title: const Text('Озвучить номер заказа (TTS после сигнала)'),
+                      title: const Text(
+                        'Озвучить номер заказа (TTS после сигнала)',
+                      ),
                       contentPadding: EdgeInsets.zero,
                     ),
                     const SizedBox(height: 8),
@@ -2602,12 +2641,16 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                     const SizedBox(height: 10),
                     Text(
                       '2. Касса — готов к выдаче',
-                      style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Text(
                       'Когда в очереди экспедитора растёт список «К выдаче» (заказ готов отдать гостю).',
-                      style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                      style: textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     TextField(
@@ -2631,19 +2674,24 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                     const SizedBox(height: 10),
                     Text(
                       '3. Касса — новый онлайн-заказ (сайт)',
-                      style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Text(
                       'Когда во «Входящих» появляется новый заказ с order_source=website.',
-                      style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                      style: textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                     const SizedBox(height: 10),
                     TextField(
                       controller: _websiteOrderSoundCtrl,
                       enabled: !_audioLoading,
                       decoration: const InputDecoration(
-                        labelText: 'Путь звука онлайн-заказа (uploads/audio/...)',
+                        labelText:
+                            'Путь звука онлайн-заказа (uploads/audio/...)',
                         border: OutlineInputBorder(),
                       ),
                     ),
@@ -2660,13 +2708,17 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                     const SizedBox(height: 10),
                     Text(
                       '4. Телевизор (клиентский экран)',
-                      style: textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+                      style: textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                     const SizedBox(height: 6),
                     Text(
                       'Громкость на ТВ2/ТВ3/ТВ4: сигнал «готово», озвучка номера заказа и видео на слайдах. '
                       'Файл «готово» — тот же, что в блоке 2 выше.',
-                      style: textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                      style: textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     _TvVolumeSlider(
@@ -2689,7 +2741,8 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                     ),
                     const SizedBox(height: 18),
                     FilledButton.icon(
-                      onPressed: (_audioLoading || _audioUploading || _audioSaving)
+                      onPressed:
+                          (_audioLoading || _audioUploading || _audioSaving)
                           ? null
                           : _saveAudioSettings,
                       icon: _audioSaving
@@ -2707,6 +2760,15 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
             ),
           ],
           if (_settingsSection == _AdminSettingsSection.orders) ...[
+            const SizedBox(height: 28),
+            Text(
+              'Настройки кассы',
+              style: textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 12),
+            const AdminPosSettingsSection(),
             const SizedBox(height: 28),
             Text(
               'Автовыдача',
@@ -2849,14 +2911,19 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                       runSpacing: 8,
                       children: [
                         OutlinedButton.icon(
-                          onPressed: (_receiptLoading || _receiptSaving || _loadingPrinters)
+                          onPressed:
+                              (_receiptLoading ||
+                                  _receiptSaving ||
+                                  _loadingPrinters)
                               ? null
                               : _detectWindowsPrinters,
                           icon: _loadingPrinters
                               ? const SizedBox(
                                   width: 16,
                                   height: 16,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 )
                               : const Icon(Icons.print_rounded),
                           label: Text(
@@ -2910,8 +2977,10 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                     if (_availablePrinters.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        initialValue: _availablePrinters.any(
-                              (p) => p.name == _receiptPrinterNameCtrl.text.trim(),
+                        initialValue:
+                            _availablePrinters.any(
+                              (p) =>
+                                  p.name == _receiptPrinterNameCtrl.text.trim(),
                             )
                             ? _receiptPrinterNameCtrl.text.trim()
                             : null,
@@ -2935,13 +3004,18 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                             ? null
                             : (v) {
                                 if (v == null) return;
-                                setState(() => _receiptPrinterNameCtrl.text = v);
+                                setState(
+                                  () => _receiptPrinterNameCtrl.text = v,
+                                );
                               },
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        initialValue: _availablePrinters.any(
-                              (p) => p.name == _cashDrawerPrinterNameCtrl.text.trim(),
+                        initialValue:
+                            _availablePrinters.any(
+                              (p) =>
+                                  p.name ==
+                                  _cashDrawerPrinterNameCtrl.text.trim(),
                             )
                             ? _cashDrawerPrinterNameCtrl.text.trim()
                             : null,
@@ -2965,15 +3039,23 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                             ? null
                             : (v) {
                                 if (v == null) return;
-                                setState(() => _cashDrawerPrinterNameCtrl.text = v);
+                                setState(
+                                  () => _cashDrawerPrinterNameCtrl.text = v,
+                                );
                               },
                       ),
                     ],
                     const SizedBox(height: 8),
                     SegmentedButton<String>(
                       segments: const [
-                        ButtonSegment<String>(value: 'gdi', label: Text('Режим GDI')),
-                        ButtonSegment<String>(value: 'raw', label: Text('Режим RAW')),
+                        ButtonSegment<String>(
+                          value: 'gdi',
+                          label: Text('Режим GDI'),
+                        ),
+                        ButtonSegment<String>(
+                          value: 'raw',
+                          label: Text('Режим RAW'),
+                        ),
                       ],
                       selected: <String>{_receiptWindowsMode},
                       onSelectionChanged: (_receiptLoading || _receiptSaving)
@@ -3211,7 +3293,9 @@ class _AdminSettingsPanelState extends State<_AdminSettingsPanel> {
                                   controller: _receiptCompanyPhoneCtrl,
                                   enabled: !_receiptLoading,
                                   keyboardType: TextInputType.phone,
-                                  inputFormatters: const [TjPhoneDialLockedFormatter()],
+                                  inputFormatters: const [
+                                    TjPhoneDialLockedFormatter(),
+                                  ],
                                   decoration: InputDecoration(
                                     labelText: 'Телефон',
                                     hintText: '$kDefaultPhoneDialPrefix…',
@@ -3588,7 +3672,8 @@ class _VersionCardEditorState extends State<_VersionCardEditor> {
   Future<void> _silentInstall(String downloadUrl) async {
     final messenger = ScaffoldMessenger.of(context);
     final key = widget.item.appKey.trim().toLowerCase();
-    if (key == 'pos_android' && defaultTargetPlatform != TargetPlatform.android) {
+    if (key == 'pos_android' &&
+        defaultTargetPlatform != TargetPlatform.android) {
       messenger.showSnackBar(
         const SnackBar(
           content: Text(
@@ -3601,7 +3686,9 @@ class _VersionCardEditorState extends State<_VersionCardEditor> {
     if (key == 'server' && defaultTargetPlatform != TargetPlatform.windows) {
       messenger.showSnackBar(
         const SnackBar(
-          content: Text('Backend обновляется с Windows-кассы, где установлен сервер.'),
+          content: Text(
+            'Backend обновляется с Windows-кассы, где установлен сервер.',
+          ),
         ),
       );
       return;
@@ -3751,7 +3838,9 @@ class _VersionCardEditorState extends State<_VersionCardEditor> {
                     if (hasUrl) ...[
                       const SizedBox(width: 8),
                       FilledButton.icon(
-                        onPressed: _saving ? null : () => _silentInstall(urlVal.text.trim()),
+                        onPressed: _saving
+                            ? null
+                            : () => _silentInstall(urlVal.text.trim()),
                         icon: const Icon(Icons.install_desktop_rounded),
                         label: const Text('Тихо установить'),
                       ),
@@ -3767,7 +3856,9 @@ class _VersionCardEditorState extends State<_VersionCardEditor> {
                                 if (!ok) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
-                                      content: Text('Не удалось открыть ссылку'),
+                                      content: Text(
+                                        'Не удалось открыть ссылку',
+                                      ),
                                     ),
                                   );
                                 } else {

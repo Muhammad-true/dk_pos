@@ -16,6 +16,17 @@ import 'package:dk_pos/features/pos/presentation/widgets/pos_product_image.dart'
 import 'package:dk_pos/shared/shared.dart';
 import 'package:dk_pos/theme/pos_workspace_theme.dart';
 
+String _customerDisplayPrice(String raw, double fallback) {
+  final normalized = raw.trim().replaceAll(',', '.');
+  final match = RegExp(r'-?\d+(?:\.\d+)?').firstMatch(normalized);
+  final value = match == null ? fallback : double.tryParse(match.group(0)!);
+  final amount = value ?? fallback;
+  final label = amount == amount.roundToDouble()
+      ? amount.toStringAsFixed(0)
+      : amount.toStringAsFixed(2).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  return '$label с.';
+}
+
 /// Каталог + корзина для экрана клиента (только просмотр, без кнопок).
 class CustomerDisplayMenuView extends StatefulWidget {
   const CustomerDisplayMenuView({
@@ -204,6 +215,7 @@ class _CustomerDisplayMenuViewState extends State<CustomerDisplayMenuView> {
                       child: _CategorySidebar(
                         categories: widget.menu.rootCategories,
                         pathIds: widget.menu.pathIds,
+                        scrollProgress: widget.menu.categoryScrollProgress,
                         onSelectRoot: (id) => _sendPosAction(
                           CustomerDisplayPosAction.setMenuPath,
                           pathIds: [id],
@@ -333,6 +345,9 @@ class _CustomerDisplayMenuViewState extends State<CustomerDisplayMenuView> {
                             child: _ProductGrid(
                               products: widget.menu.products,
                               scrollOffset: widget.menu.catalogScrollOffset,
+                              scrollProgress:
+                                  widget.menu.catalogScrollProgress,
+                              scrollIndex: widget.menu.catalogScrollIndex,
                               onAddProduct: (id) => _sendPosAction(
                                 CustomerDisplayPosAction.addItem,
                                 productId: id,
@@ -379,16 +394,55 @@ class _MenuWelcomePane extends StatelessWidget {
   }
 }
 
-class _CategorySidebar extends StatelessWidget {
+class _CategorySidebar extends StatefulWidget {
   const _CategorySidebar({
     required this.categories,
     required this.pathIds,
+    required this.scrollProgress,
     required this.onSelectRoot,
   });
 
   final List<CustomerDisplayMenuCategoryData> categories;
   final List<int> pathIds;
+  final double scrollProgress;
   final ValueChanged<int> onSelectRoot;
+
+  @override
+  State<_CategorySidebar> createState() => _CategorySidebarState();
+}
+
+class _CategorySidebarState extends State<_CategorySidebar> {
+  final ScrollController _scrollController = ScrollController();
+  double _lastAppliedProgress = -1;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _applyScrollSync());
+  }
+
+  @override
+  void didUpdateWidget(_CategorySidebar oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if ((widget.scrollProgress - oldWidget.scrollProgress).abs() >= 0.006) {
+      _applyScrollSync();
+    }
+  }
+
+  void _applyScrollSync() {
+    if (!mounted || !_scrollController.hasClients) return;
+    final max = _scrollController.position.maxScrollExtent;
+    final target = widget.scrollProgress.clamp(0.0, 1.0) * max;
+    if ((target - _lastAppliedProgress).abs() < 3) return;
+    _lastAppliedProgress = target;
+    _scrollController.jumpTo(target);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -401,7 +455,7 @@ class _CategorySidebar extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: customerDisplayGlassBorder(theme)),
       ),
-      child: categories.isEmpty
+      child: widget.categories.isEmpty
           ? Center(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -416,19 +470,20 @@ class _CategorySidebar extends StatelessWidget {
               ),
             )
           : ListView.separated(
+              controller: _scrollController,
               padding: const EdgeInsets.all(10),
-              itemCount: categories.length,
+              itemCount: widget.categories.length,
               separatorBuilder: (_, __) => const SizedBox(height: 8),
               itemBuilder: (context, index) {
-                final cat = categories[index];
+                final cat = widget.categories[index];
                 final active =
-                    pathIds.isNotEmpty && pathIds.first == cat.id;
+                    widget.pathIds.isNotEmpty && widget.pathIds.first == cat.id;
                 final cardColors = posCategoryCardColors(index);
                 return Material(
                   color: Colors.transparent,
                   child: InkWell(
                     borderRadius: BorderRadius.circular(16),
-                    onTap: () => onSelectRoot(cat.id),
+                    onTap: () => widget.onSelectRoot(cat.id),
                     child: Ink(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
@@ -519,11 +574,15 @@ class _ProductGrid extends StatefulWidget {
   const _ProductGrid({
     required this.products,
     required this.scrollOffset,
+    required this.scrollProgress,
+    required this.scrollIndex,
     required this.onAddProduct,
   });
 
   final List<CustomerDisplayMenuProductData> products;
   final double scrollOffset;
+  final double scrollProgress;
+  final int scrollIndex;
   final ValueChanged<String> onAddProduct;
 
   @override
@@ -534,6 +593,10 @@ class _ProductGridState extends State<_ProductGrid> {
   final ScrollController _scrollController = ScrollController();
   double _lastAppliedScroll = -1;
   List<String> _lastProductIds = const [];
+  int _layoutColumns = 2;
+  double _layoutWidth = 0;
+  double _layoutAspect = 0.82;
+  static const double _layoutSpacing = 10;
 
   @override
   void initState() {
@@ -542,7 +605,7 @@ class _ProductGridState extends State<_ProductGrid> {
     _prefetchProductImages();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      _applyScrollOffset(widget.scrollOffset);
+      _applyScrollSync();
     });
   }
 
@@ -556,12 +619,19 @@ class _ProductGridState extends State<_ProductGrid> {
   void didUpdateWidget(_ProductGrid oldWidget) {
     super.didUpdateWidget(oldWidget);
     final ids = widget.products.map((e) => e.id).toList(growable: false);
-    if (ids.join(',') != _lastProductIds.join(',')) {
+    final productsChanged = ids.join(',') != _lastProductIds.join(',');
+    if (productsChanged) {
       _lastProductIds = ids;
       _lastAppliedScroll = -1;
       _prefetchProductImages();
     }
-    _applyScrollOffset(widget.scrollOffset);
+    final scrollChanged =
+        (widget.scrollProgress - oldWidget.scrollProgress).abs() >= 0.004 ||
+        widget.scrollIndex != oldWidget.scrollIndex ||
+        (widget.scrollOffset - oldWidget.scrollOffset).abs() >= 4;
+    if (scrollChanged || productsChanged) {
+      _applyScrollSync();
+    }
   }
 
   void _prefetchProductImages() {
@@ -569,18 +639,66 @@ class _ProductGridState extends State<_ProductGrid> {
     unawaited(prefetchCustomerDisplayProducts(widget.products));
   }
 
-  void _applyScrollOffset(double offset) {
+  void _applyScrollSync() {
     if (!_scrollController.hasClients) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        _applyScrollOffset(offset);
+        _applyScrollSync();
       });
       return;
     }
-    if ((offset - _lastAppliedScroll).abs() < 6) return;
-    _lastAppliedScroll = offset;
     final max = _scrollController.position.maxScrollExtent;
-    _scrollController.jumpTo(offset.clamp(0.0, max));
+    if (max <= 0) {
+      _lastAppliedScroll = 0;
+      return;
+    }
+
+    double target;
+    // Прогресс 0..1 — корректно при разной ширине/колонках кассы и клиента.
+    // Индекс — уточнение, когда списки сопоставимы.
+    final maxIndex = widget.products.isEmpty ? 0 : widget.products.length - 1;
+    if (_layoutColumns > 0 &&
+        _layoutWidth > 0 &&
+        _layoutAspect > 0 &&
+        maxIndex > 0 &&
+        widget.scrollIndex >= 0 &&
+        widget.scrollIndex <= maxIndex + 2) {
+      final clampedIndex = widget.scrollIndex.clamp(0, maxIndex);
+      final byIndex = _offsetForIndex(
+        index: clampedIndex,
+        columns: _layoutColumns,
+        maxWidth: _layoutWidth,
+        aspect: _layoutAspect,
+        spacing: _layoutSpacing,
+      );
+      final byProgress = widget.scrollProgress.clamp(0.0, 1.0) * max;
+      // Если индекс и прогресс сильно расходятся (разный порядок) — берём прогресс.
+      target = (byIndex - byProgress).abs() > max * 0.35 ? byProgress : byIndex;
+    } else {
+      target = widget.scrollProgress.clamp(0.0, 1.0) * max;
+    }
+
+    target = target.clamp(0.0, max);
+    if ((target - _lastAppliedScroll).abs() < 3) return;
+    _lastAppliedScroll = target;
+    _scrollController.jumpTo(target);
+  }
+
+  double _offsetForIndex({
+    required int index,
+    required int columns,
+    required double maxWidth,
+    required double aspect,
+    required double spacing,
+  }) {
+    const padding = 4.0;
+    final inner = (maxWidth - padding * 2).clamp(1.0, double.infinity);
+    final cellW = (inner - spacing * (columns - 1)) / columns;
+    if (cellW <= 0 || aspect <= 0) return 0;
+    final cellH = cellW / aspect;
+    final rowH = cellH + spacing;
+    final row = index ~/ columns;
+    return row * rowH;
   }
 
   @override
@@ -603,13 +721,30 @@ class _ProductGridState extends State<_ProductGrid> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        const spacing = 10.0;
+        const spacing = _layoutSpacing;
         const minCellWidth = 130.0;
+        // Пицца на экране клиента должна читаться с расстояния: один товар —
+        // одно фото, а размеры и цены крупно под ним. Ограничиваем сетку
+        // четырьмя карточками, иначе на Full HD добавлялись новые колонки и
+        // три варианта размера становились слишком мелкими.
+        const minPizzaCellWidth = 210.0;
         final maxWidth = constraints.maxWidth;
-        final columns = math.max(
+        final hasAnyPizzaSizes =
+            widget.products.any((e) => e.hasSizeVariants);
+        final regularColumns = math.max(
           2,
           ((maxWidth + spacing) / (minCellWidth + spacing)).floor(),
         );
+        final pizzaColumns = math.max(
+          2,
+          ((maxWidth + spacing) / (minPizzaCellWidth + spacing)).floor(),
+        );
+        final columns = hasAnyPizzaSizes ? math.min(4, pizzaColumns) : regularColumns;
+        final aspect = hasAnyPizzaSizes ? 0.73 : 0.82;
+        _layoutColumns = columns;
+        _layoutWidth = maxWidth;
+        _layoutAspect = aspect;
+
         return GridView.builder(
           controller: _scrollController,
           padding: const EdgeInsets.all(4),
@@ -618,19 +753,21 @@ class _ProductGridState extends State<_ProductGrid> {
             crossAxisCount: columns,
             mainAxisSpacing: spacing,
             crossAxisSpacing: spacing,
-            childAspectRatio: 0.82,
+            // Чуть выше ячейка, если в сетке есть пиццы с 25/30/35.
+            childAspectRatio: aspect,
           ),
           itemCount: widget.products.length,
           itemBuilder: (context, index) {
             final item = widget.products[index];
-            final priceLabel = item.priceText.trim().isNotEmpty
-                ? item.priceText
-                : formatSomoni(item.price);
+            final priceLabel = _customerDisplayPrice(item.priceText, item.price);
+            final showSizes = item.hasSizeVariants;
             return Material(
               color: Colors.transparent,
               child: InkWell(
                 borderRadius: BorderRadius.circular(16),
-                onTap: () => widget.onAddProduct(item.id),
+                onTap: showSizes
+                    ? null
+                    : () => widget.onAddProduct(item.id),
                 child: Ink(
               decoration: BoxDecoration(
                 gradient: LinearGradient(
@@ -662,44 +799,136 @@ class _ProductGridState extends State<_ProductGrid> {
                       children: [
                         PosProductImage(
                           imagePath: item.imagePath,
-                          padding: const EdgeInsets.fromLTRB(8, 10, 8, 4),
-                          placeholderIconSize: 40,
+                          padding: EdgeInsets.fromLTRB(
+                            10,
+                            showSizes ? 12 : 10,
+                            10,
+                            showSizes ? 8 : 4,
+                          ),
+                          placeholderIconSize: showSizes ? 52 : 40,
                         ),
-                        Positioned(
-                          right: 8,
-                          top: 8,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 5,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFD92D20),
-                              borderRadius: BorderRadius.circular(999),
-                            ),
-                            child: Text(
-                              priceLabel,
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w800,
+                        if (!showSizes)
+                          Positioned(
+                            right: 8,
+                            top: 8,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFD92D20),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                priceLabel,
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                ),
                               ),
                             ),
                           ),
-                        ),
                       ],
                     ),
                   ),
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
-                    child: Text(
-                      item.name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        color: scheme.onSurface,
-                        fontWeight: FontWeight.w800,
-                        height: 1.15,
-                      ),
+                    padding: EdgeInsets.fromLTRB(
+                      showSizes ? 12 : 10,
+                      showSizes ? 10 : 8,
+                      showSizes ? 12 : 10,
+                      showSizes ? 12 : 10,
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          item.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: showSizes
+                              ? TextAlign.center
+                              : TextAlign.start,
+                          style: (showSizes
+                                  ? theme.textTheme.titleSmall
+                                  : theme.textTheme.labelLarge)
+                              ?.copyWith(
+                            color: scheme.onSurface,
+                            fontWeight: FontWeight.w800,
+                            height: 1.15,
+                          ),
+                        ),
+                        if (showSizes) ...[
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              for (var i = 0; i < item.sizes.length; i++) ...[
+                                if (i > 0) const SizedBox(width: 4),
+                                Expanded(
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(10),
+                                      onTap: () => widget.onAddProduct(
+                                        item.sizes[i].id,
+                                      ),
+                                      child: Ink(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 5,
+                                          vertical: 9,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: scheme.surfaceContainerHighest
+                                              .withValues(alpha: 0.72),
+                                          borderRadius:
+                                              BorderRadius.circular(10),
+                                          border: Border.all(
+                                            color: scheme.outlineVariant
+                                                .withValues(alpha: 0.7),
+                                          ),
+                                        ),
+                                        child: Column(
+                                          children: [
+                                            Text(
+                                              item.sizes[i].label,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              textAlign: TextAlign.center,
+                                              style: theme
+                                                  .textTheme.labelMedium
+                                                  ?.copyWith(
+                                                color:
+                                                    scheme.onSurfaceVariant,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 3),
+                                            Text(
+                                              _customerDisplayPrice(
+                                                item.sizes[i].priceText,
+                                                item.sizes[i].price,
+                                              ),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              textAlign: TextAlign.center,
+                                              style: theme
+                                                  .textTheme.titleSmall
+                                                  ?.copyWith(
+                                                color: const Color(0xFFD92D20),
+                                                fontWeight: FontWeight.w900,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ],
+                      ],
                     ),
                   ),
                 ],

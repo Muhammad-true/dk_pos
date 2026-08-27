@@ -46,6 +46,7 @@ class LoyaltyCustomer {
     this.cardCode,
     this.blacklistReason,
     this.tier,
+    this.visitCodeId,
   });
 
   final int id;
@@ -60,6 +61,7 @@ class LoyaltyCustomer {
   final double totalSpentAllTime;
   final double totalSpentCurrentMonth;
   final LoyaltyTier? tier;
+  final int? visitCodeId;
 
   factory LoyaltyCustomer.fromJson(Map<String, dynamic> json) {
     final tierRaw = json['tier'];
@@ -80,8 +82,39 @@ class LoyaltyCustomer {
       tier: tierRaw is Map
           ? LoyaltyTier.fromJson(Map<String, dynamic>.from(tierRaw))
           : null,
+      visitCodeId: int.tryParse(json['visitCodeId']?.toString() ?? ''),
     );
   }
+
+  LoyaltyCustomer copyWithVisitCodeId(int? visitCodeId) {
+    return LoyaltyCustomer(
+      id: id,
+      branchId: branchId,
+      fullName: fullName,
+      phone: phone,
+      qrCode: qrCode,
+      pointsBalance: pointsBalance,
+      isBlacklisted: isBlacklisted,
+      totalSpentAllTime: totalSpentAllTime,
+      totalSpentCurrentMonth: totalSpentCurrentMonth,
+      cardCode: cardCode,
+      blacklistReason: blacklistReason,
+      tier: tier,
+      visitCodeId: visitCodeId ?? this.visitCodeId,
+    );
+  }
+}
+
+class LoyaltyVisitCodeResult {
+  const LoyaltyVisitCodeResult({
+    required this.customer,
+    this.visitCodeId,
+    this.visitCode,
+  });
+
+  final LoyaltyCustomer customer;
+  final int? visitCodeId;
+  final String? visitCode;
 }
 
 class LocalLoyaltyRepository {
@@ -168,6 +201,37 @@ class LocalLoyaltyRepository {
         .whereType<Map>()
         .map((e) => LoyaltyCustomer.fromJson(Map<String, dynamic>.from(e)))
         .toList(growable: false);
+  }
+
+  Future<LoyaltyVisitCodeResult> resolveVisitCode(String code, {String? branchId}) async {
+    final trimmed = code.trim();
+    final res = await _http.get(
+      'api/local/loyalty/resolve-visit-code',
+      query: {
+        'code': trimmed,
+        'branchId': branchId ?? _defaultBranchId,
+      },
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Код не найден или истёк',
+      );
+    }
+    final body = res.body;
+    if (body is! Map || body['customer'] is! Map) {
+      throw ApiException(res.statusCode, 'Некорректный ответ при проверке кода');
+    }
+    final customer = LoyaltyCustomer.fromJson(
+      Map<String, dynamic>.from(body['customer'] as Map),
+    );
+    final visitCodeId = int.tryParse(body['visitCodeId']?.toString() ?? '') ?? customer.visitCodeId;
+  return LoyaltyVisitCodeResult(
+      customer: customer.copyWithVisitCodeId(visitCodeId),
+      visitCodeId: visitCodeId,
+      visitCode: body['visitCode']?.toString(),
+    );
   }
 
   Future<LoyaltyCustomer> createCustomer({

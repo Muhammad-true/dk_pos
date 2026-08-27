@@ -9,4 +9,11 @@ class MenuRepository {
   Future<List<PosCategory>> fetchMenu({String lang = 'ru'}) {
     return _remote.fetchPosMenu(lang: lang);
   }
+
+  Future<void> setSoldOutToday({
+    required String menuItemId,
+    required bool stopped,
+  }) {
+    return _remote.setSoldOutToday(menuItemId: menuItemId, stopped: stopped);
+  }
 }

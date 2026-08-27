@@ -38,8 +38,15 @@ class AppConfig {
     _apiOriginOverride = null;
   }
 
+  /// IP кассового ПК по умолчанию (подсеть точки).
+  static const String defaultLocalServerHost = '192.168.0.101';
+
+  /// Полный origin локального backend для автоподключения кухни / планшетов.
+  static const String defaultLocalServerOrigin =
+      'http://$defaultLocalServerHost:3000';
+
   /// Подсказка в поле IP (не используется для подключения).
-  static const String serverHostInputHint = '192.168.1.x';
+  static const String serverHostInputHint = defaultLocalServerHost;
 
   /// @deprecated Используйте [serverHostInputHint]. Оставлено для совместимости UI.
   static const String defaultServerHost = serverHostInputHint;
@@ -64,15 +71,32 @@ class AppConfig {
         return host;
       }
     }
-    return '';
+    return defaultLocalServerHost;
+  }
+
+  /// Озвучка и сигнал нового заказа на экране кухни (Windows).
+  /// По умолчанию включено. Отключить: `POS_DISABLE_KITCHEN_AUDIO_ON_WINDOWS=true`
+  static bool get posEnableKitchenAudioOnWindows {
+    try {
+      final v = dotenv
+          .maybeGet('POS_DISABLE_KITCHEN_AUDIO_ON_WINDOWS')
+          ?.trim()
+          .toLowerCase();
+      if (v == null || v.isEmpty) return true;
+      return !(v == '1' || v == 'true' || v == 'yes' || v == 'on');
+    } catch (_) {
+      return true;
+    }
   }
 
   /// Второе окно (экран покупателя) на Windows. Отключите на терминале, где из‑за него зависает или закрывается приложение.
   /// В `assets/.env`: `POS_DISABLE_CUSTOMER_DISPLAY=true` или `1`.
   static bool get isCustomerDisplayWindowDisabled {
     try {
-      final v =
-          dotenv.maybeGet('POS_DISABLE_CUSTOMER_DISPLAY')?.trim().toLowerCase();
+      final v = dotenv
+          .maybeGet('POS_DISABLE_CUSTOMER_DISPLAY')
+          ?.trim()
+          .toLowerCase();
       if (v == null || v.isEmpty) return false;
       return v == '1' || v == 'true' || v == 'yes' || v == 'on';
     } catch (_) {
@@ -87,10 +111,11 @@ class AppConfig {
     return n.clamp(10, 120);
   }
 
-  /// Минимальный интервал между реакциями на realtime-события (мс). 0 = сразу.
+  /// Минимальный интервал между реакциями на realtime-события (мс).
+  /// На Wi‑Fi LAN дефолт 2500 — не дублируем full HTTP поверх WS-патчей.
   static int get cashierRealtimeMinGapMs {
     final n = _readInt('POS_CASHIER_REALTIME_MIN_GAP_MS');
-    if (n == null) return 0;
+    if (n == null) return 2500;
     return n.clamp(0, 10000);
   }
 
@@ -186,7 +211,7 @@ class AppConfig {
     if (path.startsWith('http://') || path.startsWith('https://')) {
       final uploadsPath = _extractUploadsRelativePath(path);
       if (uploadsPath != null) {
-        return '${apiOrigin}/$uploadsPath';
+        return '$apiOrigin/$uploadsPath';
       }
       return path;
     }
@@ -239,9 +264,15 @@ class AppConfig {
   /// - `strict` — как `full`, плюс в счёт добавляется число событий outbox в retry (`retrying` из API).
   static PosAdminSyncIncidentMode get adminSyncIncidentMode {
     try {
-      final v = dotenv.maybeGet('POS_ADMIN_SYNC_INCIDENT_MODE')?.trim().toLowerCase();
+      final v = dotenv
+          .maybeGet('POS_ADMIN_SYNC_INCIDENT_MODE')
+          ?.trim()
+          .toLowerCase();
       if (v == null || v.isEmpty) return PosAdminSyncIncidentMode.full;
-      if (v == 'site_only' || v == 'site' || v == 'website' || v == 'website_only') {
+      if (v == 'site_only' ||
+          v == 'site' ||
+          v == 'website' ||
+          v == 'website_only') {
         return PosAdminSyncIncidentMode.siteOnly;
       }
       if (v == 'strict' || v == 'sla' || v == 'strict_sla') {
@@ -270,9 +301,9 @@ class AppConfig {
       return _normalize(t);
     }
 
-    final hasExplicitPort = RegExp(
-      r'^(\d{1,3}\.){3}\d{1,3}:\d+$',
-    ).hasMatch(t) || RegExp(r'^[\w.-]+:\d+$').hasMatch(t);
+    final hasExplicitPort =
+        RegExp(r'^(\d{1,3}\.){3}\d{1,3}:\d+$').hasMatch(t) ||
+        RegExp(r'^[\w.-]+:\d+$').hasMatch(t);
     if (hasExplicitPort) {
       return _normalize('http://$t');
     }
@@ -281,8 +312,4 @@ class AppConfig {
 }
 
 /// См. [AppConfig.adminSyncIncidentMode].
-enum PosAdminSyncIncidentMode {
-  full,
-  siteOnly,
-  strict,
-}
+enum PosAdminSyncIncidentMode { full, siteOnly, strict }

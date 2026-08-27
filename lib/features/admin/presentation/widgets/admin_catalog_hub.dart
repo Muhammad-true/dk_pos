@@ -8,6 +8,7 @@ import 'package:dk_pos/features/admin/bloc/catalog_admin_bloc.dart';
 import 'package:dk_pos/features/admin/bloc/menu_items_admin_bloc.dart';
 import 'package:dk_pos/features/admin/data/screens_admin_repository.dart';
 import 'package:dk_pos/features/admin/presentation/screens/admin_tv_settings_screen.dart';
+import 'package:dk_pos/features/admin/presentation/screens/admin_tv_wall_screen.dart';
 import 'package:dk_pos/features/admin/presentation/navigation/admin_modern_page_route.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_catalog_panel.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_menu_items_panel.dart';
@@ -120,6 +121,16 @@ class _AdminCatalogHubState extends State<AdminCatalogHub> {
     );
   }
 
+  void _openTvWall(BuildContext context) {
+    _push(
+      context,
+      _CatalogSubScaffold(
+        title: 'Стена ТВ — шоу',
+        child: AdminTvWallScreen(maxBodyWidth: widget.maxBodyWidth),
+      ),
+    );
+  }
+
   void _openTv1Slides(BuildContext context) {
     final catalogBloc = context.read<CatalogAdminBloc>();
     _push(
@@ -215,6 +226,14 @@ class _AdminCatalogHubState extends State<AdminCatalogHub> {
                 subtitle:
                     'Режим очереди, звук, TTS, экраны ТВ4 и оформление доски — без правки .env на приставке',
                 onTap: () => _openTvSettings(context),
+              ),
+              _HubTileConfig(
+                icon: Icons.view_week_rounded,
+                iconColor: scheme.tertiary,
+                title: 'Стена ТВ — шоу',
+                subtitle:
+                    '2–4 экрана в ряд, одно широкое видео, интервал или «Сейчас» — поверх меню/очереди',
+                onTap: () => _openTvWall(context),
               ),
             ];
 

@@ -125,18 +125,12 @@ class CartRepository {
     final up = unitPrice ??
         ((sale != null ? sale.scaledPrice(item.baseCatalogPrice) : item.baseCatalogPrice) +
             modExtra);
-    final modLabel = modifiers.map((m) => m.name).where((n) => n.isNotEmpty).join(', ');
-    var displayName = modLabel.isNotEmpty ? '${item.name} ($modLabel)' : item.name;
-    if (sale != null && (sale.actualQty - sale.defaultQty).abs() > 0.001) {
-      displayName = sale.displayName(displayName);
-    }
 
     final effectiveItem = item.copyWith(
       price: up,
       priceText: up == up.roundToDouble()
           ? up.toStringAsFixed(0)
           : up.toStringAsFixed(2),
-      name: displayName,
     );
 
     final key = computeCartLineKey(

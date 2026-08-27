@@ -155,6 +155,20 @@ Future<void> startOnlineOrderEditWithCustomerConsent(
   );
   if (proceed != true || !posHostContext.mounted) return;
 
+  try {
+    await posHostContext
+        .read<LocalOrdersRepository>()
+        .recordSiteOrderChangeConsent(orderId: o.id);
+  } catch (e) {
+    if (posHostContext.mounted) {
+      ScaffoldMessenger.of(posHostContext).showSnackBar(
+        SnackBar(content: Text('Не удалось начать изменение заказа: $e')),
+      );
+    }
+    return;
+  }
+  if (!posHostContext.mounted) return;
+
   if (row.needsCashierAck) {
     await onAcknowledgeIncoming();
     if (!posHostContext.mounted) return;

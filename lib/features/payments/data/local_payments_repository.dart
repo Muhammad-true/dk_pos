@@ -203,6 +203,92 @@ class LocalPaymentHistoryEntry {
   }
 }
 
+class LocalRefundablePaymentLine {
+  const LocalRefundablePaymentLine({
+    required this.lineKey,
+    required this.name,
+    required this.quantity,
+    required this.unitPrice,
+    required this.lineTotal,
+    required this.refundedQty,
+  });
+
+  final String lineKey;
+  final String name;
+  final int quantity;
+  final double unitPrice;
+  final double lineTotal;
+  final int refundedQty;
+
+  int get availableQty {
+    final v = quantity - refundedQty;
+    return v > 0 ? v : 0;
+  }
+
+  factory LocalRefundablePaymentLine.fromJson(Map<String, dynamic> json) {
+    int asInt(dynamic v) =>
+        (v is num) ? v.toInt() : int.tryParse(v?.toString() ?? '') ?? 0;
+    double asDouble(dynamic v) =>
+        (v is num) ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0;
+    return LocalRefundablePaymentLine(
+      lineKey: json['lineKey']?.toString() ?? '',
+      name: json['name']?.toString() ?? '',
+      quantity: asInt(json['quantity']),
+      unitPrice: asDouble(json['unitPrice']),
+      lineTotal: asDouble(json['lineTotal']),
+      refundedQty: asInt(json['refundedQty']),
+    );
+  }
+}
+
+class LocalRefundablePaymentCheck {
+  const LocalRefundablePaymentCheck({
+    required this.paymentUuid,
+    required this.orderId,
+    required this.orderNumber,
+    required this.method,
+    required this.methodTitle,
+    required this.paidAmount,
+    required this.refundedTotal,
+    required this.remainingRefundable,
+    required this.items,
+  });
+
+  final String paymentUuid;
+  final String orderId;
+  final String orderNumber;
+  final String method;
+  final String methodTitle;
+  final double paidAmount;
+  final double refundedTotal;
+  final double remainingRefundable;
+  final List<LocalRefundablePaymentLine> items;
+
+  factory LocalRefundablePaymentCheck.fromJson(Map<String, dynamic> json) {
+    double asDouble(dynamic v) =>
+        (v is num) ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0;
+    final raw = json['items'];
+    final items = raw is List
+        ? raw
+            .whereType<Map>()
+            .map((e) => LocalRefundablePaymentLine.fromJson(Map<String, dynamic>.from(e)))
+            .where((e) => e.lineKey.isNotEmpty)
+            .toList(growable: false)
+        : const <LocalRefundablePaymentLine>[];
+    return LocalRefundablePaymentCheck(
+      paymentUuid: json['paymentUuid']?.toString() ?? '',
+      orderId: json['orderId']?.toString() ?? '',
+      orderNumber: json['orderNumber']?.toString() ?? '',
+      method: json['method']?.toString() ?? '',
+      methodTitle: json['methodTitle']?.toString() ?? '',
+      paidAmount: asDouble(json['paidAmount'] ?? json['amount']),
+      refundedTotal: asDouble(json['refundedTotal']),
+      remainingRefundable: asDouble(json['remainingRefundable']),
+      items: items,
+    );
+  }
+}
+
 class LocalRefundHistoryEntry {
   const LocalRefundHistoryEntry({
     required this.refundUuid,
@@ -378,12 +464,14 @@ class LocalPaymentsRepository {
     required String idempotencyKey,
     double? cashReceived,
     double? cashChange,
+    int? changePaymentMethodId,
     List<Map<String, dynamic>>? paymentSplits,
     String? promoCode,
     double? promoDiscountAmount,
     double? loyaltyDiscountAmount,
     String? loyaltyCardNo,
     int? customerId,
+    int? visitCodeId,
     String? branchId,
     String? terminalId,
     bool skipReceipt = false,
@@ -402,6 +490,8 @@ class LocalPaymentsRepository {
         'idempotencyKey': idempotencyKey,
         if (cashReceived != null) 'cashReceived': cashReceived,
         if (cashChange != null) 'cashChange': cashChange,
+        if (changePaymentMethodId != null)
+          'changePaymentMethodId': changePaymentMethodId,
         if (promoCode != null && promoCode.trim().isNotEmpty)
           'promoCode': promoCode.trim(),
         if (promoDiscountAmount != null && promoDiscountAmount > 0)
@@ -411,6 +501,7 @@ class LocalPaymentsRepository {
         if (loyaltyCardNo != null && loyaltyCardNo.trim().isNotEmpty)
           'loyaltyCardNo': loyaltyCardNo.trim(),
         if (customerId != null) 'customerId': customerId,
+        if (visitCodeId != null) 'visitCodeId': visitCodeId,
         'branchId': branchId ?? _defaultBranchId,
         'terminalId': terminalId ?? _defaultTerminalId,
         if (skipReceipt) 'skipReceipt': true,
@@ -585,6 +676,102 @@ class LocalPaymentsRepository {
       refundUuid: map['refundUuid']?.toString() ?? '',
       paymentUuid: map['paymentUuid']?.toString() ?? '',
       orderId: map['orderId']?.toString() ?? orderId,
+      amount: amountVal,
+      orderStatus: map['orderStatus']?.toString() ?? '',
+      hardware: body['hardware'] is Map
+          ? LocalPaymentHardwareResult.fromJson(
+              Map<String, dynamic>.from(body['hardware'] as Map),
+            )
+          : null,
+    );
+  }
+
+  Future<LocalRefundablePaymentCheck> fetchRefundablePaymentCheck({
+    required String paymentUuid,
+    String? branchId,
+    String? terminalId,
+  }) async {
+    final uuid = paymentUuid.trim();
+    if (uuid.isEmpty) {
+      throw ApiException(400, 'paymentUuid обязателен');
+    }
+    final res = await _http.get(
+      'api/local/payments/$uuid/check',
+      query: {
+        'branchId': branchId ?? _defaultBranchId,
+        'terminalId': terminalId ?? _defaultTerminalId,
+      },
+    );
+    if (res.statusCode != 200) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Не удалось загрузить чек',
+      );
+    }
+    final body = res.body;
+    if (body is! Map) {
+      throw ApiException(res.statusCode, 'Некорректный ответ чека');
+    }
+    return LocalRefundablePaymentCheck.fromJson(
+      Map<String, dynamic>.from(body),
+    );
+  }
+
+  Future<LocalRefundResult> refundPaymentLines({
+    required String orderId,
+    required String paymentUuid,
+    required List<Map<String, dynamic>> refundLines,
+    String? reason,
+    bool cancelOrder = false,
+    String? branchId,
+    String? terminalId,
+  }) async {
+    final oid = orderId.trim();
+    final uuid = paymentUuid.trim();
+    if (oid.isEmpty) {
+      throw ApiException(400, 'orderId обязателен');
+    }
+    if (uuid.isEmpty) {
+      throw ApiException(400, 'paymentUuid обязателен');
+    }
+    if (refundLines.isEmpty) {
+      throw ApiException(400, 'Выберите позиции для возврата');
+    }
+    final res = await _http.post(
+      'api/local/payments/refund',
+      body: {
+        'orderId': oid,
+        'paymentUuid': uuid,
+        'refundLines': refundLines,
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+        'cancelOrder': cancelOrder,
+        'branchId': branchId ?? _defaultBranchId,
+        'terminalId': terminalId ?? _defaultTerminalId,
+      },
+    );
+    if (res.statusCode != 200 && res.statusCode != 201) {
+      throw ApiException.fromHttp(
+        res.statusCode,
+        res.body,
+        fallbackMessage: 'Не удалось выполнить возврат',
+      );
+    }
+    final body = res.body;
+    if (body is! Map) {
+      throw ApiException(res.statusCode, 'Некорректный ответ возврата');
+    }
+    final refund = body['refund'];
+    if (refund is! Map) {
+      throw ApiException(res.statusCode, 'Сервер не вернул данные возврата');
+    }
+    final map = Map<String, dynamic>.from(refund);
+    final amountVal =
+        num.tryParse(map['amount']?.toString() ?? '')?.toDouble() ?? 0.0;
+    return LocalRefundResult(
+      refundUuid: map['refundUuid']?.toString() ?? '',
+      paymentUuid: map['paymentUuid']?.toString() ?? '',
+      orderId: map['orderId']?.toString() ?? oid,
       amount: amountVal,
       orderStatus: map['orderStatus']?.toString() ?? '',
       hardware: body['hardware'] is Map

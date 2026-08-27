@@ -1,14 +1,6 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
-import 'package:file_picker/file_picker.dart';
-import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:image_picker/image_picker.dart';
-import 'package:dk_pos/l10n/app_localizations.dart';
-import 'package:dk_pos/l10n/context_l10n.dart';
-
 import 'package:dk_pos/core/error/api_exception.dart';
 import 'package:dk_pos/features/admin/bloc/catalog_admin_bloc.dart';
 import 'package:dk_pos/features/admin/bloc/menu_items_admin_bloc.dart';
@@ -22,6 +14,13 @@ import 'package:dk_pos/features/admin/data/menu_items_admin_repository.dart';
 import 'package:dk_pos/features/admin/data/menu_units_repository.dart';
 import 'package:dk_pos/features/admin/data/upload_repository.dart';
 import 'package:dk_pos/features/admin/presentation/widgets/admin_list_row_card.dart';
+import 'package:dk_pos/l10n/app_localizations.dart';
+import 'package:dk_pos/l10n/context_l10n.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:image_picker/image_picker.dart';
 
 String _treeDots(int depth) {
   if (depth <= 0) return '';
@@ -41,7 +40,9 @@ class _KitchenItemSection {
   final List<AdminMenuItemRow> items;
 }
 
-List<_KitchenItemSection> _groupMenuItemsByKitchen(List<AdminMenuItemRow> items) {
+List<_KitchenItemSection> _groupMenuItemsByKitchen(
+  List<AdminMenuItemRow> items,
+) {
   final byStation = <int?, List<AdminMenuItemRow>>{};
   for (final it in items) {
     byStation.putIfAbsent(it.kitchenStationId, () => []).add(it);
@@ -72,8 +73,8 @@ List<_KitchenItemSection> _groupMenuItemsByKitchen(List<AdminMenuItemRow> items)
     final title = id == null
         ? 'Без кухни'
         : ((list.first.kitchenStationName ?? '').trim().isNotEmpty
-            ? list.first.kitchenStationName!.trim()
-            : 'Кухня #$id');
+              ? list.first.kitchenStationName!.trim()
+              : 'Кухня #$id');
     return _KitchenItemSection(stationId: id, title: title, items: list);
   }).toList();
 }
@@ -113,8 +114,9 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
     if (!mounted) return;
     setState(() => _kitchensLoading = true);
     try {
-      final list =
-          await context.read<KitchenStationsRepository>().fetchStations();
+      final list = await context
+          .read<KitchenStationsRepository>()
+          .fetchStations();
       if (!mounted) return;
       setState(() {
         _kitchenStations = list.where((e) => e.isActive == 1).toList();
@@ -146,18 +148,14 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setModal) => AlertDialog(
-          title: Text(
-            it.name.ru,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
+          title: Text(it.name.ru, maxLines: 2, overflow: TextOverflow.ellipsis),
           content: SizedBox(
             width: 420,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 DropdownButtonFormField<int?>(
-                  value: holder[0],
+                  initialValue: holder[0],
                   isExpanded: true,
                   decoration: const InputDecoration(
                     labelText: 'Кухня',
@@ -441,20 +439,20 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
             : null,
         onTap: _bulkMode
             ? () => setState(() {
-                  if (selected) {
-                    _selectedIds.remove(it.id);
-                  } else {
-                    _selectedIds.add(it.id);
-                  }
-                })
+                if (selected) {
+                  _selectedIds.remove(it.id);
+                } else {
+                  _selectedIds.add(it.id);
+                }
+              })
             : null,
         title: Text(
           it.name.ru,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+          style: Theme.of(
+            context,
+          ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
         ),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 2),
@@ -463,8 +461,8 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
         trailing: Row(
@@ -481,7 +479,9 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
             IconButton(
               tooltip: _catalogLocked ? 'Кухня' : l10n.adminUsersEdit,
               icon: Icon(
-                _catalogLocked ? Icons.soup_kitchen_outlined : Icons.edit_outlined,
+                _catalogLocked
+                    ? Icons.soup_kitchen_outlined
+                    : Icons.edit_outlined,
               ),
               onPressed: () => _openEditor(context, l10n, it),
             ),
@@ -524,9 +524,9 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                   IconButton.filledTonal(
                     tooltip: l10n.actionRetry,
                     onPressed: () {
-                      context
-                          .read<MenuItemsAdminBloc>()
-                          .add(const MenuItemsLoadRequested());
+                      context.read<MenuItemsAdminBloc>().add(
+                        const MenuItemsLoadRequested(),
+                      );
                       _loadKitchens();
                     },
                     icon: const Icon(Icons.refresh_rounded),
@@ -563,51 +563,51 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                     builder: (context, c) {
                       final narrow = c.maxWidth < 560;
                       final kitchenField = _catalogLocked
-                            ? Padding(
-                                padding: const EdgeInsets.only(top: 10, right: 8),
-                                child: Text(
-                                  'Каталог с глобала: кухня (иконка у позиции или пачкой), порядок перетаскиванием.',
-                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .onSurfaceVariant,
-                                        height: 1.35,
-                                      ),
+                          ? Padding(
+                              padding: const EdgeInsets.only(top: 10, right: 8),
+                              child: Text(
+                                'Каталог с глобала: кухня (иконка у позиции или пачкой), порядок перетаскиванием.',
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurfaceVariant,
+                                      height: 1.35,
+                                    ),
+                              ),
+                            )
+                          : _kitchensLoading
+                          ? const LinearProgressIndicator(minHeight: 4)
+                          : DropdownButtonFormField<int?>(
+                              key: ValueKey(
+                                'default_kitchen_$_defaultKitchenStationId',
+                              ),
+                              initialValue: _defaultKitchenStationId,
+                              isExpanded: true,
+                              decoration: const InputDecoration(
+                                labelText: 'Кухня для новых товаров',
+                                border: OutlineInputBorder(),
+                                isDense: true,
+                              ),
+                              items: [
+                                const DropdownMenuItem<int?>(
+                                  value: null,
+                                  child: Text('Не задано'),
                                 ),
-                              )
-                            : _kitchensLoading
-                                ? const LinearProgressIndicator(minHeight: 4)
-                                : DropdownButtonFormField<int?>(
-                                    key: ValueKey(
-                                      'default_kitchen_$_defaultKitchenStationId',
+                                ..._kitchenStations.map(
+                                  (s) => DropdownMenuItem<int?>(
+                                    value: s.id,
+                                    child: Text(
+                                      s.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
                                     ),
-                                    initialValue: _defaultKitchenStationId,
-                                    isExpanded: true,
-                                    decoration: const InputDecoration(
-                                      labelText: 'Кухня для новых товаров',
-                                      border: OutlineInputBorder(),
-                                      isDense: true,
-                                    ),
-                                    items: [
-                                      const DropdownMenuItem<int?>(
-                                        value: null,
-                                        child: Text('Не задано'),
-                                      ),
-                                      ..._kitchenStations.map(
-                                        (s) => DropdownMenuItem<int?>(
-                                          value: s.id,
-                                          child: Text(
-                                            s.name,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                    onChanged: (v) => setState(
-                                      () => _defaultKitchenStationId = v,
-                                    ),
-                                  );
+                                  ),
+                                ),
+                              ],
+                              onChanged: (v) =>
+                                  setState(() => _defaultKitchenStationId = v),
+                            );
                       final bulkActions = _bulkMode && _selectedIds.isNotEmpty
                           ? Wrap(
                               spacing: 8,
@@ -618,11 +618,15 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                                   child: Text('Кухня (${_selectedIds.length})'),
                                 ),
                                 FilledButton.tonal(
-                                  onPressed: () => _bulkSetCustomPrice(context, true),
-                                  child: Text('Ручная цена ON (${_selectedIds.length})'),
+                                  onPressed: () =>
+                                      _bulkSetCustomPrice(context, true),
+                                  child: Text(
+                                    'Ручная цена ON (${_selectedIds.length})',
+                                  ),
                                 ),
                                 OutlinedButton(
-                                  onPressed: () => _bulkSetCustomPrice(context, false),
+                                  onPressed: () =>
+                                      _bulkSetCustomPrice(context, false),
                                   child: const Text('Ручная цена OFF'),
                                 ),
                               ],
@@ -734,8 +738,7 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                     children: [
                       if (state.errorMessage != null)
                         Material(
-                          color:
-                              Theme.of(context).colorScheme.errorContainer,
+                          color: Theme.of(context).colorScheme.errorContainer,
                           borderRadius: BorderRadius.circular(12),
                           child: Padding(
                             padding: const EdgeInsets.symmetric(
@@ -746,18 +749,18 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                               children: [
                                 Icon(
                                   Icons.error_outline_rounded,
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onErrorContainer,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onErrorContainer,
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
                                     state.errorMessage!,
                                     style: TextStyle(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onErrorContainer,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onErrorContainer,
                                     ),
                                   ),
                                 ),
@@ -778,10 +781,10 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                             ? const Center(child: CircularProgressIndicator())
                             : Builder(
                                 builder: (context) {
-                                  final sections =
-                                      _groupMenuItemsByKitchen(state.items);
-                                  final scheme =
-                                      Theme.of(context).colorScheme;
+                                  final sections = _groupMenuItemsByKitchen(
+                                    state.items,
+                                  );
+                                  final scheme = Theme.of(context).colorScheme;
                                   return ListView(
                                     padding: const EdgeInsets.only(
                                       top: 4,
@@ -789,9 +792,11 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                                     ),
                                     physics: kAdminListScrollPhysics,
                                     children: [
-                                      for (var si = 0;
-                                          si < sections.length;
-                                          si++) ...[
+                                      for (
+                                        var si = 0;
+                                        si < sections.length;
+                                        si++
+                                      ) ...[
                                         Padding(
                                           padding: EdgeInsets.fromLTRB(
                                             4,
@@ -816,8 +821,7 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                                                       ?.copyWith(
                                                         fontWeight:
                                                             FontWeight.w700,
-                                                        color:
-                                                            scheme.onSurface,
+                                                        color: scheme.onSurface,
                                                       ),
                                                 ),
                                               ),
@@ -832,11 +836,11 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
                                           itemCount: sections[si].items.length,
                                           onReorder: (oldIndex, newIndex) =>
                                               _reorderItemsInSection(
-                                            context,
-                                            sections[si],
-                                            oldIndex,
-                                            newIndex,
-                                          ),
+                                                context,
+                                                sections[si],
+                                                oldIndex,
+                                                newIndex,
+                                              ),
                                           itemBuilder: (context, ii) {
                                             final it = sections[si].items[ii];
                                             return Container(
@@ -891,9 +895,9 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
     }
     final categories = context.read<CatalogAdminBloc>().state.categories;
     if (categories.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.adminCatalogEmpty)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.adminCatalogEmpty)));
       return;
     }
     final ordered = orderCategoriesForAdminTree(categories);
@@ -958,7 +962,9 @@ class _AdminMenuItemsPanelState extends State<AdminMenuItemsPanel> {
     try {
       await repo.deleteItem(it.id);
       bloc.add(const MenuItemsLoadRequested());
-      messenger.showSnackBar(SnackBar(content: Text(l10n.adminMenuItemDeleted)));
+      messenger.showSnackBar(
+        SnackBar(content: Text(l10n.adminMenuItemDeleted)),
+      );
     } on ApiException catch (e) {
       messenger.showSnackBar(SnackBar(content: Text(e.message)));
     } catch (e) {
@@ -1030,7 +1036,9 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
     _nameTjCtrl = TextEditingController(text: e?.name.tj ?? '');
     _nameEnCtrl = TextEditingController(text: e?.name.en ?? '');
     _priceCtrl = TextEditingController(
-      text: e != null ? e.price.toStringAsFixed(e.price == e.price.roundToDouble() ? 0 : 2) : '',
+      text: e != null
+          ? e.price.toStringAsFixed(e.price == e.price.roundToDouble() ? 0 : 2)
+          : '',
     );
     _priceTextRuCtrl = TextEditingController(text: e?.priceText.ru ?? '');
     _priceTextTjCtrl = TextEditingController(text: e?.priceText.tj ?? '');
@@ -1048,8 +1056,7 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
     );
     _categoryId = e?.categoryId ?? widget.categoriesOrdered.first.id;
     _saleUnitId = e != null && e.saleUnitId > 0 ? e.saleUnitId : null;
-    _kitchenStationId =
-        e?.kitchenStationId ?? widget.defaultKitchenStationId;
+    _kitchenStationId = e?.kitchenStationId ?? widget.defaultKitchenStationId;
     _available = (e?.isAvailable ?? 1) == 1;
     _trackStock = (e?.trackStock ?? 1) == 1;
     _allowCustomPrice = (e?.allowCustomPrice ?? 0) == 1;
@@ -1065,14 +1072,12 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
       _unitsError = null;
     });
     try {
-      final list =
-          await context.read<MenuUnitsRepository>().fetchUnits(lang);
+      final list = await context.read<MenuUnitsRepository>().fetchUnits(lang);
       if (!mounted) return;
       setState(() {
         _units = list;
         _unitsLoading = false;
-        if (_saleUnitId != null &&
-            !_units.any((u) => u.id == _saleUnitId)) {
+        if (_saleUnitId != null && !_units.any((u) => u.id == _saleUnitId)) {
           _saleUnitId = null;
         }
         _saleUnitId ??= _units.isNotEmpty ? _units.first.id : null;
@@ -1090,7 +1095,9 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
     if (!mounted) return;
     setState(() => _kitchenLoading = true);
     try {
-      final list = await context.read<KitchenStationsRepository>().fetchStations();
+      final list = await context
+          .read<KitchenStationsRepository>()
+          .fetchStations();
       if (!mounted) return;
       setState(() {
         _kitchenStations = list.where((e) => e.isActive == 1).toList();
@@ -1134,9 +1141,9 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
     final messenger = ScaffoldMessenger.of(context);
     try {
       final path = await context.read<UploadRepository>().uploadMenuImageBytes(
-            bytes,
-            picked.name,
-          );
+        bytes,
+        picked.name,
+      );
       if (mounted) _imageCtrl.text = path;
     } on ApiException catch (e) {
       messenger.showSnackBar(SnackBar(content: Text(e.message)));
@@ -1212,8 +1219,7 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
       for (final e in decoded) {
         if (e is! Map) return null;
         final label = (e['label'] ?? e['volume'] ?? '').toString().trim();
-        final pt =
-            (e['priceText'] ?? e['price_text'] ?? '').toString().trim();
+        final pt = (e['priceText'] ?? e['price_text'] ?? '').toString().trim();
         if (label.isEmpty || pt.isEmpty) return null;
         out.add({'label': label, 'priceText': pt});
       }
@@ -1246,9 +1252,9 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
     final l10n = widget.l10n;
     final price = double.tryParse(_priceCtrl.text.trim().replaceAll(',', '.'));
     if (price == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.adminMenuItemPriceInvalid)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.adminMenuItemPriceInvalid)));
       return;
     }
     final sort = int.tryParse(_sortCtrl.text.trim()) ?? 0;
@@ -1256,9 +1262,9 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
     final unitId = _saleUnitId;
 
     if (unitId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.adminMenuItemUnitRequired)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(l10n.adminMenuItemUnitRequired)));
       return;
     }
 
@@ -1372,8 +1378,9 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
                       hintText: l10n.adminMenuItemIdHint,
                       border: const OutlineInputBorder(),
                     ),
-                    validator: (v) =>
-                        (v == null || v.trim().isEmpty) ? l10n.adminMenuItemIdError : null,
+                    validator: (v) => (v == null || v.trim().isEmpty)
+                        ? l10n.adminMenuItemIdError
+                        : null,
                   ),
                   const SizedBox(height: 12),
                 ],
@@ -1409,10 +1416,9 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
                     labelText: l10n.adminCategoryNameRu,
                     border: const OutlineInputBorder(),
                   ),
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty)
-                          ? l10n.adminCategoryNameRuError
-                          : null,
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? l10n.adminCategoryNameRuError
+                      : null,
                 ),
                 const SizedBox(height: 8),
                 TextFormField(
@@ -1437,11 +1443,12 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
                     labelText: l10n.adminMenuItemPrice,
                     border: const OutlineInputBorder(),
                   ),
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty)
-                          ? l10n.adminMenuItemPriceInvalid
-                          : null,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? l10n.adminMenuItemPriceInvalid
+                      : null,
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -1450,10 +1457,9 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
                     labelText: l10n.adminMenuItemPriceTextRu,
                     border: const OutlineInputBorder(),
                   ),
-                  validator: (v) =>
-                      (v == null || v.trim().isEmpty)
-                          ? l10n.adminMenuItemPriceTextRuError
-                          : null,
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? l10n.adminMenuItemPriceTextRuError
+                      : null,
                 ),
                 const SizedBox(height: 8),
                 TextFormField(
@@ -1589,12 +1595,16 @@ class _MenuItemEditorDialogState extends State<_MenuItemEditorDialog> {
                     Tooltip(
                       message: l10n.adminMenuItemPickImage,
                       child: IconButton.filledTonal(
-                        onPressed: (_saving || _uploadingImage) ? null : _pickImage,
+                        onPressed: (_saving || _uploadingImage)
+                            ? null
+                            : _pickImage,
                         icon: _uploadingImage
                             ? const SizedBox(
                                 width: 22,
                                 height: 22,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.add_photo_alternate_outlined),
                       ),

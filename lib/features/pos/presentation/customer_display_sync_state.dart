@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:dk_pos/app/pos_theme/pos_theme_cubit.dart';
 import 'package:dk_pos/features/menu/bloc/menu_state.dart';
+import 'package:dk_pos/features/pos/presentation/widgets/pos_size_group.dart';
 import 'package:dk_pos/shared/shared.dart';
 
 enum CustomerDisplayViewMode { idle, menu, payment }
@@ -52,6 +53,9 @@ class CustomerDisplayMenuSnapshot {
     this.categories = const [],
     this.products = const [],
     this.catalogScrollOffset = 0,
+    this.catalogScrollProgress = 0,
+    this.catalogScrollIndex = 0,
+    this.categoryScrollProgress = 0,
   });
 
   final List<String> breadcrumb;
@@ -60,6 +64,15 @@ class CustomerDisplayMenuSnapshot {
   final List<CustomerDisplayMenuCategoryData> categories;
   final List<CustomerDisplayMenuProductData> products;
   final double catalogScrollOffset;
+
+  /// Доля прокрутки каталога кассы 0..1 (главный способ синхронизации).
+  final double catalogScrollProgress;
+
+  /// Индекс первого видимого товара на кассе (для точного совпадения).
+  final int catalogScrollIndex;
+
+  /// Доля прокрутки корневых категорий кассы 0..1.
+  final double categoryScrollProgress;
 
   bool get isEmpty =>
       breadcrumb.isEmpty &&
@@ -74,6 +87,9 @@ class CustomerDisplayMenuSnapshot {
     List<CustomerDisplayMenuCategoryData>? categories,
     List<CustomerDisplayMenuProductData>? products,
     double? catalogScrollOffset,
+    double? catalogScrollProgress,
+    int? catalogScrollIndex,
+    double? categoryScrollProgress,
   }) {
     return CustomerDisplayMenuSnapshot(
       breadcrumb: breadcrumb ?? this.breadcrumb,
@@ -82,6 +98,11 @@ class CustomerDisplayMenuSnapshot {
       categories: categories ?? this.categories,
       products: products ?? this.products,
       catalogScrollOffset: catalogScrollOffset ?? this.catalogScrollOffset,
+      catalogScrollProgress:
+          catalogScrollProgress ?? this.catalogScrollProgress,
+      catalogScrollIndex: catalogScrollIndex ?? this.catalogScrollIndex,
+      categoryScrollProgress:
+          categoryScrollProgress ?? this.categoryScrollProgress,
     );
   }
 
@@ -92,6 +113,9 @@ class CustomerDisplayMenuSnapshot {
         'categories': categories.map((e) => e.toJson()).toList(),
         'products': products.map((e) => e.toJson()).toList(),
         'catalogScrollOffset': catalogScrollOffset,
+        'catalogScrollProgress': catalogScrollProgress,
+        'catalogScrollIndex': catalogScrollIndex,
+        'categoryScrollProgress': categoryScrollProgress,
       };
 
   factory CustomerDisplayMenuSnapshot.fromJson(Map<String, dynamic>? json) {
@@ -120,7 +144,13 @@ class CustomerDisplayMenuSnapshot {
       rootCategories: parseCats(json['rootCategories']),
       categories: parseCats(json['categories']),
       products: parseProducts(json['products']),
-      catalogScrollOffset: (json['catalogScrollOffset'] as num?)?.toDouble() ?? 0,
+      catalogScrollOffset:
+          (json['catalogScrollOffset'] as num?)?.toDouble() ?? 0,
+      catalogScrollProgress:
+          (json['catalogScrollProgress'] as num?)?.toDouble() ?? 0,
+      catalogScrollIndex: (json['catalogScrollIndex'] as num?)?.toInt() ?? 0,
+      categoryScrollProgress:
+          (json['categoryScrollProgress'] as num?)?.toDouble() ?? 0,
     );
   }
 
@@ -139,6 +169,9 @@ class CustomerDisplayMenuSnapshot {
   static CustomerDisplayMenuSnapshot fromMenuState(
     MenuState menu, {
     double catalogScrollOffset = 0,
+    double catalogScrollProgress = 0,
+    int catalogScrollIndex = 0,
+    double categoryScrollProgress = 0,
   }) {
     final crumbs = menu.breadcrumbLine.isEmpty
         ? const <String>[]
@@ -148,6 +181,9 @@ class CustomerDisplayMenuSnapshot {
       breadcrumb: crumbs,
       pathIds: List<int>.from(menu.pathIds),
       catalogScrollOffset: catalogScrollOffset,
+      catalogScrollProgress: catalogScrollProgress,
+      catalogScrollIndex: catalogScrollIndex,
+      categoryScrollProgress: categoryScrollProgress,
       rootCategories: menu.categoryRoots
           .map(
             (c) => CustomerDisplayMenuCategoryData(
@@ -166,18 +202,46 @@ class CustomerDisplayMenuSnapshot {
             ),
           )
           .toList(growable: false),
-      products: menu.currentItems
-          .map(
-            (item) => CustomerDisplayMenuProductData(
+      products: _productsForCustomerDisplay(menu.currentItems),
+    );
+  }
+
+  /// Пиццы 25/30/35 → одна карточка с размерами; остальное без изменений.
+  static List<CustomerDisplayMenuProductData> _productsForCustomerDisplay(
+    List<PosMenuItem> items,
+  ) {
+    if (items.isEmpty) return const [];
+    return groupPosMenuItems(items)
+        .map((tile) {
+          if (!tile.isGroup) {
+            final item = tile.representative;
+            return CustomerDisplayMenuProductData(
               id: item.id,
               name: item.name,
               priceText: item.priceText,
               price: item.price,
               imagePath: item.imagePath,
-            ),
-          )
-          .toList(growable: false),
-    );
+            );
+          }
+          final display = tile.displayItem;
+          return CustomerDisplayMenuProductData(
+            id: tile.representative.id,
+            name: tile.baseName,
+            priceText: display.priceText,
+            price: display.price,
+            imagePath: display.imagePath,
+            sizes: [
+              for (final s in tile.sizes)
+                CustomerDisplayMenuProductSizeData(
+                  id: s.id,
+                  label: parsePosSizeTail(s.name)?.sizeLabel ?? s.name,
+                  priceText: s.priceText,
+                  price: s.price,
+                ),
+            ],
+          );
+        })
+        .toList(growable: false);
   }
 }
 
@@ -207,6 +271,38 @@ class CustomerDisplayMenuCategoryData {
   }
 }
 
+class CustomerDisplayMenuProductSizeData {
+  const CustomerDisplayMenuProductSizeData({
+    required this.id,
+    required this.label,
+    required this.priceText,
+    required this.price,
+  });
+
+  final String id;
+  final String label;
+  final String priceText;
+  final double price;
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'label': label,
+        'priceText': priceText,
+        'price': price,
+      };
+
+  factory CustomerDisplayMenuProductSizeData.fromJson(
+    Map<String, dynamic> json,
+  ) {
+    return CustomerDisplayMenuProductSizeData(
+      id: json['id']?.toString() ?? '',
+      label: json['label']?.toString() ?? '',
+      priceText: json['priceText']?.toString() ?? '',
+      price: (json['price'] as num?)?.toDouble() ?? 0,
+    );
+  }
+}
+
 class CustomerDisplayMenuProductData {
   const CustomerDisplayMenuProductData({
     required this.id,
@@ -214,6 +310,7 @@ class CustomerDisplayMenuProductData {
     required this.priceText,
     required this.price,
     this.imagePath,
+    this.sizes = const [],
   });
 
   final String id;
@@ -222,6 +319,11 @@ class CustomerDisplayMenuProductData {
   final double price;
   final String? imagePath;
 
+  /// Размеры пиццы (25/30/35) — одна карточка вместо трёх товаров.
+  final List<CustomerDisplayMenuProductSizeData> sizes;
+
+  bool get hasSizeVariants => sizes.length >= 2;
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -229,15 +331,28 @@ class CustomerDisplayMenuProductData {
         'price': price,
         if (imagePath != null && imagePath!.trim().isNotEmpty)
           'imagePath': imagePath,
+        if (sizes.isNotEmpty) 'sizes': sizes.map((e) => e.toJson()).toList(),
       };
 
   factory CustomerDisplayMenuProductData.fromJson(Map<String, dynamic> json) {
+    final sizesRaw = json['sizes'];
+    final sizes = sizesRaw is List
+        ? sizesRaw
+            .whereType<Map>()
+            .map(
+              (e) => CustomerDisplayMenuProductSizeData.fromJson(
+                Map<String, dynamic>.from(e),
+              ),
+            )
+            .toList(growable: false)
+        : const <CustomerDisplayMenuProductSizeData>[];
     return CustomerDisplayMenuProductData(
       id: json['id']?.toString() ?? '',
       name: json['name']?.toString() ?? '',
       priceText: json['priceText']?.toString() ?? '',
       price: (json['price'] as num?)?.toDouble() ?? 0,
       imagePath: json['imagePath']?.toString(),
+      sizes: sizes,
     );
   }
 }

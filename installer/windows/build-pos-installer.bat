@@ -52,7 +52,7 @@ if not exist "build\windows\x64\runner\Release\dk_pos.exe" (
   exit /b 1
 )
 
-if not defined INNO_SETUP_DIR set "INNO_SETUP_DIR=M:\inno setup\Inno Setup 6"
+if not defined INNO_SETUP_DIR set "INNO_SETUP_DIR=C:\Program Files (x86)\Inno Setup 6"
 set "ISCC=%INNO_SETUP_DIR%\ISCC.exe"
 if not exist "%ISCC%" (
   echo Не найден компилятор Inno Setup: "%ISCC%"

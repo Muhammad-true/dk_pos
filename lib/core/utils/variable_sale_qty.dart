@@ -70,13 +70,39 @@ class VariableSaleQty {
     return measure == 'gram' ? '$n г' : '$n шт';
   }
 
+  static String stripEmbeddedQtyFromName(String raw) {
+    var name = raw.trim();
+    if (name.isEmpty) return raw.trim();
+    final patterns = [
+      RegExp(r'\s+\d+[\s,.]?\d*\s*(шт|штук|pcs|pc)\s*$', caseSensitive: false),
+      RegExp(r'\s+\d+[\s,.]?\d*\s*(г|g|gram)\s*$', caseSensitive: false),
+      RegExp(r'\s+\d+[\s,.]?\d*(шт|г)\s*$', caseSensitive: false),
+    ];
+    var changed = true;
+    while (changed) {
+      changed = false;
+      for (final re in patterns) {
+        final next = name.replaceFirst(re, '').trim();
+        if (next != name) {
+          name = next;
+          changed = true;
+        }
+      }
+    }
+    return name.isEmpty ? raw.trim() : name;
+  }
+
   String displayName(String baseName, {int quantity = 1}) {
-    final name = baseName.trim();
-    if (!enabled || (actualQty - defaultQty).abs() < 0.001) {
+    final name = stripEmbeddedQtyFromName(baseName);
+    if (!enabled) {
       return quantity > 1 ? '$quantity× $name' : name;
     }
     final label = qtyLabel;
-    if (quantity > 1) return '$quantity× $name ($label)';
+    if (quantity > 1) {
+      final total = (actualQty * quantity).round();
+      final totalLabel = measure == 'gram' ? '$total г' : '$total шт';
+      return '$name $totalLabel';
+    }
     return '$name $label';
   }
 
