@@ -8,7 +8,9 @@ plugins {
 android {
     namespace = "com.example.dk_pos"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = flutter.ndkVersion
+    // Flutter's bundled NDK 27 is unavailable on this workstation.
+    // Use the installed, compatible side-by-side NDK for reproducible local releases.
+    ndkVersion = "28.2.13676358"
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
