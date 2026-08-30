@@ -108,6 +108,7 @@ class PosTableBill extends Equatable {
     this.isOnlineOrder = false,
     this.subtotal = 0,
     this.discountAmount = 0,
+    this.deliveryFee = 0,
     this.deliveryCourier,
     this.deliveryMethod,
     this.deliveryZone,
@@ -161,6 +162,10 @@ class PosTableBill extends Equatable {
 
   final double discountAmount;
 
+  /// Стоимость собственной доставки, уже включённая в [total].
+  /// Для такси «по счётчику» остаётся 0: оно оплачивается отдельно.
+  final double deliveryFee;
+
   final String? deliveryCourier;
   final String? deliveryMethod;
   final String? deliveryZone;
@@ -175,6 +180,8 @@ class PosTableBill extends Equatable {
   final int? tableSessionGraceMinutes;
 
   bool get hasDiscount => discountAmount > 0.009;
+
+  bool get hasDeliveryFee => deliveryFee > 0.009;
 
   /// Промокод с сервера (если скидка применена через промо).
   String? get promoCode => dto?.promoCode;
@@ -307,6 +314,7 @@ class PosTableBill extends Equatable {
       isOnlineOrder: isOnlineOrder,
       subtotal: subtotal,
       discountAmount: discountAmount,
+      deliveryFee: deliveryFee,
       deliveryCourier: deliveryCourier,
       deliveryMethod: deliveryMethod,
       deliveryZone: deliveryZone,
@@ -346,6 +354,7 @@ class PosTableBill extends Equatable {
         isOnlineOrder,
         subtotal,
         discountAmount,
+        deliveryFee,
         deliveryCourier,
         deliveryMethod,
         deliveryZone,

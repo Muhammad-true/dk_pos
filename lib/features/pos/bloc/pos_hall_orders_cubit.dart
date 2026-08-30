@@ -250,7 +250,7 @@ class PosHallOrdersCubit extends Cubit<PosHallOrdersState> {
           PosTableBill(
             id: template.id,
             lines: lines,
-            total: cart.total,
+            total: cart.total + template.deliveryFee,
             orderTypeLabel: template.orderTypeLabel,
             orderNumber: template.orderNumber,
             tableNumber: template.tableNumber,
@@ -268,6 +268,7 @@ class PosHallOrdersCubit extends Cubit<PosHallOrdersState> {
             isWaiterOrder: template.isWaiterOrder,
             isTakeaway: template.isTakeaway,
             isCashierOrder: template.isCashierOrder,
+            deliveryFee: template.deliveryFee,
             tableSessionPhase: template.tableSessionPhase ?? 'active',
             tableSessionGraceMinutes: template.tableSessionGraceMinutes,
           ),
@@ -285,7 +286,7 @@ class PosHallOrdersCubit extends Cubit<PosHallOrdersState> {
     next[idx] = PosTableBill(
       id: prev.id,
       lines: lines,
-      total: payable,
+      total: payable + prev.deliveryFee,
       orderTypeLabel: prev.orderTypeLabel,
       orderNumber: prev.orderNumber,
       tableNumber: prev.tableNumber,
@@ -306,6 +307,7 @@ class PosHallOrdersCubit extends Cubit<PosHallOrdersState> {
       isOnlineOrder: prev.isOnlineOrder,
       subtotal: linesTotal,
       discountAmount: discount,
+      deliveryFee: prev.deliveryFee,
       handedOutAt: prev.handedOutAt,
       tableSessionPhase: prev.tableSessionPhase,
       tableSessionEndsAt: prev.tableSessionEndsAt,

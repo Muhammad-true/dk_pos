@@ -107,6 +107,7 @@ PosTableBill posTableBillFromServerDto(LocalOpenTableBillDto d) {
     isOnlineOrder: src == 'website',
     subtotal: subtotal,
     discountAmount: promoDiscount > 0 ? promoDiscount : 0,
+    deliveryFee: d.deliveryFee,
     deliveryCourier: deliveryCourier,
     deliveryMethod: deliveryMethod,
     deliveryZone: deliveryZone,

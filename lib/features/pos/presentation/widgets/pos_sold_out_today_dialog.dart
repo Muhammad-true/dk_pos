@@ -297,7 +297,9 @@ class _SoldOutTodayDialogState extends State<_SoldOutTodayDialog> {
                                           CrossAxisAlignment.end,
                                       children: [
                                         Text(
-                                          sold ? 'Выключено' : 'Включено',
+                                          sold
+                                              ? 'Стоп продаж: включён'
+                                              : 'В продаже',
                                           style: theme.textTheme.labelSmall
                                               ?.copyWith(
                                                 color: sold

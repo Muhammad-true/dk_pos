@@ -462,7 +462,7 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
       _bill = PosTableBill(
         id: _bill.id,
         lines: nl,
-        total: payable,
+        total: payable + _bill.deliveryFee,
         subtotal: nt,
         orderTypeLabel: _bill.orderTypeLabel,
         orderNumber: _bill.orderNumber,
@@ -483,6 +483,7 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
         isCashierOrder: _bill.isCashierOrder,
         isOnlineOrder: _bill.isOnlineOrder,
         discountAmount: _bill.discountAmount,
+        deliveryFee: _bill.deliveryFee,
         deliveryCourier: _bill.deliveryCourier,
         deliveryMethod: _bill.deliveryMethod,
         deliveryZone: _bill.deliveryZone,
@@ -503,7 +504,7 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
       _bill = PosTableBill(
         id: _bill.id,
         lines: nl,
-        total: payable,
+        total: payable + _bill.deliveryFee,
         subtotal: nt,
         orderTypeLabel: _bill.orderTypeLabel,
         orderNumber: _bill.orderNumber,
@@ -524,6 +525,7 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
         isCashierOrder: _bill.isCashierOrder,
         isOnlineOrder: _bill.isOnlineOrder,
         discountAmount: _bill.discountAmount,
+        deliveryFee: _bill.deliveryFee,
         deliveryCourier: _bill.deliveryCourier,
         deliveryMethod: _bill.deliveryMethod,
         deliveryZone: _bill.deliveryZone,
@@ -897,6 +899,21 @@ class _BillDetailDialogState extends State<_BillDetailDialog> {
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: const Color(0xFF7B1FA2),
                       fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
+            if (_bill.hasDeliveryFee) ...[
+              Row(
+                children: [
+                  Text('Доставка', style: theme.textTheme.bodyMedium),
+                  const Spacer(),
+                  Text(
+                    formatSomoni(_bill.deliveryFee),
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
                 ],

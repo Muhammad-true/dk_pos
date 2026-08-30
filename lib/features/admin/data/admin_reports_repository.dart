@@ -6,10 +6,18 @@ class AdminSalesReportSummary {
   const AdminSalesReportSummary({
     required this.paymentCount,
     required this.totalAmount,
+    required this.foodAmount,
+    required this.deliveryAmount,
+    required this.deliveryOrdersCount,
   });
 
   final int paymentCount;
   final double totalAmount;
+  /// Выручка по позициям меню, без включённой собственной доставки.
+  final double foodAmount;
+  /// Включённая в оплату собственная доставка. Такси по счётчику сюда не входит.
+  final double deliveryAmount;
+  final int deliveryOrdersCount;
 }
 
 class AdminSalesMethodBreakdown {
@@ -156,9 +164,15 @@ class AdminSalesReport {
     final sum = sumRaw is Map ? Map<String, dynamic>.from(sumRaw) : <String, dynamic>{};
     final pc = sum['paymentCount'];
     final ta = sum['totalAmount'];
+    final fa = sum['foodAmount'];
+    final da = sum['deliveryAmount'];
+    final doc = sum['deliveryOrdersCount'];
     final summary = AdminSalesReportSummary(
       paymentCount: pc is num ? pc.toInt() : int.tryParse(pc?.toString() ?? '') ?? 0,
       totalAmount: ta is num ? ta.toDouble() : double.tryParse(ta?.toString() ?? '') ?? 0,
+      foodAmount: fa is num ? fa.toDouble() : double.tryParse(fa?.toString() ?? '') ?? 0,
+      deliveryAmount: da is num ? da.toDouble() : double.tryParse(da?.toString() ?? '') ?? 0,
+      deliveryOrdersCount: doc is num ? doc.toInt() : int.tryParse(doc?.toString() ?? '') ?? 0,
     );
 
     List<AdminSalesMethodBreakdown> parseMethods(dynamic raw) {
@@ -467,6 +481,7 @@ class AdminPaymentCheckDetail {
     required this.orderNumber,
     required this.methodTitle,
     required this.amount,
+    required this.deliveryFee,
     required this.createdAtIso,
     required this.items,
   });
@@ -475,6 +490,7 @@ class AdminPaymentCheckDetail {
   final String orderNumber;
   final String methodTitle;
   final double amount;
+  final double deliveryFee;
   final String createdAtIso;
   final List<AdminPaymentCheckItem> items;
 
@@ -491,6 +507,7 @@ class AdminPaymentCheckDetail {
       orderNumber: json['orderNumber']?.toString() ?? '',
       methodTitle: json['methodTitle']?.toString() ?? json['method']?.toString() ?? '',
       amount: _asDouble(json['amount']),
+      deliveryFee: _asDouble(json['deliveryFee']),
       createdAtIso: json['createdAt']?.toString() ?? '',
       items: items,
     );

@@ -1176,6 +1176,10 @@ class LocalOrdersRepository {
       final subtotal = subtotalRaw is num
           ? subtotalRaw.toDouble()
           : double.tryParse(subtotalRaw?.toString() ?? '');
+      final deliveryFeeRaw = m['deliveryFee'] ?? m['delivery_fee'];
+      final deliveryFee = deliveryFeeRaw is num
+          ? deliveryFeeRaw.toDouble()
+          : double.tryParse(deliveryFeeRaw?.toString() ?? '') ?? 0.0;
       final graceRaw =
           m['tableSessionGraceMinutes'] ?? m['table_session_grace_minutes'];
       final graceMin = graceRaw is int
@@ -1214,6 +1218,7 @@ class LocalOrdersRepository {
           isCashierOrder:
               m['isCashierOrder'] == true || m['is_cashier_order'] == true,
           subtotal: subtotal,
+          deliveryFee: deliveryFee,
           promoCode: m['promoCode']?.toString() ?? m['promo_code']?.toString(),
           promoDiscountAmount: promoDiscount,
           isPaid: m['isPaid'] == true || m['is_paid'] == true,
@@ -1333,6 +1338,7 @@ class LocalOpenTableBillDto {
     this.isTakeaway = false,
     this.isCashierOrder = false,
     this.subtotal,
+    this.deliveryFee = 0,
     this.promoCode,
     this.promoDiscountAmount,
     this.isPaid = false,
@@ -1362,6 +1368,7 @@ class LocalOpenTableBillDto {
   final bool isTakeaway;
   final bool isCashierOrder;
   final double? subtotal;
+  final double deliveryFee;
   final String? promoCode;
   final double? promoDiscountAmount;
   final bool isPaid;

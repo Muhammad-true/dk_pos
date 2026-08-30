@@ -48,7 +48,8 @@ String _lineMergeKey(PosTableBillLine l) {
 /// Дополняет открытый счёт стола новым заказом (тот же id и дата создания).
 PosTableBill mergePosTableBills(PosTableBill open, PosTableBill incoming) {
   final mergedLines = mergePosTableBillLines(open.lines, incoming.lines);
-  final total = mergedLines.fold<double>(0, (s, l) => s + l.lineTotal);
+  final subtotal = mergedLines.fold<double>(0, (s, l) => s + l.lineTotal);
+  final total = subtotal + open.deliveryFee;
   return PosTableBill(
     id: open.id,
     lines: mergedLines,
@@ -73,8 +74,9 @@ PosTableBill mergePosTableBills(PosTableBill open, PosTableBill incoming) {
     isTakeaway: open.isTakeaway,
     isCashierOrder: open.isCashierOrder,
     isOnlineOrder: open.isOnlineOrder,
-    subtotal: total,
+    subtotal: subtotal,
     discountAmount: open.discountAmount,
+    deliveryFee: open.deliveryFee,
     handedOutAt: open.handedOutAt,
     tableSessionPhase: open.tableSessionPhase ?? 'active',
     tableSessionEndsAt: open.tableSessionEndsAt,

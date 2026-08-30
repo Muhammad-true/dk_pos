@@ -436,7 +436,7 @@ Future<void> _runPosCheckoutFlowBody(
     );
     var payableTotal =
         (paymentDiscount?.payableAmount ?? cart.total) +
-        (deliveryDraft?.fee ?? 0);
+        (deliveryDraft?.feeForOrder ?? 0);
     if (payNow) {
       try {
         paymentMethod = await _pickPaymentMethod(context);
@@ -485,7 +485,7 @@ Future<void> _runPosCheckoutFlowBody(
     if (cartLive.isEmpty && appendBaselineForGate.isEmpty) return;
     payableTotal =
         (paymentDiscount?.payableAmount ?? cartLive.total) +
-        (deliveryDraft?.fee ?? 0);
+        (deliveryDraft?.feeForOrder ?? 0);
 
     PosTableBill? openBillBefore;
     PosTableBill? resolvedAppendBill;
@@ -607,7 +607,7 @@ Future<void> _runPosCheckoutFlowBody(
         PosTableBill(
           id: orderSync.orderId ?? registeredId,
           lines: lines,
-          total: cartLive.total + (deliveryDraft?.fee ?? 0),
+          total: cartLive.total + (deliveryDraft?.feeForOrder ?? 0),
           orderTypeLabel: effectiveOrderTypeLabel,
           orderNumber: orderSync.orderNumber?.trim() ?? '',
           tableNumber: tableNumber,
@@ -642,7 +642,7 @@ Future<void> _runPosCheckoutFlowBody(
       try {
         await context.read<LocalHardwareRepository>().printReceipt(
           orderId: registeredId,
-          totalAmount: cartLive.total + (deliveryDraft?.fee ?? 0),
+          totalAmount: cartLive.total + (deliveryDraft?.feeForOrder ?? 0),
           paymentMethod: 'delivery',
           receiptTitle: 'ЗАКАЗ · ДОСТАВКА',
           customerPhone: normalizedDeliveryPhone,
@@ -3980,11 +3980,11 @@ Future<_OrderSyncResult> _syncLocalOrder(
       final result = await repo.createOrUpdateOrder(
         orderId: orderId,
         lines: lines,
-        totalAmount: cart.total + (deliveryDraft?.fee ?? 0),
+        totalAmount: cart.total + (deliveryDraft?.feeForOrder ?? 0),
         orderType: orderTypeLabel,
         tableLabel: tableLabel,
         deliveryMeta: deliveryDraft?.toApiJson(),
-        deliveryFee: deliveryDraft?.fee,
+        deliveryFee: deliveryDraft?.feeForOrder,
       );
       return _OrderSyncResult(
         synced: true,
@@ -4044,6 +4044,10 @@ class _DeliveryDraft {
   final String? apartment;
   final String? comment;
 
+  /// Своя доставка входит в чек и выручку. Такси «по счётчику» — отдельный
+  /// расчёт с клиентом, поэтому не прибавляется к заказу.
+  double get feeForOrder => courierDeliveryEnabled ? fee : 0;
+
   String get shortLabel {
     final parts = <String>[
       courierDeliveryEnabled ? 'Доставка' : 'Доставка по счётчику',
@@ -4060,8 +4064,9 @@ class _DeliveryDraft {
     'address': address,
     'deliveryMode': courierDeliveryEnabled ? 'courier' : 'meter',
     // Локальный сервер читает этот флаг отдельно от общей настройки точки.
-    // «По счётчику» остаётся доставкой в чеке, но не попадает в очередь курьера.
+    // «По счётчику» остаётся способом доставки, но не попадает в чек/выручку.
     'dispatchToCourier': courierDeliveryEnabled,
+    'delivery_fee_included': courierDeliveryEnabled,
     if ((recipientName ?? '').trim().isNotEmpty)
       'recipientName': recipientName!.trim(),
     if ((house ?? '').trim().isNotEmpty) 'house': house!.trim(),
@@ -4380,7 +4385,7 @@ class _DeliveryDetailsDialogState extends State<_DeliveryDetailsDialog> {
         if (!_dispatchToCourier) ...[
           const SizedBox(height: 12),
           const Text(
-            'Этот заказ не появится у курьеров. В чек попадёт «Доставка по счётчику», сумма такси оплачивается отдельно.',
+            'Заказ не попадёт в очередь наших курьеров. Такси по счётчику оплачивается отдельно и не входит в чек или выручку заказа.',
           ),
         ],
         const SizedBox(height: 12),

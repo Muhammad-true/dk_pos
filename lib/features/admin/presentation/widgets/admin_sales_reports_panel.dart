@@ -638,6 +638,23 @@ class _AdminSalesReportsPanelState extends State<AdminSalesReportsPanel> {
                         ),
                       ),
                     ),
+                  if (detail.deliveryFee > 0) ...[
+                    const Divider(height: 18),
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            'Доставка',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        Text(
+                          formatSomoni(detail.deliveryFee),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -872,6 +889,16 @@ class _SummaryCard extends StatelessWidget {
                 fontWeight: FontWeight.w900,
                 color: scheme.primary,
               ),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              'Товары: ${formatSomoni(summary.foodAmount)}',
+              style: textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              'Своя доставка: ${formatSomoni(summary.deliveryAmount)} · ${summary.deliveryOrdersCount} заказ(ов)',
+              style: textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ],
         ),
